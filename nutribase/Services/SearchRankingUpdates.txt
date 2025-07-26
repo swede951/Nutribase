@@ -1,0 +1,96 @@
+// This file contains the updated code for incorporating nutritional completeness ranking into food search results
+
+// 1. Update to SearchRankingService.swift - Add calculateNutritionalCompletenessScore method
+func calculateNutritionalCompletenessScore(for food: FoodItem) -> Double {
+    var score: Double = 0
+    
+    // Base nutritional data (always required)
+    // These are required fields so we don't need to check if they exist
+    
+    // Additional nutritional data (optional)
+    if food.nutriScoreGrade != nil { score += 1.0 }
+    if food.novaScore > 0 { score += 1.0 }
+    if food.servingSize != nil { score += 0.5 }
+    if food.servingsPerPackage != nil { score += 0.5 }
+    if food.servingType != nil { score += 0.5 }
+    if food.brandName != nil { score += 0.3 }
+    if food.barcode != nil { score += 0.2 }
+    
+    return score
+}
+
+// 2. Update to SearchRankingService.swift - Add rankByNutritionalCompleteness method
+func rankByNutritionalCompleteness(foods: [FoodItem]) -> [FoodItem] {
+    // Create a copy of the foods array that we can sort
+    var rankedFoods = foods
+    
+    // Sort the foods based on nutritional completeness score
+    rankedFoods.sort { food1, food2 in
+        let score1 = calculateNutritionalCompletenessScore(for: food1)
+        let score2 = calculateNutritionalCompletenessScore(for: food2)
+        return score1 > score2
+    }
+    
+    return rankedFoods
+}
+
+// 3. Update to SearchRankingService.swift - Update rankSearchResults method
+func rankSearchResults(foods: [FoodItem], mealType: String) -> [FoodItem] {
+    // Create a copy of the foods array that we can sort
+    var rankedFoods = foods
+    
+    // Sort the foods based on a combined ranking score
+    rankedFoods.sort { food1, food2 in
+        // User preference score
+        let preferenceScore1 = calculateRelevanceScore(for: food1.id.uuidString, mealType: mealType)
+        let preferenceScore2 = calculateRelevanceScore(for: food2.id.uuidString, mealType: mealType)
+        
+        // Nutritional completeness score
+        let nutritionalScore1 = calculateNutritionalCompletenessScore(for: food1)
+        let nutritionalScore2 = calculateNutritionalCompletenessScore(for: food2)
+        
+        // Combined score with nutritional completeness weighted at 40% of the total score
+        // This gives significant weight to foods with more complete nutritional information
+        let totalScore1 = (preferenceScore1 * 0.6) + (nutritionalScore1 * 0.4)
+        let totalScore2 = (preferenceScore2 * 0.6) + (nutritionalScore2 * 0.4)
+        
+        return totalScore1 > totalScore2
+    }
+    
+    return rankedFoods
+}
+
+// 4. Update to SupabaseService.swift - Update semantic search method
+// In the trySemanticSearch method, replace:
+if let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") {
+    self?.foodItems = SearchRankingService.shared.rankSearchResults(foods: convertedItems, mealType: currentMealType)
+} else {
+    self?.foodItems = convertedItems
+}
+
+// With:
+if let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") {
+    self?.foodItems = SearchRankingService.shared.rankSearchResults(foods: convertedItems, mealType: currentMealType)
+} else {
+    // Even without meal context, still rank by nutritional completeness
+    self?.foodItems = SearchRankingService.shared.rankByNutritionalCompleteness(foods: convertedItems)
+}
+
+// 5. Update to SupabaseService.swift - Update fuzzy search method
+// In the tryFuzzySearch method, replace:
+if let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") {
+    self?.foodItems = SearchRankingService.shared.rankSearchResults(foods: convertedItems, mealType: currentMealType)
+} else {
+    self?.foodItems = convertedItems
+}
+
+// With:
+if let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") {
+    self?.foodItems = SearchRankingService.shared.rankSearchResults(foods: convertedItems, mealType: currentMealType)
+} else {
+    // Even without meal context, still rank by nutritional completeness
+    self?.foodItems = SearchRankingService.shared.rankByNutritionalCompleteness(foods: convertedItems)
+}
+
+// 6. Update to SupabaseService.swift - Update full text search method
+// Apply the same pattern to all other search methods in SupabaseService.swift
