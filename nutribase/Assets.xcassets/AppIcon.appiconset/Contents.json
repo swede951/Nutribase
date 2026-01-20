@@ -1,13 +1,13 @@
 {
   "images" : [
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM 1.png",
+      "filename" : "iphone-notification-20pt@2x.png",
       "idiom" : "iphone",
       "scale" : "2x",
       "size" : "20x20"
     },
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM.png",
+      "filename" : "iphone-notification-20pt@3x.png",
       "idiom" : "iphone",
       "scale" : "3x",
       "size" : "20x20"
@@ -31,19 +31,19 @@
       "size" : "40x40"
     },
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM 4.png",
+      "filename" : "iphone-spotlight-40pt@3x.png",
       "idiom" : "iphone",
       "scale" : "3x",
       "size" : "40x40"
     },
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM 3.png",
+      "filename" : "iphone-app-60pt@2x.png",
       "idiom" : "iphone",
       "scale" : "2x",
       "size" : "60x60"
     },
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM 2.png",
+      "filename" : "iphone-app-60pt@3x.png",
       "idiom" : "iphone",
       "scale" : "3x",
       "size" : "60x60"
@@ -103,7 +103,7 @@
       "size" : "83.5x83.5"
     },
     {
-      "filename" : "ChatGPT Image Sep 2, 2025, 11_23_24 PM 5.png",
+      "filename" : "app-store-1024pt.png",
       "idiom" : "ios-marketing",
       "scale" : "1x",
       "size" : "1024x1024"

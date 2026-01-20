@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NutriBase - Nutrition Tracking Made Simple</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            color: #667eea;
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .nav-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 40px;
+        }
+        
+        .nav-link {
+            display: block;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            text-decoration: none;
+            color: #333;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        
+        .nav-link:hover {
+            transform: translateY(-2px);
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+        
+        .nav-link h3 {
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .nav-link p {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .features {
+            margin: 40px 0;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        
+        .features h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        
+        .features ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .features li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        .features li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        
+        footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #eee;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NutriBase</h1>
+        <p class="subtitle">Intelligent nutrition tracking for a healthier you</p>
+        
+        <div class="features">
+            <h2>Features</h2>
+            <ul>
+                <li>Track macronutrients (protein, carbs, fat) and calories</li>
+                <li>Monitor NOVA food processing levels for food quality insights</li>
+                <li>Sync with Apple Health for weight and activity data</li>
+                <li>Customizable dashboard with drag-and-drop widgets</li>
+                <li>Set and track daily nutrition goals</li>
+                <li>Comprehensive food database with barcode scanning</li>
+                <li>Privacy-focused: your data stays on your device</li>
+            </ul>
+        </div>
+        
+        <div class="nav-links">
+            <a href="privacy.html" class="nav-link">
+                <h3>Privacy Policy</h3>
+                <p>Learn how we protect your data</p>
+            </a>
+            
+            <a href="terms.html" class="nav-link">
+                <h3>Terms of Service</h3>
+                <p>Terms and conditions of use</p>
+            </a>
+            
+            <a href="support.html" class="nav-link">
+                <h3>Support</h3>
+                <p>Get help and contact us</p>
+            </a>
+        </div>
+        
+        <footer>
+            <p>&copy; 2025 NutriBase. All rights reserved.</p>
+        </footer>
+    </div>
+</body>
+</html>
