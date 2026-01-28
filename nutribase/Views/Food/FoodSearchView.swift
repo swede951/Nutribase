@@ -12,6 +12,17 @@ import Foundation
 
 // Helper function to calculate calories for the default serving size
 func calculateDefaultServingCalories(for food: FoodItem) -> Int {
+    // If calories are 0 but we have macro data, calculate from macros
+    // Note: When calories are 0, the macros are typically for the serving size, not per 100g
+    if food.calories == 0 && (food.protein > 0 || food.carbs > 0 || food.fat > 0) {
+        // Calculate calories from macros: Protein=4cal/g, Carbs=4cal/g, Fat=9cal/g
+        // These macros are for the serving size, so return directly without scaling
+        let calculatedCalories = (food.protein * 4.0) + (food.carbs * 4.0) + (food.fat * 9.0)
+        return Int(round(calculatedCalories))
+    }
+    
+    let baseFoodCalories = food.calories
+    
     // Check if the food has a serving size specified
     if let originalServingSize = food.servingSize, !originalServingSize.isEmpty {
         // Handle non-standard formats like "1bar" or "1 bar (36 g)"
@@ -31,15 +42,15 @@ func calculateDefaultServingCalories(for food: FoodItem) -> Int {
                     let valueStr = nsString.substring(with: valueRange)
                     
                     if let servingWeight = Double(valueStr) {
-                        // Calculate calories based on the serving weight (assuming food.calories is per 100g)
-                        let caloriesPerGram = Double(food.calories) / 100.0
+                        // Calculate calories based on the serving weight (assuming baseFoodCalories is per 100g)
+                        let caloriesPerGram = Double(baseFoodCalories) / 100.0
                         return Int(round(caloriesPerGram * servingWeight))
                     }
                 }
             }
             
             // If no weight found in parentheses, return the base calories (likely per 100g)
-            return food.calories
+            return baseFoodCalories
         }
         
         // Try to parse standard formats like "100g" or "250ml"
@@ -58,12 +69,12 @@ func calculateDefaultServingCalories(for food: FoodItem) -> Int {
                 if let servingSize = Double(valueStr) {
                     // For grams, calculate based on the serving size
                     if unitStr == "g" {
-                        let caloriesPerGram = Double(food.calories) / 100.0
+                        let caloriesPerGram = Double(baseFoodCalories) / 100.0
                         return Int(round(caloriesPerGram * servingSize))
                     }
                     // For ml, assume similar density to water (1ml ≈ 1g for most liquids)
                     else if unitStr == "ml" {
-                        let caloriesPerGram = Double(food.calories) / 100.0
+                        let caloriesPerGram = Double(baseFoodCalories) / 100.0
                         return Int(round(caloriesPerGram * servingSize))
                     }
                 }
@@ -72,45 +83,78 @@ func calculateDefaultServingCalories(for food: FoodItem) -> Int {
     }
     
     // If no serving size or couldn't parse it, return the base calories
-    return food.calories
+    return baseFoodCalories
 }
 
 // Haptic feedback manager for search interactions
 class HapticFeedback {
     static let shared = HapticFeedback()
     
-    private init() {}
+    private let hapticQueue = DispatchQueue(label: "com.nutribase.haptics", qos: .userInteractive)
+    private var generators: [UIFeedbackGenerator] = []
+    
+    private init() {
+        // Pre-initialize generators on background queue to avoid blocking UI
+        hapticQueue.async { [weak self] in
+            let softGenerator = UIImpactFeedbackGenerator(style: .soft)
+            let lightGenerator = UIImpactFeedbackGenerator(style: .light)
+            let selectionGenerator = UISelectionFeedbackGenerator()
+            
+            softGenerator.prepare()
+            lightGenerator.prepare()
+            selectionGenerator.prepare()
+            
+            self?.generators = [softGenerator, lightGenerator, selectionGenerator]
+        }
+    }
     
     // Ultra light feedback for typing (very subtle)
     func ultraLightFeedback() {
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.prepare()
-        generator.impactOccurred(intensity: 0.3) // Reduced intensity for an even lighter touch
+        hapticQueue.async {
+            let generator = UIImpactFeedbackGenerator(style: .soft)
+            generator.impactOccurred(intensity: 0.3)
+        }
     }
     
     // Light feedback for typing
     func lightFeedback() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
+        hapticQueue.async {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
+        }
     }
     
     // Selection feedback for when an item is selected
     func selectionFeedback() {
-        let generator = UISelectionFeedbackGenerator()
-        generator.prepare()
-        generator.selectionChanged()
+        hapticQueue.async {
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
     }
 }
 
 struct FoodSearchView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let mealType: String
     let selectedDate: Date
+    var isCreatingMeal: Bool = false
+    var onFoodSelectedForMeal: ((FoodEntry) -> Void)? = nil
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
     @StateObject private var typesenseService = TypesenseDirectService.shared
     @StateObject private var suggestionService = SearchSuggestionService.shared
     @StateObject private var analyticsService = AnalyticsService.shared
+    @ObservedObject private var mealsManager = SavedMealsManager.shared
     @State private var searchText = ""
     @State private var searchTask: DispatchWorkItem?
+    @FocusState private var isSearchFieldFocused: Bool
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject private var foodLogManager = FoodLogManager.shared
     
@@ -130,29 +174,57 @@ struct FoodSearchView: View {
     
     // State for quick add view
     @State private var showingQuickAddView = false
+    @State private var showingAddFoodView = false
+    
+    // State for meals view
+    @State private var showingMealsView = false
+    @State private var showingCreateMeal = false
+    
+    // State for toast notification
+    @State private var showToast = false
+    @State private var toastMessage = ""
     
     // Timer for search debouncing
     @State private var searchDebounceTimer: Timer?
     
-    // State variables for UI management
+    // Timer for history cache debouncing
+    @State private var historyCacheTimer: Timer?
+    @State private var initialHistoryLoaded = false
     
-    // State for search indicators - no longer used with Typesense-only search
-    // These are kept for future reintegration of Supabase search
-    // @State private var isFuzzySearchActive = false
-    // @State private var isSemanticSearchActive = false
+    // State variables for UI management
     
     // State for search suggestions
     @State private var showSuggestions = false
     
-    // Keys for storing data in UserDefaults
-    private let recentFoodsKey = "recentlyAddedFoods"
+    // Track if user has submitted a search (Enter or suggestion tap)
+    @State private var hasSubmittedSearch = false
+    
+    // Cached history foods to avoid recalculating on every render
+    @State private var cachedHistoryFoods: [FoodItem] = []
+    @State private var lastHistorySearchText: String = ""
+    
+    // Keys for storing data in UserDefaults (user-specific)
+    private var recentFoodsKey: String {
+        if let authenticatedUser = FirebaseAuthService.shared.currentUser {
+            return "recentlyAddedFoods_\(authenticatedUser.id)"
+        } else {
+            // Fallback to local UUID for offline usage
+            if let existingId = UserDefaults.standard.string(forKey: "current_user_id") {
+                return "recentlyAddedFoods_\(existingId)"
+            } else {
+                let newId = UUID().uuidString
+                UserDefaults.standard.set(newId, forKey: "current_user_id")
+                return "recentlyAddedFoods_\(newId)"
+            }
+        }
+    }
     private let maxRecentFoods = 30
     
-    // Get recent foods from UserDefaults
     private var recentFoods: [FoodItem] {
         if let data = UserDefaults.standard.data(forKey: recentFoodsKey),
            let foods = try? JSONDecoder().decode([FoodItem].self, from: data) {
-            return foods
+            // Apply cached serving info so recent foods use last-used serving sizes
+            return FoodServingCacheService.shared.applyCachedServingInfo(to: foods)
         }
         return []
     }
@@ -160,11 +232,118 @@ struct FoodSearchView: View {
     // Computed property for filtered foods
     private var filteredFoods: [FoodItem] {
         if searchText.isEmpty {
-            // Show recent foods when no search
-            return recentFoods
+            // Show recent foods when no search, but exclude meals
+            return recentFoods.filter { !$0.isMeal }
         } else {
-            // Show search results
-            return foodItems
+            // Show search results, but exclude items that are already in history and meals
+            let historyFoodIds = Set(historyFoods.map { generateFoodId(for: $0) })
+            return foodItems.filter { food in
+                let foodId = generateFoodId(for: food)
+                return !historyFoodIds.contains(foodId) && !food.isMeal
+            }
+        }
+    }
+    
+    // Generate a unique identifier for a food item (same logic as FoodServingCacheService)
+    private func generateFoodId(for food: FoodItem) -> String {
+        var components: [String] = [food.name.lowercased()]
+        
+        if let brand = food.brandName, !brand.isEmpty {
+            components.append(brand.lowercased())
+        }
+        
+        if let barcode = food.barcode, !barcode.isEmpty {
+            components.append(barcode)
+        }
+        
+        return components.joined(separator: "|")
+    }
+    
+    // Use cached history foods (updated via updateHistoryFoodsCache)
+    private var historyFoods: [FoodItem] {
+        return cachedHistoryFoods
+    }
+    
+    // Update history foods cache - called when search text changes
+    // Uses debouncing to prevent multiple refreshes during typing
+    private func updateHistoryFoodsCache(debounce: Bool = true) {
+        guard !searchText.isEmpty else {
+            if !cachedHistoryFoods.isEmpty {
+                cachedHistoryFoods = []
+            }
+            lastHistorySearchText = ""
+            initialHistoryLoaded = false
+            historyCacheTimer?.invalidate()
+            return
+        }
+        
+        // If history hasn't been loaded yet for this search session, load immediately
+        if !initialHistoryLoaded {
+            performHistoryCacheUpdate()
+            initialHistoryLoaded = true
+            return
+        }
+        
+        // For subsequent updates, debounce to prevent flickering
+        if debounce {
+            historyCacheTimer?.invalidate()
+            historyCacheTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                performHistoryCacheUpdate()
+            }
+        } else {
+            performHistoryCacheUpdate()
+        }
+    }
+    
+    // Perform the actual history cache update
+    private func performHistoryCacheUpdate() {
+        // Only recalculate if search text has actually changed
+        guard searchText != lastHistorySearchText else { return }
+        let currentSearchText = searchText
+        lastHistorySearchText = currentSearchText
+        
+        let searchLower = currentSearchText.lowercased()
+        
+        // Get unique food items by using a dictionary keyed by food identifier
+        var uniqueFoodItems: [String: FoodItem] = [:]
+        for entry in foodLogManager.entries {
+            let food = entry.foodItem
+            // Create a unique key using name, brand, and barcode
+            let key = "\(food.name.lowercased())|\(food.brandName?.lowercased() ?? "")|\(food.barcode ?? "")"
+            uniqueFoodItems[key] = food
+        }
+        
+        let matchingFoods = Array(uniqueFoodItems.values).filter { food in
+            // Exclude meals from history
+            if food.isMeal {
+                return false
+            }
+            
+            // Check if search matches food name
+            if food.name.lowercased().contains(searchLower) {
+                return true
+            }
+            
+            // Check if search matches brand name
+            if let brandName = food.brandName, 
+               brandName.lowercased().contains(searchLower) {
+                return true
+            }
+            
+            return false
+        }.sorted { $0.name < $1.name } // Sort alphabetically
+        
+        // Apply cached serving information to history foods
+        cachedHistoryFoods = matchingFoods.map { food in
+            FoodServingCacheService.shared.createFoodItemWithCache(from: food)
+        }
+    }
+    
+    // Filter suggestions to exclude items already shown in History
+    private var filteredSuggestions: [SearchSuggestionService.SearchSuggestion] {
+        let historyNames = Set(historyFoods.map { $0.name.lowercased() })
+        return suggestionService.suggestions.filter { suggestion in
+            !historyNames.contains(suggestion.text.lowercased())
         }
     }
     
@@ -174,7 +353,8 @@ struct FoodSearchView: View {
               let recentFoods = try? JSONDecoder().decode([FoodItem].self, from: data) else {
             return []
         }
-        return recentFoods
+        // Apply cached serving info so recent foods use last-used serving sizes
+        return FoodServingCacheService.shared.applyCachedServingInfo(to: recentFoods)
     }
     
     // MARK: - Food Management Methods
@@ -228,19 +408,38 @@ struct FoodSearchView: View {
             // Track search event
             self.analyticsService.trackFoodSearchStarted(source: "typesense", queryLength: self.searchText.count)
             
-            // Perform search using Typesense
-            self.typesenseService.searchFoods(query: self.searchText) { foods, error in
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                    
-                    if let error = error {
-                        self.foodItems = [] // Clear results on error
-                        print("❌ Typesense search error: \(error.localizedDescription)")
-                        return
+            // Check if the search text looks like a barcode (all digits, 8+ characters)
+            let trimmedText = self.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isBarcode = trimmedText.count >= 8 && trimmedText.allSatisfy { $0.isNumber }
+            
+            if isBarcode {
+                // Use barcode search for numeric inputs that look like barcodes
+                self.typesenseService.searchByBarcode(barcode: trimmedText) { food, error in
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        
+                        if let food = food {
+                            self.foodItems = [food] // Show single result
+                        } else {
+                            self.foodItems = [] // No results
+                        }
                     }
-                    
-                    self.foodItems = foods ?? []
-                    print("🔍 Typesense search found \(foods?.count ?? 0) results for '\(self.searchText)'")
+                }
+            } else {
+                // Perform regular search using Typesense
+                self.typesenseService.searchFoods(query: self.searchText) { foods, error in
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        
+                        if let error = error {
+                            self.foodItems = [] // Clear results on error
+                            print("❌ Typesense search error: \(error.localizedDescription)")
+                            return
+                        }
+                        
+                        self.foodItems = foods ?? []
+                        print("🔍 Typesense search found \(foods?.count ?? 0) results for '\(self.searchText)'")
+                    }
                 }
             }
         }
@@ -289,7 +488,11 @@ struct FoodSearchView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
+            ZStack {
+                viewBackground
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 0) {
                 // Fixed header area with title and search bar
                 VStack(spacing: 0) {
                     // Title bar - matches Dashboard style
@@ -307,7 +510,7 @@ struct FoodSearchView: View {
                                 HapticManager.shared.lightFeedback()
                                 presentationMode.wrappedValue.dismiss()
                             }
-                            .foregroundColor(.blue)
+                            .foregroundColor(.primary)
                             .withHapticFeedback()
                         }
                     }
@@ -323,12 +526,48 @@ struct FoodSearchView: View {
                                 TextField("Search foods...", text: $searchText, onEditingChanged: { isEditing in
                                     showSuggestions = isEditing && !searchText.isEmpty
                                 })
+                                .focused($isSearchFieldFocused)
+                                .toolbar {
+                                    ToolbarItemGroup(placement: .keyboard) {
+                                        Spacer()
+                                        Button {
+                                            isSearchFieldFocused = false
+                                        } label: {
+                                            Image(systemName: "keyboard.chevron.compact.down")
+                                                .font(.system(size: 16, weight: .medium))
+                                                .foregroundColor(.blue)
+                                        }
+                                    }
+                                }
+                                .onSubmit {
+                                    // User pressed Enter - perform the search
+                                    if !searchText.isEmpty {
+                                        HapticManager.shared.lightFeedback()
+                                        hasSubmittedSearch = true
+                                        showSuggestions = false
+                                        suggestionService.addToRecentSearches(searchText)
+                                        performSearch()
+                                    }
+                                }
                                 .onChange(of: searchText) { _, newValue in
                                     // Provide haptic feedback when typing
                                     HapticFeedback.shared.lightFeedback()
-                                    showSuggestions = !newValue.isEmpty
-                                    suggestionService.getSuggestions(for: newValue)
-                                    performSearch()
+                                    
+                                    // Don't reset if user just submitted via suggestion tap
+                                    // (wait a moment to check if submission happened)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                                        // Only reset if search wasn't submitted
+                                        if !hasSubmittedSearch {
+                                            foodItems = [] // Clear previous search results
+                                            
+                                            // Show suggestions and fetch them
+                                            showSuggestions = !newValue.isEmpty
+                                            suggestionService.getSuggestions(for: newValue)
+                                        }
+                                    }
+                                    
+                                    // Update history foods cache (only recalculates if search changed)
+                                    updateHistoryFoodsCache()
                                 }
                                 
                                 if !searchText.isEmpty {
@@ -336,6 +575,12 @@ struct FoodSearchView: View {
                                         HapticManager.shared.lightFeedback()
                                         searchText = ""
                                         showSuggestions = false
+                                        hasSubmittedSearch = false
+                                        foodItems = []
+                                        cachedHistoryFoods = []
+                                        lastHistorySearchText = ""
+                                        initialHistoryLoaded = false
+                                        historyCacheTimer?.invalidate()
                                     }) {
                                         Image(systemName: "xmark.circle.fill")
                                             .foregroundColor(.gray)
@@ -349,7 +594,7 @@ struct FoodSearchView: View {
                                     showingBarcodeScanner = true
                                 }) {
                                     Image(systemName: "barcode.viewfinder")
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.primary)
                                         .padding(.horizontal, 4)
                                 }
                                 .withHapticFeedback()
@@ -359,73 +604,76 @@ struct FoodSearchView: View {
                             .cornerRadius(10)
                         }
                         .padding(.horizontal)
-                        
-                        // Search suggestions
-                        if showSuggestions && !suggestionService.suggestions.isEmpty {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(suggestionService.suggestions, id: \.self) { suggestion in
-                                    Button(action: {
-                                        HapticManager.shared.lightFeedback()
-                                        searchText = suggestion
-                                        showSuggestions = false
-                                        suggestionService.addToRecentSearches(suggestion)
-                                        performSearch()
-                                    }) {
-                                        HStack {
-                                            Image(systemName: "magnifyingglass")
-                                                .font(.system(size: 14))
-                                                .foregroundColor(.gray)
-                                            Text(suggestion)
-                                                .foregroundColor(.primary)
-                                            Spacer()
-                                        }
-                                        .padding(.vertical, 10)
-                                        .padding(.horizontal, 12)
-                                    }
-                                    .background(Color(.systemGray6))
-                                    
-                                    if suggestion != suggestionService.suggestions.last {
-                                        Divider()
-                                            .padding(.leading, 40)
-                                    }
-                                }
-                            }
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 5)
-                            )
-                            .padding(.horizontal)
-                            .transition(.opacity)
-                            .zIndex(1)
-                        }
                     }
                     .padding(.bottom, 8)
                     
-                    // Quick add button - only show when search text is empty
+                    // Search, Quick add and Meals buttons - only show when search text is empty
                     if searchText.isEmpty {
-                        Button(action: {
-                            HapticManager.shared.lightFeedback()
-                            showingQuickAddView = true
-                        }) {
-                            HStack {
-                                Image(systemName: "plus.circle")
-                                    .font(.system(size: 16))
-                                Text("Quick Add")
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                HapticManager.shared.lightFeedback()
+                                showingMealsView = false
+                            }) {
+                                HStack {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 16))
+                                    Text("Search")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                )
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                            )
-                            .padding(.horizontal)
-                            .padding(.vertical, 6)
+                            
+                            Button(action: {
+                                HapticManager.shared.lightFeedback()
+                                showingQuickAddView = true
+                            }) {
+                                HStack {
+                                    Image(systemName: "plus.circle")
+                                        .font(.system(size: 16))
+                                    Text("Quick Add")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                )
+                            }
+                            
+                            // Hide Meals button when creating a meal to prevent nested meal creation
+                            if !isCreatingMeal {
+                                Button(action: {
+                                    HapticManager.shared.lightFeedback()
+                                    showingMealsView.toggle()
+                                }) {
+                                    HStack {
+                                        Image(systemName: "fork.knife")
+                                            .font(.system(size: 16))
+                                        Text("Meals")
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                    )
+                                }
+                            }
                         }
+                        .padding(.horizontal)
+                        .padding(.vertical, 6)
                         
-                        // Quick Add button padding
+                        // Button padding
                         Spacer().frame(height: 4)
                     }
                     
@@ -463,7 +711,8 @@ struct FoodSearchView: View {
                             .padding()
                     }
                     Spacer()
-                } else if isLoading {
+                } else if isLoading && searchText.isEmpty {
+                    // Only show full loading screen when there's no search text
                     Spacer()
                     VStack {
                         ProgressView()
@@ -492,29 +741,97 @@ struct FoodSearchView: View {
                         .padding()
                     }
                     Spacer()
-                } else if filteredFoods.isEmpty {
-                    Spacer()
-                    VStack {
-                        Image(systemName: searchText.isEmpty ? "clock" : "magnifyingglass")
-                            .font(.largeTitle)
-                            .foregroundColor(.gray)
-                            .padding()
-                        Text(searchText.isEmpty ? "No recently added foods" : "No foods match your search")
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
                 } else {
                     ScrollView {
                         VStack(spacing: 1) {
                             if searchText.isEmpty {
-                                Text("Recently Added Foods")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                // Show either Meals view or Recently Added Foods
+                                if showingMealsView {
+                                    // Meals header with Create Meal button
+                                    HStack {
+                                        Text("Meals")
+                                            .font(.system(size: 20, weight: .bold))
+                                            .foregroundColor(.primary)
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            HapticManager.shared.lightFeedback()
+                                            showingCreateMeal = true
+                                        }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "plus")
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                Text("Create Meal")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                            }
+                                            .foregroundColor(.blue)
+                                        }
+                                    }
                                     .padding(.horizontal)
-                                    .padding(.top, 8)
-                                
-                                ForEach(filteredFoods) { food in
-                                    FoodItemCard(food: food)
+                                    .padding(.top, 16)
+                                    .padding(.bottom, 12)
+                                    
+                                    // Saved meals list with swipe-to-delete
+                                    ForEach(mealsManager.meals) { meal in
+                                        SavedMealCard(
+                                            meal: meal,
+                                            mealType: mealType,
+                                            selectedDate: selectedDate,
+                                            onQuickAdd: {
+                                                // Show toast notification
+                                                toastMessage = "\(meal.name) added to \(mealType)"
+                                                showToast = true
+                                                
+                                                // Hide toast after 2 seconds
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                    showToast = false
+                                                }
+                                            }
+                                        )
+                                        .padding(.bottom, 8)
+                                    }
+                                    
+                                } else if filteredFoods.isEmpty {
+                                    // Empty state for recently added foods
+                                    Spacer().frame(height: 100)
+                                    VStack {
+                                        Image(systemName: "clock")
+                                            .font(.largeTitle)
+                                            .foregroundColor(.gray)
+                                            .padding()
+                                        Text("No recently added foods")
+                                            .foregroundColor(.secondary)
+                                    }
+                                } else {
+                                    // Recently Added Foods view
+                                    Text("Recently Added Foods")
+                                        .font(.headline)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal)
+                                        .padding(.top, 8)
+                                    
+                                    ForEach(filteredFoods) { food in
+                                        FoodItemCard(
+                                            food: food,
+                                            mealType: mealType,
+                                            selectedDate: selectedDate,
+                                            onQuickAdd: {
+                                                // Add to recent foods when quick added
+                                                addToRecentFoods(food)
+                                                
+                                                // Show toast notification
+                                                toastMessage = "\(food.name) added to \(mealType)"
+                                                showToast = true
+                                                
+                                                // Hide toast after 2 seconds
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                    showToast = false
+                                                }
+                                            },
+                                            isCreatingMeal: isCreatingMeal,
+                                            onFoodSelectedForMeal: onFoodSelectedForMeal
+                                        )
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             // Provide selection haptic feedback when tapping a food item
@@ -522,16 +839,40 @@ struct FoodSearchView: View {
                                             selectedFood = food
                                             showingFoodEntry = true
                                         }
+                                    }
                                 }
                             } else {
-                                Text("Search Results")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal)
-                                    .padding(.top, 8)
+                                // User is typing or has submitted search
                                 
-                                ForEach(filteredFoods) { food in
-                                    FoodItemCard(food: food)
+                                // Always show History section if there are matching foods from food log
+                                if !historyFoods.isEmpty {
+                                    Text("History")
+                                        .font(.headline)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal)
+                                        .padding(.top, 8)
+                                    
+                                    ForEach(historyFoods) { food in
+                                        FoodItemCard(
+                                            food: food,
+                                            mealType: mealType,
+                                            selectedDate: selectedDate,
+                                            onQuickAdd: {
+                                                // Add to recent foods when quick added
+                                                addToRecentFoods(food)
+                                                
+                                                // Show toast notification
+                                                toastMessage = "\(food.name) added to \(mealType)"
+                                                showToast = true
+                                                
+                                                // Hide toast after 2 seconds
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                    showToast = false
+                                                }
+                                            },
+                                            isCreatingMeal: isCreatingMeal,
+                                            onFoodSelectedForMeal: onFoodSelectedForMeal
+                                        )
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             // Provide selection haptic feedback when tapping a food item
@@ -539,6 +880,126 @@ struct FoodSearchView: View {
                                             selectedFood = food
                                             showingFoodEntry = true
                                         }
+                                    }
+                                    
+                                    Spacer().frame(height: 8)
+                                }
+                                
+                                // Show Suggested Searches OR Search Results based on submission state
+                                if !hasSubmittedSearch {
+                                    // User is still typing - show suggested searches inline
+                                    if !filteredSuggestions.isEmpty {
+                                        Text("Suggested Searches")
+                                            .font(.headline)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal)
+                                            .padding(.top, historyFoods.isEmpty ? 8 : 0)
+                                        
+                                        ForEach(filteredSuggestions) { suggestion in
+                                            Button(action: {
+                                                HapticManager.shared.lightFeedback()
+                                                searchText = suggestion.text
+                                                hasSubmittedSearch = true
+                                                suggestionService.addToRecentSearches(suggestion.text)
+                                                performSearch()
+                                            }) {
+                                                HStack(spacing: 12) {
+                                                    Image(systemName: suggestion.icon)
+                                                        .font(.system(size: 16))
+                                                        .foregroundColor(.gray)
+                                                        .frame(width: 24)
+                                                    
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        Text(suggestion.text)
+                                                            .foregroundColor(.primary)
+                                                            .lineLimit(1)
+                                                        
+                                                        if let subtitle = suggestion.subtitle, !subtitle.isEmpty {
+                                                            Text(subtitle)
+                                                                .font(.caption)
+                                                                .foregroundColor(.secondary)
+                                                                .lineLimit(1)
+                                                        }
+                                                    }
+                                                    
+                                                    Spacer()
+                                                }
+                                                .padding(.vertical, 12)
+                                                .padding(.horizontal, 16)
+                                            }
+                                        }
+                                    } else if historyFoods.isEmpty {
+                                        // No history and no suggestions yet
+                                        Spacer().frame(height: 60)
+                                        VStack {
+                                            Image(systemName: "magnifyingglass")
+                                                .font(.largeTitle)
+                                                .foregroundColor(.gray)
+                                                .padding()
+                                            Text("Press search to find foods")
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                } else {
+                                    // User has submitted search - show search results
+                                    if isLoading {
+                                        Spacer().frame(height: 40)
+                                        HStack {
+                                            Spacer()
+                                            ProgressView()
+                                                .padding(.trailing, 8)
+                                            Text("Searching...")
+                                                .foregroundColor(.secondary)
+                                            Spacer()
+                                        }
+                                    } else if !filteredFoods.isEmpty {
+                                        Text("Search Results")
+                                            .font(.headline)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal)
+                                            .padding(.top, historyFoods.isEmpty ? 8 : 0)
+                                        
+                                        ForEach(filteredFoods) { food in
+                                            FoodItemCard(
+                                                food: food,
+                                                mealType: mealType,
+                                                selectedDate: selectedDate,
+                                                onQuickAdd: {
+                                                    // Add to recent foods when quick added
+                                                    addToRecentFoods(food)
+                                                    
+                                                    // Show toast notification
+                                                    toastMessage = "\(food.name) added to \(mealType)"
+                                                    showToast = true
+                                                    
+                                                    // Hide toast after 2 seconds
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                        showToast = false
+                                                    }
+                                                },
+                                                isCreatingMeal: isCreatingMeal,
+                                                onFoodSelectedForMeal: onFoodSelectedForMeal
+                                            )
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                // Provide selection haptic feedback when tapping a food item
+                                                HapticFeedback.shared.selectionFeedback()
+                                                selectedFood = food
+                                                showingFoodEntry = true
+                                            }
+                                        }
+                                    } else if historyFoods.isEmpty {
+                                        // No results found
+                                        Spacer().frame(height: 60)
+                                        VStack {
+                                            Image(systemName: "magnifyingglass")
+                                                .font(.largeTitle)
+                                                .foregroundColor(.gray)
+                                                .padding()
+                                            Text("No foods match your search")
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -547,7 +1008,7 @@ struct FoodSearchView: View {
                 }
             }
             .navigationBarHidden(true)
-            .background(Color(.systemGray6))
+            .background(viewBackground)
             .onAppear {
                 // Store current meal type for search ranking
                 UserDefaults.standard.set(mealType, forKey: "currentMealType")
@@ -559,7 +1020,6 @@ struct FoodSearchView: View {
                     // Don't fetch all foods when search is empty
                     // Recent foods will be shown from UserDefaults
                 } else {
-                    // Use Typesense search instead of Supabase
                     performSearch()
                 }
             }
@@ -569,14 +1029,27 @@ struct FoodSearchView: View {
             .sheet(isPresented: $showingQuickAddView) {
                 QuickAddFoodView(mealType: mealType, isPresented: $showingQuickAddView)
             }
+            .sheet(isPresented: $showingAddFoodView) {
+                AddFoodView(mealType: mealType, selectedDate: selectedDate)
+            }
+            .sheet(isPresented: $showingCreateMeal) {
+                CreateMealBuilderView(mealType: mealType, selectedDate: selectedDate)
+            }
             .navigationDestination(isPresented: $showingFoodEntry) {
-                if let food = selectedFood {
+                if !isCreatingMeal, let food = selectedFood {
+                    // Normal flow - navigate to BasicFoodEntryView
                     BasicFoodEntryView(
                         food: food, 
                         mealType: mealType, 
                         selectedDate: selectedDate, 
-                        onFoodAdded: addToRecentFoods,
-                        showScanAgainButton: scannedBarcode != nil,
+                        onFoodAdded: { cachedFood in
+                            // Add to recent foods with updated serving information
+                            addToRecentFoods(cachedFood)
+                            // Dismiss the view after adding the food
+                            presentationMode.wrappedValue.dismiss()
+                        },
+                        showScanAgainButton: false,
+                        editingEntry: nil,
                         initialServingSize: food.cachedServingSize,
                         initialServingUnit: food.cachedServingUnit,
                         initialNumberOfServings: food.cachedNumberOfServings,
@@ -591,6 +1064,48 @@ struct FoodSearchView: View {
                         }
                 }
             }
+            .sheet(isPresented: Binding(
+                get: { isCreatingMeal && showingFoodEntry },
+                set: { if !$0 { showingFoodEntry = false } }
+            )) {
+                // Meal creation flow - show sheet instead of navigation
+                if let food = selectedFood {
+                    NavigationView {
+                        BasicFoodEntryView(
+                            food: food,
+                            mealType: mealType,
+                            selectedDate: selectedDate,
+                            onFoodAdded: { cachedFood in
+                                // Create FoodEntry from the cached food with serving info
+                                if let onFoodSelectedForMeal = onFoodSelectedForMeal,
+                                   let servingSize = cachedFood.cachedServingSize,
+                                   let servingUnit = cachedFood.cachedServingUnit,
+                                   let numberOfServings = cachedFood.cachedNumberOfServings {
+                                    let foodEntry = FoodEntry(
+                                        id: UUID(),
+                                        foodItem: cachedFood,
+                                        mealType: mealType,
+                                        servingSize: servingSize,
+                                        servingUnit: servingUnit,
+                                        numberOfServings: numberOfServings,
+                                        dateAdded: selectedDate
+                                    )
+                                    onFoodSelectedForMeal(foodEntry)
+                                }
+                                showingFoodEntry = false
+                            },
+                            showScanAgainButton: false,
+                            isCreatingMeal: true,
+                            editingEntry: nil,
+                            initialServingSize: food.cachedServingSize,
+                            initialServingUnit: food.cachedServingUnit,
+                            initialNumberOfServings: food.cachedNumberOfServings,
+                            initialSelectedServingSizeOption: food.cachedSelectedServingSizeOption
+                        )
+                    }
+                }
+            }
+            } // Close ZStack
             .onChange(of: scannedBarcode) { oldBarcode, newBarcode in
                 if let barcode = newBarcode {
                     handleScannedBarcode(barcode)
@@ -610,11 +1125,37 @@ struct FoodSearchView: View {
                 Alert(
                     title: Text("Barcode Not Found"),
                     message: Text(error.message),
-                    dismissButton: .default(Text("OK"))
+                    primaryButton: .default(Text("Add New Food")) {
+                        showingAddFoodView = true
+                    },
+                    secondaryButton: .cancel(Text("OK"))
                 )
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .overlay(
+            // Toast notification
+            VStack {
+                Spacer()
+                if showToast {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.white)
+                        Text(toastMessage)
+                            .foregroundColor(.white)
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(hex: "#5ec5ff"))
+                    .cornerRadius(25)
+                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showToast)
+                }
+            }
+            .padding(.bottom, 100) // Position above tab bar
+        )
     }
 }
 
@@ -626,8 +1167,13 @@ struct TappableFoodItemCard: View {
     let analyticsService: AnalyticsService
     
     var body: some View {
-        FoodItemCard(food: food)
-            .contentShape(Rectangle())
+        FoodItemCard(
+            food: food,
+            mealType: "Unknown",
+            selectedDate: Date(),
+            onQuickAdd: nil
+        )
+        .contentShape(Rectangle())
             .highPriorityGesture(TapGesture().onEnded { _ in
                 // Track food search result tap
                 if let position = position {
@@ -642,7 +1188,20 @@ struct TappableFoodItemCard: View {
 
 // Food item card component
 struct FoodItemCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let food: FoodItem
+    let mealType: String
+    let selectedDate: Date
+    let onQuickAdd: (() -> Void)?
+    var isCreatingMeal: Bool = false
+    var onFoodSelectedForMeal: ((FoodEntry) -> Void)? = nil
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @State private var showingFoodEntry = false
     
     // Format serving size to display nicely with 2 decimal places when needed
     private func formatServingSize(_ servingSize: String?) -> String {
@@ -678,9 +1237,10 @@ struct FoodItemCard: View {
         return servingSize
     }
     
-    // Get color based on NOVA score
+    // Get color based on NOVA score (use predicted score if original is 0)
     private var novaScoreColor: Color {
-        switch food.novaScore {
+        let displayScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
+        switch displayScore {
         case 1: return Color(hex: "#3f993f")  // Unprocessed - darker green
         case 2: return Color(hex: "#b7ce0d")  // Processed culinary ingredients - lime green
         case 3: return Color(hex: "#f28e16")  // Processed foods - orange
@@ -730,15 +1290,16 @@ struct FoodItemCard: View {
                         .font(.caption2)
                         .foregroundColor(.gray)
                     
-                    // NOVA score if available
-                    if food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0 {
+                    // NOVA score if available (don't show for meals - only individual food items)
+                    if !food.isMeal && (food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0) {
                         // Add comma before NOVA score
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             
                         let displayNovaScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
-                        Text("NOVA \(displayNovaScore)")
+                        let isEstimated = food.novaScoreIsEstimated || food.novaScore == 0
+                        Text("\(isEstimated ? "✨ " : "")NOVA \(displayNovaScore)")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -753,8 +1314,8 @@ struct FoodItemCard: View {
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
-                            
-                        Text(nutriGrade.uppercased())
+                        
+                        Text("\(food.nutriScoreIsEstimated ? "✨ " : "")\(nutriGrade.uppercased())")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -767,26 +1328,70 @@ struct FoodItemCard: View {
             
             Spacer()
             
-            // Calories
-            VStack(alignment: .trailing) {
+            // Calories and Quick Add Button
+            VStack(alignment: .trailing, spacing: 4) {
                 Text("\(displayCalories()) kcal")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+                Button(action: {
+                    // Quick add - always add directly without opening entry view
+                    // User can tap on the food item itself to edit servings
+                    quickAddFood()
+                }) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .withHapticFeedback()
             }
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
         .padding(.horizontal, 8)
         .frame(height: 72) // Maintain consistent height similar to rows
+        .sheet(isPresented: $showingFoodEntry) {
+            if isCreatingMeal {
+                // Show BasicFoodEntryView for meal creation
+                BasicFoodEntryView(
+                    food: food,
+                    mealType: mealType,
+                    selectedDate: selectedDate,
+                    onFoodAdded: { cachedFood in
+                        // Create FoodEntry from the cached food with serving info
+                        if let onFoodSelectedForMeal = onFoodSelectedForMeal,
+                           let servingSize = cachedFood.cachedServingSize,
+                           let servingUnit = cachedFood.cachedServingUnit,
+                           let numberOfServings = cachedFood.cachedNumberOfServings {
+                            let foodEntry = FoodEntry(
+                                id: UUID(),
+                                foodItem: cachedFood,
+                                mealType: mealType,
+                                servingSize: servingSize,
+                                servingUnit: servingUnit,
+                                numberOfServings: numberOfServings,
+                                dateAdded: selectedDate
+                            )
+                            onFoodSelectedForMeal(foodEntry)
+                        }
+                        showingFoodEntry = false
+                    },
+                    showScanAgainButton: false,
+                    isCreatingMeal: true,
+                    editingEntry: nil,
+                    initialServingSize: food.cachedServingSize,
+                    initialServingUnit: food.cachedServingUnit,
+                    initialNumberOfServings: food.cachedNumberOfServings,
+                    initialSelectedServingSizeOption: food.cachedSelectedServingSizeOption
+                )
+            }
+        }
     }
     
     // Display serving size - either cached or original
@@ -818,7 +1423,29 @@ struct FoodItemCard: View {
             print("   - using cached fallback: \(result)")
             return result
         } else {
-            // Show original serving size
+            // Try to extract grams from serving size string (e.g., "1 serving (180 g)" -> "180g")
+            if let servingSize = food.servingSize, !servingSize.isEmpty {
+                // Look for pattern like "(180 g)" or "(180g)"
+                let pattern = "\\((\\d+(?:\\.\\d+)?)\\s*g\\)"
+                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                    let nsString = servingSize as NSString
+                    if let match = regex.firstMatch(in: servingSize, options: [], range: NSRange(location: 0, length: nsString.length)) {
+                        let valueRange = match.range(at: 1)
+                        if valueRange.location != NSNotFound {
+                            let valueStr = nsString.substring(with: valueRange)
+                            if let value = Double(valueStr) {
+                                let formattedValue = value.truncatingRemainder(dividingBy: 1) == 0 ? 
+                                    String(format: "%.0f", value) : String(format: "%.1f", value)
+                                let result = "\(formattedValue)g"
+                                print("   - extracted grams from parentheses: \(result)")
+                                return result
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Show original serving size formatted
             let result = formatServingSize(food.servingSize)
             print("   - using original: \(result)")
             return result
@@ -875,6 +1502,102 @@ struct FoodItemCard: View {
             servingQuantity: food.servingsPerPackage
         )
     }
+    
+    // Quick add functionality
+    private func quickAddFood() {
+        // Extract serving information from the display
+        var servingSize: Double = 100.0
+        var servingUnit: String = "g"
+        var numberOfServings: Double = 1.0
+        
+        // Use cached values if available, otherwise extract from original serving size
+        if let cachedSize = food.cachedServingSize,
+           let cachedUnit = food.cachedServingUnit,
+           let cachedServings = food.cachedNumberOfServings {
+            servingSize = cachedSize
+            servingUnit = cachedUnit
+            numberOfServings = cachedServings
+        } else if let originalServingSize = food.servingSize, !originalServingSize.isEmpty {
+            // Extract from original serving size using NutritionCalculator
+            if let (weight, unit) = NutritionCalculator.extractWeightFromServingSize(originalServingSize) {
+                servingSize = weight
+                servingUnit = unit
+                numberOfServings = 1.0
+            }
+        }
+        
+        // Create food item with predicted NOVA score if original is 0
+        var foodItemToAdd = food
+        if food.novaScore == 0 {
+            let predictedNova = NovaScoreService.shared.predictNovaScore(for: food)
+            if predictedNova > 0 {
+                // Create a new FoodItem with the predicted NOVA score
+                foodItemToAdd = FoodItem(
+                    name: food.name,
+                    brandName: food.brandName,
+                    barcode: food.barcode,
+                    calories: food.calories,
+                    protein: food.protein,
+                    carbs: food.carbs,
+                    fat: food.fat,
+                    novaScore: predictedNova,
+                    novaScoreIsEstimated: true,
+                    nutriScoreGrade: food.nutriScoreGrade,
+                    nutriScoreIsEstimated: food.nutriScoreIsEstimated,
+                    servingSize: food.servingSize,
+                    servingsPerPackage: food.servingsPerPackage,
+                    servingType: food.servingType,
+                    fiber: food.fiber,
+                    sugar: food.sugar,
+                    sodium: food.sodium,
+                    saturatedFat: food.saturatedFat,
+                    ingredients: food.ingredients,
+                    cachedServingSize: food.cachedServingSize,
+                    cachedServingUnit: food.cachedServingUnit,
+                    cachedNumberOfServings: food.cachedNumberOfServings,
+                    cachedSelectedServingSizeOption: food.cachedSelectedServingSizeOption,
+                    countries: food.countries,
+                    purchasePlaces: food.purchasePlaces,
+                    origins: food.origins
+                )
+            }
+        }
+        
+        // Check if we're creating a meal or adding to food log
+        if isCreatingMeal, let onFoodSelectedForMeal = onFoodSelectedForMeal {
+            // Creating a meal - pass the food entry to the meal builder
+            let foodEntry = FoodEntry(
+                id: UUID(),
+                foodItem: foodItemToAdd,
+                mealType: mealType,
+                servingSize: servingSize,
+                servingUnit: servingUnit,
+                numberOfServings: numberOfServings,
+                dateAdded: selectedDate
+            )
+            onFoodSelectedForMeal(foodEntry)
+        } else {
+            // Normal flow - add to food log
+            foodLogManager.addEntry(
+                foodItem: foodItemToAdd,
+                mealType: mealType,
+                servingSize: servingSize,
+                servingUnit: servingUnit,
+                numberOfServings: numberOfServings,
+                date: selectedDate
+            )
+        }
+        
+        // Provide haptic feedback
+        HapticManager.shared.successFeedback()
+        
+        // Call the completion handler if provided (but not when creating a meal - toast is handled by MealFoodPickerView)
+        if !isCreatingMeal {
+            onQuickAdd?()
+        }
+        
+        print("🍽️ Quick added \(food.name) to \(mealType): \(numberOfServings) × \(servingSize)\(servingUnit)")
+    }
 }
 
 // Food item model
@@ -888,10 +1611,21 @@ public struct FoodItem: Identifiable, Codable, Equatable {
     public let carbs: Double
     public let fat: Double
     public let novaScore: Int
+    public let novaScoreIsEstimated: Bool
     public let nutriScoreGrade: String?
+    public let nutriScoreIsEstimated: Bool
     public let servingSize: String?
     public let servingsPerPackage: Double?
     public let servingType: String?
+    
+    // Additional nutritional information
+    public let fiber: Double?
+    public let sugar: Double?
+    public let sodium: Double?
+    public let saturatedFat: Double?
+    
+    // Ingredients list for diversity tracking
+    public let ingredients: String?
     
     // Cached serving information for recently added foods
     public let cachedServingSize: Double?
@@ -899,7 +1633,15 @@ public struct FoodItem: Identifiable, Codable, Equatable {
     public let cachedNumberOfServings: Double?
     public let cachedSelectedServingSizeOption: String?
     
-    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, nutriScoreGrade: String? = nil, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil) {
+    // Region information for location-based search
+    public let countries: [String]?
+    public let purchasePlaces: String?
+    public let origins: String?
+    
+    // Flag to identify if this is a saved meal (not a regular food item)
+    public let isMeal: Bool
+    
+    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, novaScoreIsEstimated: Bool = false, nutriScoreGrade: String? = nil, nutriScoreIsEstimated: Bool = false, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, fiber: Double? = nil, sugar: Double? = nil, sodium: Double? = nil, saturatedFat: Double? = nil, ingredients: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil, countries: [String]? = nil, purchasePlaces: String? = nil, origins: String? = nil, isMeal: Bool = false) {
         self.id = UUID()
         self.name = name
         self.brandName = brandName
@@ -909,19 +1651,30 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         self.carbs = carbs
         self.fat = fat
         self.novaScore = novaScore
+        self.novaScoreIsEstimated = novaScoreIsEstimated
         self.nutriScoreGrade = nutriScoreGrade
+        self.nutriScoreIsEstimated = nutriScoreIsEstimated
         self.servingSize = servingSize
         self.servingsPerPackage = servingsPerPackage
         self.servingType = servingType
+        self.fiber = fiber
+        self.sugar = sugar
+        self.sodium = sodium
+        self.saturatedFat = saturatedFat
+        self.ingredients = ingredients
         self.cachedServingSize = cachedServingSize
         self.cachedServingUnit = cachedServingUnit
         self.cachedNumberOfServings = cachedNumberOfServings
         self.cachedSelectedServingSizeOption = cachedSelectedServingSizeOption
+        self.countries = countries
+        self.purchasePlaces = purchasePlaces
+        self.origins = origins
+        self.isMeal = isMeal
     }
     
     // Codable implementation
     enum CodingKeys: String, CodingKey {
-        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, nutriScoreGrade, servingSize, servingsPerPackage, servingType, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption
+        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, novaScoreIsEstimated, nutriScoreGrade, nutriScoreIsEstimated, servingSize, servingsPerPackage, servingType, fiber, sugar, sodium, saturatedFat, ingredients, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption, countries, purchasePlaces, origins, isMeal
     }
     
     public init(from decoder: Decoder) throws {
@@ -935,14 +1688,25 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         carbs = try container.decode(Double.self, forKey: .carbs)
         fat = try container.decode(Double.self, forKey: .fat)
         novaScore = try container.decodeIfPresent(Int.self, forKey: .novaScore) ?? 0
+        novaScoreIsEstimated = try container.decodeIfPresent(Bool.self, forKey: .novaScoreIsEstimated) ?? false
         nutriScoreGrade = try container.decodeIfPresent(String.self, forKey: .nutriScoreGrade)
+        nutriScoreIsEstimated = try container.decodeIfPresent(Bool.self, forKey: .nutriScoreIsEstimated) ?? false
         servingSize = try container.decodeIfPresent(String.self, forKey: .servingSize)
         servingsPerPackage = try container.decodeIfPresent(Double.self, forKey: .servingsPerPackage)
         servingType = try container.decodeIfPresent(String.self, forKey: .servingType)
+        fiber = try container.decodeIfPresent(Double.self, forKey: .fiber)
+        sugar = try container.decodeIfPresent(Double.self, forKey: .sugar)
+        sodium = try container.decodeIfPresent(Double.self, forKey: .sodium)
+        saturatedFat = try container.decodeIfPresent(Double.self, forKey: .saturatedFat)
+        ingredients = try container.decodeIfPresent(String.self, forKey: .ingredients)
         cachedServingSize = try container.decodeIfPresent(Double.self, forKey: .cachedServingSize)
         cachedServingUnit = try container.decodeIfPresent(String.self, forKey: .cachedServingUnit)
         cachedNumberOfServings = try container.decodeIfPresent(Double.self, forKey: .cachedNumberOfServings)
         cachedSelectedServingSizeOption = try container.decodeIfPresent(String.self, forKey: .cachedSelectedServingSizeOption)
+        countries = try container.decodeIfPresent([String].self, forKey: .countries)
+        purchasePlaces = try container.decodeIfPresent(String.self, forKey: .purchasePlaces)
+        origins = try container.decodeIfPresent(String.self, forKey: .origins)
+        isMeal = try container.decodeIfPresent(Bool.self, forKey: .isMeal) ?? false
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -956,20 +1720,32 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         try container.encode(carbs, forKey: .carbs)
         try container.encode(fat, forKey: .fat)
         try container.encode(novaScore, forKey: .novaScore)
+        try container.encode(novaScoreIsEstimated, forKey: .novaScoreIsEstimated)
         try container.encodeIfPresent(nutriScoreGrade, forKey: .nutriScoreGrade)
+        try container.encode(nutriScoreIsEstimated, forKey: .nutriScoreIsEstimated)
         try container.encodeIfPresent(servingSize, forKey: .servingSize)
         try container.encodeIfPresent(servingsPerPackage, forKey: .servingsPerPackage)
         try container.encodeIfPresent(servingType, forKey: .servingType)
+        try container.encodeIfPresent(fiber, forKey: .fiber)
+        try container.encodeIfPresent(sugar, forKey: .sugar)
+        try container.encodeIfPresent(sodium, forKey: .sodium)
+        try container.encodeIfPresent(saturatedFat, forKey: .saturatedFat)
+        try container.encodeIfPresent(ingredients, forKey: .ingredients)
         try container.encodeIfPresent(cachedServingSize, forKey: .cachedServingSize)
         try container.encodeIfPresent(cachedServingUnit, forKey: .cachedServingUnit)
         try container.encodeIfPresent(cachedNumberOfServings, forKey: .cachedNumberOfServings)
         try container.encodeIfPresent(cachedSelectedServingSizeOption, forKey: .cachedSelectedServingSizeOption)
+        try container.encodeIfPresent(countries, forKey: .countries)
+        try container.encodeIfPresent(purchasePlaces, forKey: .purchasePlaces)
+        try container.encodeIfPresent(origins, forKey: .origins)
+        try container.encode(isMeal, forKey: .isMeal)
     }
 }
 
 // Food item row component
 struct FoodItemRow: View {
     let food: FoodItem
+    @StateObject private var visibilityService = MetricVisibilityService.shared
     
     // Format serving size to display nicely with 2 decimal places when needed
     private func formatServingSize(_ servingSize: String?) -> String {
@@ -1005,9 +1781,10 @@ struct FoodItemRow: View {
         return servingSize
     }
     
-    // Get color based on NOVA score
+    // Get color based on NOVA score (use predicted score if original is 0)
     private var novaScoreColor: Color {
-        switch food.novaScore {
+        let displayScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
+        switch displayScore {
         case 1: return Color(hex: "#3f993f")  // Unprocessed - darker green
         case 2: return Color(hex: "#b7ce0d")  // Processed culinary ingredients - lime green
         case 3: return Color(hex: "#f28e16")  // Processed foods - orange
@@ -1067,15 +1844,16 @@ struct FoodItemRow: View {
                         .font(.caption2)
                         .foregroundColor(.gray)
                     
-                    // NOVA score if available
-                    if food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0 {
+                    // NOVA score if available and visible
+                    if visibilityService.showNovaScore && (food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0) {
                         // Add comma before NOVA score
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             
                         let displayNovaScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
-                        Text("NOVA \(displayNovaScore)")
+                        let isEstimated = food.novaScoreIsEstimated || food.novaScore == 0
+                        Text("\(isEstimated ? "✨ " : "")NOVA \(displayNovaScore)")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -1084,14 +1862,14 @@ struct FoodItemRow: View {
                             .cornerRadius(4)
                     }
                     
-                    // NutriScore grade if available
-                    if let nutriGrade = food.nutriScoreGrade, !nutriGrade.isEmpty {
+                    // NutriScore grade if available and visible
+                    if visibilityService.showNutriScore, let nutriGrade = food.nutriScoreGrade, !nutriGrade.isEmpty {
                         // Add comma before NutriScore grade
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             
-                        Text(nutriGrade.uppercased())
+                        Text("\(food.nutriScoreIsEstimated ? "✨ " : "")\(nutriGrade.uppercased())")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -1104,9 +1882,12 @@ struct FoodItemRow: View {
             
             Spacer()
             
-            Text("\(calculateDefaultServingCalories(for: food)) kcal")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            // Only show calories if visibility is enabled
+            if visibilityService.showCalories {
+                Text("\(calculateDefaultServingCalories(for: food)) kcal")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 }
@@ -1253,10 +2034,15 @@ struct NutrientCircle: View {
 
 // Component for displaying food quality indicators like NOVA score and Nutri-Score
 struct FoodQualityIndicator: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let value: String
     let description: String
     let color: Color
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1286,8 +2072,227 @@ struct FoodQualityIndicator: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
         )
+    }
+}
+
+// Saved Meal Card Component
+struct SavedMealCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let meal: SavedMeal
+    let mealType: String
+    let selectedDate: Date
+    let onQuickAdd: () -> Void
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @ObservedObject private var mealsManager = SavedMealsManager.shared
+    @State private var showingEditMeal = false
+    @State private var offset: CGFloat = 0
+    @State private var isSwiping = false
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // Delete button (revealed on swipe)
+            Button(action: {
+                // Provide haptic feedback
+                HapticManager.shared.mediumFeedback()
+                // Delete the meal immediately
+                withAnimation {
+                    mealsManager.deleteMeal(meal)
+                }
+            }) {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                    Text("Delete")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 90)
+                .frame(maxHeight: .infinity)
+                .background(Color.red)
+                .cornerRadius(12)
+            }
+            .opacity(offset < -60 ? 1 : 0)
+            .padding(.horizontal, 8)
+            
+            // Meal card content
+            Button(action: {
+                if !isSwiping {
+                    showingEditMeal = true
+                }
+            }) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    // Meal info
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Meal name
+                        Text(meal.name)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                        
+                        // Food count
+                        Text("\(meal.foods.count) item\(meal.foods.count == 1 ? "" : "s")")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Calories and quick add button
+                    HStack(spacing: 12) {
+                        Text("\(meal.totalCalories) kcal")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.primary)
+                        
+                        Button(action: {
+                            quickAddMeal()
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                    }
+                }
+                
+                // Macros row
+                HStack(spacing: 16) {
+                    MacroLabel(value: meal.totalProtein, label: "Protein", color: .green)
+                    MacroLabel(value: meal.totalCarbs, label: "Carbs", color: .orange)
+                    MacroLabel(value: meal.totalFat, label: "Fats", color: .pink)
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(cardBackground)
+                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+            )
+            .padding(.horizontal, 8)
+            .offset(x: offset)
+            .gesture(
+                DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                    .onChanged { gesture in
+                        let translation = gesture.translation.width
+                        let verticalTranslation = gesture.translation.height
+                        
+                        // Only allow left swipe when clearly horizontal
+                        if translation < 0 && abs(verticalTranslation) < abs(translation) * 0.3 {
+                            isSwiping = true
+                            withAnimation(.interactiveSpring()) {
+                                offset = translation
+                            }
+                        }
+                    }
+                    .onEnded { gesture in
+                        let translation = gesture.translation.width
+                        let verticalTranslation = gesture.translation.height
+                        
+                        // Only handle clearly horizontal swipes
+                        if abs(translation) > 30 && abs(verticalTranslation) < abs(translation) * 0.3 {
+                            withAnimation {
+                                if translation < -60 {
+                                    HapticManager.shared.lightFeedback()
+                                    offset = -90
+                                } else {
+                                    offset = 0
+                                }
+                            }
+                        } else {
+                            withAnimation {
+                                offset = 0
+                            }
+                        }
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isSwiping = false
+                        }
+                    }
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .sheet(isPresented: $showingEditMeal) {
+            EditMealView(meal: meal)
+        }
+    }
+    
+    private func quickAddMeal() {
+        // Add each food from the meal as individual entries
+        for mealFood in meal.foods {
+            // MealFood stores total nutrition values for the total amount
+            // To reconstruct a proper FoodItem (which stores per-100g), calculate per-100g values
+            let per100gCalories = mealFood.servingSize > 0 ? Int(Double(mealFood.calories) / (mealFood.servingSize * mealFood.numberOfServings) * 100.0) : mealFood.calories
+            let per100gProtein = mealFood.servingSize > 0 ? mealFood.protein / (mealFood.servingSize * mealFood.numberOfServings) * 100.0 : mealFood.protein
+            let per100gCarbs = mealFood.servingSize > 0 ? mealFood.carbs / (mealFood.servingSize * mealFood.numberOfServings) * 100.0 : mealFood.carbs
+            let per100gFat = mealFood.servingSize > 0 ? mealFood.fat / (mealFood.servingSize * mealFood.numberOfServings) * 100.0 : mealFood.fat
+            
+            let foodItem = FoodItem(
+                name: mealFood.foodName,
+                brandName: mealFood.brandName,
+                barcode: nil,
+                calories: per100gCalories,
+                protein: per100gProtein,
+                carbs: per100gCarbs,
+                fat: per100gFat,
+                novaScore: mealFood.novaScore,
+                novaScoreIsEstimated: mealFood.novaScoreIsEstimated,
+                nutriScoreGrade: mealFood.nutriScoreGrade,
+                nutriScoreIsEstimated: mealFood.nutriScoreIsEstimated,
+                servingSize: "\(Int(mealFood.servingSize))\(mealFood.servingUnit)",
+                servingsPerPackage: nil,
+                isMeal: false
+            )
+            
+            // Add each food with its stored serving info from the meal
+            foodLogManager.addEntry(
+                foodItem: foodItem,
+                mealType: mealType,
+                servingSize: mealFood.servingSize,
+                servingUnit: mealFood.servingUnit,
+                numberOfServings: mealFood.numberOfServings,
+                date: selectedDate
+            )
+        }
+        
+        // Provide haptic feedback
+        HapticManager.shared.successFeedback()
+        
+        // Call completion handler
+        onQuickAdd()
+    }
+}
+
+// Simple macro label component for meal cards
+struct MacroLabel: View {
+    let value: Double
+    let label: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            
+            Text("\(Int(value))g")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.primary)
+            
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+        }
     }
 }

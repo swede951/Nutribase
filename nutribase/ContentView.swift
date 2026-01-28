@@ -7,78 +7,127 @@
 
 import SwiftUI
 
+// Tab enum for iOS 26 Tab syntax
+enum AppTab: Int, Hashable, CaseIterable {
+    case dashboard = 0
+    case foodLog = 1
+    case phases = 2
+    case weightLog = 3
+    case settings = 4
+}
+
+// Custom modifier to handle iOS 26 specific features with availability check
+struct iOS26TabBarModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .tabBarMinimizeBehavior(.never)
+        } else {
+            content
+        }
+    }
+}
+
 struct ContentView: View {
-    @State private var selectedTab = 0
+    @State private var selectedTab: AppTab = .dashboard
+    @State private var isDashboardLoaded = false
     
     // Setup notification observer for tab navigation
     init() {
         setupNotifications()
+        configureTabBarAppearance()
+    }
+    
+    // Configure tab bar appearance for iOS < 26
+    private func configureTabBarAppearance() {
+        if #unavailable(iOS 26.0) {
+            let appearance = UITabBarAppearance()
+            appearance.configureWithDefaultBackground()
+            
+            // Set unselected item color to black
+            appearance.stackedLayoutAppearance.normal.iconColor = .black
+            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.black]
+            
+            // Set selected item color to blue
+            let selectedColor = UIColor(red: 0.21, green: 0.72, blue: 1.0, alpha: 1.0) // #35b8ff
+            appearance.stackedLayoutAppearance.selected.iconColor = selectedColor
+            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: selectedColor]
+            
+            UITabBar.appearance().standardAppearance = appearance
+            UITabBar.appearance().scrollEdgeAppearance = appearance
+        }
     }
     
     // Setup notification observers
     private func setupNotifications() {
         // Listen for navigation to food log tab
         NotificationCenter.default.addObserver(forName: .navigateToFoodLog, object: nil, queue: .main) { [self] _ in
-            // Switch to the food log tab (index 1)
-            selectedTab = 1
+            // Switch to the food log tab
+            selectedTab = .foodLog
         }
     }
     
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
-            // Dashboard Tab
-            NavigationView {
-                DashboardView()
-                    .navigationBarHidden(true)
+                // Dashboard Tab
+                Tab("Dashboard", systemImage: "square.grid.2x2", value: .dashboard) {
+                    NavigationStack {
+                        DashboardView(onLoaded: { isDashboardLoaded = true })
+                            .navigationBarHidden(true)
+                    }
+                }
+                
+                // Food Log Tab
+                Tab("Food", systemImage: "fork.knife", value: .foodLog) {
+                    NavigationStack {
+                        FoodLogView()
+                            .navigationBarHidden(true)
+                    }
+                }
+                
+                // Phases Tab
+                Tab("Phases", systemImage: "calendar", value: .phases) {
+                    NavigationStack {
+                        TestPhasesView()
+                            .navigationBarHidden(true)
+                    }
+                }
+                
+                // Weight Log Tab
+                Tab("Weight", systemImage: "chart.line.uptrend.xyaxis", value: .weightLog) {
+                    NavigationStack {
+                        WeightLogView()
+                            .navigationBarHidden(true)
+                    }
+                }
+                
+                // Settings Tab
+                Tab("Settings", systemImage: "gear", value: .settings) {
+                    NavigationStack {
+                        SettingsView()
+                            .navigationBarHidden(true)
+                    }
+                }
             }
-            .tabItem {
-                Image(systemName: "square.grid.2x2")
+            .tabViewStyle(.tabBarOnly)
+            .modifier(iOS26TabBarModifier())
+            .tint(Color(hex: "#35b8ff"))
+            .keyboardDismissToolbar()
+            .transaction { transaction in
+                // Disable animation for instant tab switching
+                transaction.animation = nil
             }
-            .tag(0)
+            .onChange(of: selectedTab) { oldTab, newTab in
+                // Notify views to exit edit mode when switching tabs
+                NotificationCenter.default.post(name: .exitEditMode, object: nil)
+            }
             
-            // Food Log Tab
-            NavigationView {
-                FoodLogView()
-                    .navigationBarHidden(true)
+            // Show loading screen overlay until dashboard is loaded
+            if !isDashboardLoaded {
+                LoadingScreenView()
+                    .transition(.opacity)
             }
-            .tabItem {
-                Image(systemName: "fork.knife")
-            }
-            .tag(1)
-            
-            // Phases Tab (center button)
-            NavigationView {
-                PhasesView()
-                    .navigationBarHidden(true)
-            }
-            .tabItem {
-                Image(systemName: "calendar")
-                    .font(.title)
-            }
-            .tag(2)
-            
-            // Weight Log Tab
-            NavigationView {
-                WeightLogView()
-                    .navigationBarHidden(true)
-            }
-            .tabItem {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-            }
-            .tag(3)
-            
-            // Settings Tab
-            NavigationView {
-                SettingsView()
-                    .navigationBarHidden(true)
-            }
-            .tabItem {
-                Image(systemName: "gear")
-            }
-            .tag(4)
-            }
-            .accentColor(.blue) // Set the accent color for the selected tab
         }
     }
 }

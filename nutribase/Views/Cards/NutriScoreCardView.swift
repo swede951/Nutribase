@@ -5,57 +5,31 @@ struct NutriScoreCardWrapper<Content: View>: View {
     let content: Content
     @Binding var showingDetailView: Bool
     @Binding var showingInfo: Bool
+    let isPreview: Bool
     
-    init(showingDetailView: Binding<Bool>, showingInfo: Binding<Bool>, @ViewBuilder content: () -> Content) {
+    init(showingDetailView: Binding<Bool>, showingInfo: Binding<Bool>, isPreview: Bool = false, @ViewBuilder content: () -> Content) {
         self._showingDetailView = showingDetailView
         self._showingInfo = showingInfo
+        self.isPreview = isPreview
         self.content = content()
     }
     
     var body: some View {
-        Button(action: {
-            showingDetailView = true
-        }) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("Nutri-Score")
-                        .font(.custom("Montserrat-SemiBold", size: 17))
-                    Spacer()
-                    Button(action: {
-                        showingInfo = true
-                    }) {
-                        Image(systemName: "info.circle")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.bottom, 8)
-                
-                Spacer()
-                
-                // Center the content
-                VStack {
-                    Spacer()
-                    content
-                    Spacer()
-                }
-                
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .frame(height: 120)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
-            )
-            .contentShape(Rectangle())
+        // Don't pass tap actions in preview mode to allow drag gestures to work
+        FixedSizeCard(
+            title: "Nutri-Score",
+            showInfoButton: !isPreview,
+            onInfoTap: isPreview ? nil : { showingInfo = true },
+            onCardTap: isPreview ? nil : { showingDetailView = true }
+        ) {
+            content
         }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
 struct NutriScoreCardView: View {
+    var isPreview: Bool = false
+    
     @ObservedObject private var foodLogManager = FoodLogManager.shared
     
     // State for showing the detailed view
@@ -64,22 +38,43 @@ struct NutriScoreCardView: View {
     // Info button action
     @State private var showingInfo = false
     
-    // Calculate Nutri-Score distribution for the last 7 days only
-    private var weeklyNutriScores: [String: [String: Int]] {
-        // Only use days from the past week (today and 6 days before)
-        let calendar = Calendar.current
-        let today = Date()
-        let pastWeekDays = (0...6).compactMap { dayOffset -> (String, Date)? in
-            guard let date = calendar.date(byAdding: .day, value: -dayOffset, to: today) else { return nil }
+    // Cached data to avoid recalculating on every render
+    @State private var cachedWeeklyNutriScores: [(day: String, grades: [String: Int])] = []
+    @State private var lastEntriesCount: Int = 0
+    
+    // Preview data
+    private var previewWeeklyNutriScores: [(day: String, grades: [String: Int])] {
+        [
+            (day: "S", grades: ["a": 3, "b": 2, "c": 1, "d": 0, "e": 0]),
+            (day: "S", grades: ["a": 2, "b": 3, "c": 1, "d": 1, "e": 0]),
+            (day: "M", grades: ["a": 4, "b": 2, "c": 0, "d": 0, "e": 0]),
+            (day: "T", grades: ["a": 2, "b": 2, "c": 2, "d": 1, "e": 0]),
+            (day: "W", grades: ["a": 3, "b": 3, "c": 1, "d": 0, "e": 0]),
+            (day: "T", grades: ["a": 5, "b": 1, "c": 1, "d": 0, "e": 0]),
+            (day: "F", grades: ["a": 2, "b": 2, "c": 2, "d": 1, "e": 1])
+        ]
+    }
+    
+    // Use cached weekly Nutri-Scores
+    private var weeklyNutriScores: [(day: String, grades: [String: Int])] {
+        if isPreview { return previewWeeklyNutriScores }
+        return cachedWeeklyNutriScores
+    }
+    
+    // Calculate Nutri-Score distribution for the last 7 days
+    private func calculateWeeklyNutriScores() -> [(day: String, grades: [String: Int])] {
+        var scores: [(day: String, grades: [String: Int])] = []
+        
+        for daysAgo in (0..<7).reversed() {
+            // Get the date for this day (last 7 days)
+            let date = getDateForLastDays(daysAgo: daysAgo)
+            
+            // Get day letter
+            let calendar = Calendar.current
             let weekday = calendar.component(.weekday, from: date)
-            // Convert weekday to day abbreviation (1=Sunday, 2=Monday, etc.)
-            let dayAbbreviations = ["Su", "M", "Tu", "W", "Th", "F", "Sa"]
-            return (dayAbbreviations[weekday-1], date)
-        }
-        
-        var scores: [String: [String: Int]] = [:]
-        
-        for (day, date) in pastWeekDays {
+            let dayLetters = ["S", "M", "T", "W", "T", "F", "S"] // Sunday = 1, Monday = 2, etc.
+            let dayLetter = dayLetters[weekday - 1]
+            
             // Get entries for this date (all meal types)
             let entries = getAllEntriesForDate(date)
             
@@ -87,33 +82,25 @@ struct NutriScoreCardView: View {
             var gradeCounts: [String: Int] = ["a": 0, "b": 0, "c": 0, "d": 0, "e": 0]
             
             for entry in entries {
-                if let grade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
-                    gradeCounts[grade, default: 0] += 1
+                // Check if this is a meal - if so, count individual foods
+                if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                    for mealFood in savedMeal.foods {
+                        if let grade = mealFood.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
+                            gradeCounts[grade, default: 0] += 1
+                        }
+                    }
+                } else {
+                    // Regular food item
+                    if let grade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
+                        gradeCounts[grade, default: 0] += 1
+                    }
                 }
             }
             
-            scores[day] = gradeCounts
+            scores.append((day: dayLetter, grades: gradeCounts))
         }
         
         return scores
-    }
-    
-    // Calculate the dominant Nutri-Score grade for each day
-    private var dailyDominantGrades: [String: String] {
-        var dominantGrades: [String: String] = [:]
-        
-        for (day, grades) in weeklyNutriScores {
-            // Only include days that have actual food entries with grades
-            let totalEntries = grades.values.reduce(0, +)
-            if totalEntries > 0 {
-                let sortedGrades = grades.sorted { $0.value > $1.value }
-                if let topGrade = sortedGrades.first, topGrade.value > 0 {
-                    dominantGrades[day] = topGrade.key
-                }
-            }
-        }
-        
-        return dominantGrades
     }
     
     // Calculate weekly percentages for each Nutri-Score grade
@@ -121,8 +108,8 @@ struct NutriScoreCardView: View {
         var totalCounts: [String: Int] = ["a": 0, "b": 0, "c": 0, "d": 0, "e": 0]
         var totalItems = 0
         
-        for (_, grades) in weeklyNutriScores {
-            for (grade, count) in grades {
+        for dayData in weeklyNutriScores {
+            for (grade, count) in dayData.grades {
                 totalCounts[grade, default: 0] += count
                 totalItems += count
             }
@@ -149,34 +136,31 @@ struct NutriScoreCardView: View {
     }
     
     var body: some View {
-        NutriScoreCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo) {
-            // Main content with bars on left, percentages on right
-            HStack(alignment: .center, spacing: 16) {
-                // Weekday bars on the left (Monday to Sunday order)
-                HStack(alignment: .bottom, spacing: 8) {
-                    // Get all days of the week in order
-                    let allDays = ["M", "Tu", "W", "Th", "F", "Sa", "Su"].sorted(by: { weekdayOrder($0) < weekdayOrder($1) })
+        NutriScoreCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
+            // Main content with 25%/75% split layout
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    // Left side: Grade percentages centered at 25% from left
+                    VStack(spacing: 3) {
+                        gradePercentageRow(grade: "A", percentage: weeklyGradePercentages["a"] ?? 0, color: .green)
+                        gradePercentageRow(grade: "B", percentage: weeklyGradePercentages["b"] ?? 0, color: .blue)
+                        gradePercentageRow(grade: "C", percentage: weeklyGradePercentages["c"] ?? 0, color: .yellow)
+                        gradePercentageRow(grade: "D", percentage: weeklyGradePercentages["d"] ?? 0, color: .orange)
+                        gradePercentageRow(grade: "E", percentage: weeklyGradePercentages["e"] ?? 0, color: .red)
+                    }
+                    .frame(width: geometry.size.width * 0.5, alignment: .center)
                     
-                    // Show all days, but only with data for those that have entries
-                    ForEach(allDays, id: \.self) { day in
-                        if let grade = dailyDominantGrades[day] {
-                            // Day has data, show with grade
-                            NutriScoreDayBar(day: day, grade: grade)
-                        } else {
-                            // Day has no data, show empty bar
-                            NutriScoreDayBar(day: day, grade: "?")
+                    // Right side: Weekday bars centered at 75% from left
+                    HStack(alignment: .bottom, spacing: 6) {
+                        // Show all 7 days in order (oldest to newest, left to right)
+                        ForEach(Array(weeklyNutriScores.enumerated()), id: \.offset) { index, dayData in
+                            NutriScoreStackedDayBar(day: dayData.day, grades: dayData.grades)
                         }
                     }
+                    .frame(width: geometry.size.width * 0.5, alignment: .center)
                 }
-                .frame(minWidth: 180) // Minimum width for the bars section
-                
-                // Weekly average percentages stacked vertically on the right
-                VStack(spacing: 2) {
-                    percentageView(value: highQualityPercentage, label: "High Quality", color: .green)
-                    percentageView(value: lowQualityPercentage, label: "Low Quality", color: .red)
-                }
-                .frame(minWidth: 110) // Minimum width for the percentage column
             }
+            .frame(height: 80)
         }
         .sheet(isPresented: $showingDetailView) {
             NutriScoreDetailView()
@@ -184,50 +168,86 @@ struct NutriScoreCardView: View {
         .sheet(isPresented: $showingInfo) {
             NutriScoreInfoView()
         }
+        .allowsHitTesting(!isPreview)
+        .onAppear {
+            updateCacheIfNeeded()
+        }
+        .onChange(of: foodLogManager.entries.count) { _, _ in
+            updateCacheIfNeeded()
+        }
     }
     
-    // Helper function to determine weekday order (Monday to Sunday)
-    private func weekdayOrder(_ day: String) -> Int {
-        let order = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
-        return order.firstIndex(of: day) ?? 0
+    // Update cache only when entries change
+    private func updateCacheIfNeeded() {
+        guard !isPreview else { return }
+        let currentCount = foodLogManager.entries.count
+        if currentCount != lastEntriesCount || cachedWeeklyNutriScores.isEmpty {
+            cachedWeeklyNutriScores = calculateWeeklyNutriScores()
+            lastEntriesCount = currentCount
+        }
     }
     
-    // Helper function to create a percentage view
+    // Get date for X days ago
+    private func getDateForLastDays(daysAgo: Int) -> Date {
+        let calendar = Calendar.current
+        return calendar.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+    }
+    
+    // Helper function to create individual grade percentage rows
+    private func gradePercentageRow(grade: String, percentage: Double, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            
+            Text(grade)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: 12, alignment: .leading)
+            
+            Text("\(Int(percentage))%")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    // Helper function to create a percentage view with inactive state handling
     private func percentageView(value: Double, label: String, color: Color) -> some View {
-        HStack(alignment: .center, spacing: 4) {
+        let isInactive = value == 0.0
+        
+        return HStack(alignment: .center, spacing: 4) {
             Text("\(Int(value))%")
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundColor(color)
+                .foregroundColor(isInactive ? color.opacity(0.3) : color)
             
             Text(label)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(isInactive ? .secondary.opacity(0.5) : .secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .opacity(isInactive ? 0.6 : 1.0)
+        .animation(.easeInOut(duration: 0.3), value: isInactive)
     }
     
-    // This function is no longer used as we're now using explicit dates for the past 7 days
-    // Kept for reference in case we need to revert
+    // Get the date for a specific day abbreviation in the current week (Monday to Sunday)
     private func getDateForDay(_ day: String) -> Date {
         let calendar = Calendar.current
         let today = Date()
+        
+        // Get the start of the current week (Monday)
         let weekday = calendar.component(.weekday, from: today)
-        
-        // Map day string to weekday integer (1 = Sunday, 2 = Monday, etc.)
-        let dayMap = ["Su": 1, "M": 2, "Tu": 3, "W": 4, "Th": 5, "F": 6, "Sa": 7]
-        guard let targetWeekday = dayMap[day] else { return today }
-        
-        // Calculate the difference between today and the target day
-        var daysToAdd = targetWeekday - weekday
-        
-        // If the target day is in the future (later in the week), adjust to show current week
-        if daysToAdd > 0 {
-            daysToAdd -= 7 // Go back to the current/previous week
+        let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
+            return today
         }
         
-        // Create a date for the target day
-        return calendar.date(byAdding: .day, value: daysToAdd, to: today) ?? today
+        // Map day string to weekday integer (0 = Monday, 1 = Tuesday, etc.)
+        let dayMap = ["M": 0, "Tu": 1, "W": 2, "Th": 3, "F": 4, "Sa": 5, "Su": 6]
+        guard let dayOffset = dayMap[day] else { return today }
+        
+        // Create a date for the target day in the current week
+        return calendar.date(byAdding: .day, value: dayOffset, to: currentWeekStart) ?? today
     }
     
     // Helper to get all entries for a date across all meal types
@@ -242,6 +262,56 @@ struct NutriScoreCardView: View {
         }
         
         return allEntries
+    }
+}
+
+struct NutriScoreStackedDayBar: View {
+    let day: String
+    let grades: [String: Int]
+    
+    private let nutriScoreColors: [String: Color] = [
+        "a": Color(hex: "#22e83d"),      // Grade A - bright green
+        "b": Color(hex: "#8eff00"),      // Grade B - lime green  
+        "c": Color(hex: "#f4df70"),      // Grade C - yellow
+        "d": Color(hex: "#ffb300"),      // Grade D - orange
+        "e": Color(hex: "#ff5722")       // Grade E - red
+    ]
+    
+    private var totalEntries: Int {
+        grades.values.reduce(0, +)
+    }
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            // Stacked bar
+            ZStack(alignment: .bottom) {
+                // Background
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(.systemGray5))
+                    .frame(width: 12, height: 48)
+                
+                // Stacked segments (bottom to top: A, B, C, D, E)
+                if totalEntries > 0 {
+                    VStack(spacing: 0) {
+                        ForEach(["a", "b", "c", "d", "e"], id: \.self) { grade in
+                            let count = grades[grade] ?? 0
+                            if count > 0 {
+                                let heightPercentage = CGFloat(count) / CGFloat(totalEntries)
+                                Rectangle()
+                                    .fill(nutriScoreColors[grade] ?? .gray)
+                                    .frame(height: 48 * heightPercentage)
+                            }
+                        }
+                    }
+                    .frame(width: 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+            }
+            
+            Text(day)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
     }
 }
 
@@ -264,10 +334,10 @@ struct NutriScoreDayBar: View {
     // Calculate bar height based on grade (A=highest, E=lowest)
     private var barHeight: CGFloat {
         switch grade.lowercased() {
-        case "a": return 35.0
-        case "b": return 28.0
-        case "c": return 21.0
-        case "d": return 14.0
+        case "a": return 43.0
+        case "b": return 34.0
+        case "c": return 25.0
+        case "d": return 16.0
         case "e": return 7.0
         default: return 0.0
         }
@@ -275,14 +345,10 @@ struct NutriScoreDayBar: View {
     
     var body: some View {
         VStack(spacing: 4) {
-            Text(day)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            
             // Background bar
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: 3)
                 .fill(Color(.systemGray5))
-                .frame(width: 8, height: 35)
+                .frame(width: 12, height: 48)
                 .overlay(
                     // Colored bar based on grade
                     VStack(spacing: 0) {
@@ -290,12 +356,16 @@ struct NutriScoreDayBar: View {
                         
                         // Only show colored bar if we have a valid grade (a-e)
                         if ["a", "b", "c", "d", "e"].contains(grade.lowercased()) {
-                            RoundedRectangle(cornerRadius: 2)
+                            RoundedRectangle(cornerRadius: 3)
                                 .fill(gradeColor)
-                                .frame(width: 8, height: barHeight)
+                                .frame(width: 12, height: barHeight)
                         }
                     }
                 )
+            
+            Text(day)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 }
@@ -371,8 +441,34 @@ struct NutriScoreInfoView: View {
 struct NutriScoreDetailView: View {
     @ObservedObject private var foodLogManager = FoodLogManager.shared
     @Environment(\.presentationMode) var presentationMode
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    private var barEmptyBackground: Color {
+        colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)
+    }
+    
     @State private var currentWeekOffset: Int = 0
+    @State private var scrolledWeekID: Int? = 0
     @State private var animationOpacity: Double = 1.0
+    @State private var isLoading: Bool = true
+    
+    // Cache for weekly data to avoid recalculating on every render
+    @State private var weeklyDataCache: [Int: WeeklyNutriScoreData] = [:]
+    
+    // Struct to hold pre-computed weekly data
+    struct WeeklyNutriScoreData {
+        let gradeCounts: [String: Int]  // a, b, c, d, e -> count
+        let score: Double               // 0-100 weighted score
+        let dailyData: [String: [String: Int]]  // Day -> grade -> count
+    }
     
     // Colors for each Nutri-Score grade
     private let nutriScoreColors: [Color] = [
@@ -390,6 +486,15 @@ struct NutriScoreDetailView: View {
         "Average",
         "Poor",
         "Very Poor"
+    ]
+    
+    // Gauge colors (red to green, left to right - lower scores are red, higher scores are green)
+    private let gaugeColors: [Color] = [
+        Color(hex: "#ff5722"),      // Red (0-20) - Grade E
+        Color(hex: "#ffb300"),      // Orange (20-40) - Grade D
+        Color(hex: "#f4df70"),      // Yellow (40-60) - Grade C
+        Color(hex: "#8eff00"),      // Lime (60-80) - Grade B
+        Color(hex: "#22e83d")       // Green (80-100) - Grade A
     ]
     
     // Helper function to get all entries for a date across all meal types
@@ -411,50 +516,38 @@ struct NutriScoreDetailView: View {
         
         NavigationView {
             ZStack {
-                Color(hex: "#F0F1F4")
+                viewBackground
                     .ignoresSafeArea()
                 
+                if isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading Nutri-Score data...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                    
-                    // Weekly chart carousel with snap behavior
-                    ScrollViewReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 20) {
-                                // Generate cards chronologically: oldest (-10) on left, newest (0) on right
-                                ForEach(-10...0, id: \.self) { offset in
-                                    weeklyChartCard(for: offset)
-                                        .frame(width: screenWidth * 0.85, height: 280)
-                                        .fixedSize()
-                                        .id(offset)
-                                }
-                            }
-                            .padding(.horizontal, screenWidth * 0.075)
-                            .scrollTargetLayout()
-                        }
-                        .scrollTargetBehavior(.viewAligned)
-                        .defaultScrollAnchor(.trailing)
-                        .onScrollTargetVisibilityChange(idType: Int.self) { visibleIDs in
-                            if let centerID = visibleIDs.first {
-                                self.updateCurrentWeek(to: centerID)
-                            }
-                        }
-                        .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                proxy.scrollTo(0, anchor: .center)
-                            }
-                        }
-                        .frame(height: 320)
-                    }
+                        
+                        // Week selector carousel
+                        weekSelectorCarousel
+                        
+                        // Nutri-Score Gauge Card
+                        nutriScoreGaugeCard(for: currentWeekOffset)
+                            .padding(.horizontal)
+                        
+                        // Weekly chart card (single card that updates based on selected week)
+                        weeklyChartCard(for: currentWeekOffset)
+                            .padding(.horizontal)
+                            .opacity(animationOpacity)
                     
                     // Nutri-Score grade percentages
                     VStack(alignment: .leading, spacing: 16) {
                         // Title
                         Text("Nutri-Score Grade Distribution")
                             .font(.headline)
-                            .padding(.top, 16)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 4)
                             
                         // Grade percentages grid
                         LazyVGrid(columns: [
@@ -471,15 +564,8 @@ struct NutriScoreDetailView: View {
                                 )
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
                     }
                     .opacity(animationOpacity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
-                    )
                     .padding(.horizontal)
                     
                     // Nutri-Score explanation
@@ -488,37 +574,286 @@ struct NutriScoreDetailView: View {
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("Nutri-Score Details")
-            .navigationBarTitleDisplayMode(.inline)
             }
-            .background(Color.white)
+            }
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Nutri-Score Details")
-                        .font(.headline)
-                        .fontWeight(.bold)
+                    HStack {
+                        Text("Nutri-Score Details")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
-            .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .task {
+                await precomputeInitialData()
+            }
         }
     }
+    
+    // MARK: - Data Precomputation
+    
+    private func precomputeInitialData() async {
+        // Compute current week first
+        let currentData = await computeWeeklyData(for: 0)
+        await MainActor.run {
+            weeklyDataCache[0] = currentData
+            isLoading = false
+        }
+        
+        // Pre-compute adjacent weeks in background
+        Task.detached(priority: .background) {
+            let lastWeekData = await self.computeWeeklyData(for: -1)
+            await MainActor.run {
+                self.weeklyDataCache[-1] = lastWeekData
+            }
+        }
+    }
+    
+    private func computeWeeklyData(for weekOffset: Int) async -> WeeklyNutriScoreData {
+        let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
+        let grades = ["a", "b", "c", "d", "e"]
+        let weights: [Double] = [100, 75, 50, 25, 0]
+        
+        var gradeCounts: [String: Int] = ["a": 0, "b": 0, "c": 0, "d": 0, "e": 0]
+        var dailyData: [String: [String: Int]] = [:]
+        
+        for (index, day) in days.enumerated() {
+            let date = getDateForDay(index, weekOffset: weekOffset)
+            let entries = getAllEntriesForDate(date)
+            
+            var dayCounts: [String: Int] = ["a": 0, "b": 0, "c": 0, "d": 0, "e": 0]
+            
+            for entry in entries {
+                if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                    for mealFood in savedMeal.foods {
+                        if let grade = mealFood.nutriScoreGrade?.lowercased(), grades.contains(grade) {
+                            gradeCounts[grade, default: 0] += 1
+                            dayCounts[grade, default: 0] += 1
+                        }
+                    }
+                } else {
+                    if let grade = entry.foodItem.nutriScoreGrade?.lowercased(), grades.contains(grade) {
+                        gradeCounts[grade, default: 0] += 1
+                        dayCounts[grade, default: 0] += 1
+                    }
+                }
+            }
+            
+            dailyData[day] = dayCounts
+        }
+        
+        // Calculate weighted score
+        var totalWeighted: Double = 0
+        var totalCount: Double = 0
+        
+        for (index, grade) in grades.enumerated() {
+            let count = Double(gradeCounts[grade] ?? 0)
+            totalWeighted += count * weights[index]
+            totalCount += count
+        }
+        
+        let score = totalCount > 0 ? totalWeighted / totalCount : 0
+        
+        return WeeklyNutriScoreData(
+            gradeCounts: gradeCounts,
+            score: score,
+            dailyData: dailyData
+        )
+    }
+    
+    // MARK: - Nutri-Score Gauge
+    
+    // Get cached score or compute if not available
+    private func calculateNutriScore(for weekOffset: Int) -> Double {
+        if let cached = weeklyDataCache[weekOffset] {
+            return cached.score
+        }
+        return 0
+    }
+    
+    // Get cached grade count
+    private func getCachedGradeCount(for grade: String, weekOffset: Int) -> Int {
+        if let cached = weeklyDataCache[weekOffset] {
+            return cached.gradeCounts[grade] ?? 0
+        }
+        return 0
+    }
+    
+    // Get score color based on value
+    private func getScoreColor(_ score: Double) -> Color {
+        switch score {
+        case 80...100: return gaugeColors[4] // Green (A)
+        case 60..<80: return gaugeColors[3]  // Lime (B)
+        case 40..<60: return gaugeColors[2]  // Yellow (C)
+        case 20..<40: return gaugeColors[1]  // Orange (D)
+        default: return gaugeColors[0]       // Red (E)
+        }
+    }
+    
+    // Nutri-Score Gauge Card
+    private func nutriScoreGaugeCard(for weekOffset: Int) -> some View {
+        let score = calculateNutriScore(for: weekOffset)
+        
+        return VStack(spacing: 8) {
+            // Title
+            HStack {
+                Text("Nutri-Score")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+            .padding(.top, 12)
+            .padding(.horizontal, 16)
+            
+            // Gauge
+            VStack(spacing: 0) {
+                NutriScoreGauge(score: score, gaugeColors: gaugeColors)
+                    .frame(height: 120)
+                
+                // Score display below the gauge
+                Text("\(Int(score))")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(getScoreColor(score))
+                    .offset(y: -20)
+            }
+            .padding(.bottom, 8)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(cardBackground)
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+        )
+    }
+    
+    // Get count of a specific grade for a week
+    private func getWeeklyGradeCount(for grade: String, weekOffset: Int) -> Int {
+        var total = 0
+        let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
+        
+        for (index, _) in days.enumerated() {
+            let date = getDateForDay(index, weekOffset: weekOffset)
+            let entries = getAllEntriesForDate(date)
+            
+            for entry in entries {
+                if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                    for mealFood in savedMeal.foods {
+                        if mealFood.nutriScoreGrade?.lowercased() == grade {
+                            total += 1
+                        }
+                    }
+                } else {
+                    if entry.foodItem.nutriScoreGrade?.lowercased() == grade {
+                        total += 1
+                    }
+                }
+            }
+        }
+        
+        return total
+    }
+    
+    // Get date for a specific day index within a week offset
+    private func getDateForDay(_ dayIndex: Int, weekOffset: Int) -> Date {
+        let calendar = Calendar.current
+        let today = Date()
+        
+        // Get the start of the current week (Monday)
+        let weekday = calendar.component(.weekday, from: today)
+        let daysToSubtract = weekday == 1 ? 6 : weekday - 2
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
+            return today
+        }
+        
+        // Apply week offset
+        guard let targetWeekStart = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: currentWeekStart) else {
+            return today
+        }
+        
+        return calendar.date(byAdding: .day, value: dayIndex, to: targetWeekStart) ?? today
+    }
+    
+    // MARK: - Week Selector Carousel
+    
+    private var weekSelectorCarousel: some View {
+        let cardWidth: CGFloat = 170
+        
+        return ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 12) {
+                ForEach(-10...0, id: \.self) { offset in
+                    weekSelectorCard(for: offset)
+                        .frame(width: cardWidth)
+                        .id(offset)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollPosition(id: $scrolledWeekID)
+        .scrollTargetBehavior(.viewAligned)
+        .safeAreaPadding(.horizontal, (UIScreen.main.bounds.width - cardWidth) / 2)
+        .defaultScrollAnchor(.trailing)
+        .onChange(of: scrolledWeekID) { oldValue, newValue in
+            if let newValue = newValue, newValue != currentWeekOffset {
+                updateCurrentWeek(to: newValue)
+            }
+        }
+        .frame(height: 50)
+    }
+    
+    private func weekSelectorCard(for offset: Int) -> some View {
+        let isSelected = offset == currentWeekOffset
+        
+        return Text(weekDateRangeString(for: offset))
+            .font(.subheadline)
+            .fontWeight(isSelected ? .semibold : .regular)
+            .foregroundColor(isSelected ? .white : .primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color(hex: "#35b8ff") : cardBackground)
+                    .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+            )
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    scrolledWeekID = offset
+                }
+            }
+    }
+    
+    // MARK: - Week Update Animation
     
     // Helper function to update current week with animation
     private func updateCurrentWeek(to offset: Int) {
         if currentWeekOffset != offset {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                animationOpacity = 0.0
+            withAnimation(.easeInOut(duration: 0.2)) {
+                animationOpacity = 0.8
             }
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            // Load data for new week if not cached
+            Task(priority: .userInitiated) {
+                if weeklyDataCache[offset] == nil {
+                    let data = await computeWeeklyData(for: offset)
+                    await MainActor.run {
+                        weeklyDataCache[offset] = data
+                    }
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 currentWeekOffset = offset
-                withAnimation(.easeInOut(duration: 0.3)) {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     animationOpacity = 1.0
                 }
             }
@@ -532,31 +867,14 @@ struct NutriScoreDetailView: View {
             HStack {
                 Text("Weekly Average")
                     .font(.headline)
-                    .foregroundColor(.black)
+                    .foregroundColor(.primary)
                 
                 Spacer()
                 
-                // Week navigation
-                HStack(spacing: 12) {
-                    Button(action: {
-                        // Navigate to previous week
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Text(weekDateRangeString(for: offset))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Button(action: {
-                        // Navigate to next week
-                    }) {
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(offset < 0 ? .secondary : .gray)
-                    }
-                    .disabled(offset >= 0)
-                }
+                // Date display
+                Text(weekDateRangeString(for: offset))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
             }
             .padding(.top, 12)
             .padding(.horizontal, 16)
@@ -569,7 +887,7 @@ struct NutriScoreDetailView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -634,7 +952,7 @@ struct NutriScoreDetailView: View {
                                         ZStack(alignment: .bottom) {
                                             // Background
                                             Rectangle()
-                                                .fill(Color(.systemGray6))
+                                                .fill(barEmptyBackground)
                                                 .frame(height: geometry.size.height * 0.8)
                                             
                                             // Stacked segments
@@ -720,7 +1038,7 @@ struct NutriScoreDetailView: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -775,7 +1093,7 @@ struct NutriScoreDetailView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -829,13 +1147,28 @@ struct NutriScoreDetailView: View {
             return 0
         }
         
-        // Calculate total items for the day
-        let totalItems = entries.count
+        // Count total items and grade items, expanding meals
+        var totalItems = 0
+        var gradeItems = 0
         
-        // Calculate items from the specified Nutri-Score grade
-        let gradeItems = entries.reduce(0) { result, entry in
-            let entryGrade = entry.foodItem.nutriScoreGrade?.lowercased() ?? ""
-            return result + (entryGrade == grade ? 1 : 0)
+        for entry in entries {
+            if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                for mealFood in savedMeal.foods {
+                    if let foodGrade = mealFood.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(foodGrade) {
+                        totalItems += 1
+                        if foodGrade == grade {
+                            gradeItems += 1
+                        }
+                    }
+                }
+            } else {
+                if let entryGrade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(entryGrade) {
+                    totalItems += 1
+                    if entryGrade == grade {
+                        gradeItems += 1
+                    }
+                }
+            }
         }
         
         // Calculate percentage
@@ -857,8 +1190,16 @@ struct NutriScoreDetailView: View {
         var gradeCounts: [String: Int] = ["a": 0, "b": 0, "c": 0, "d": 0, "e": 0]
         
         for entry in entries {
-            if let grade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
-                gradeCounts[grade, default: 0] += 1
+            if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                for mealFood in savedMeal.foods {
+                    if let grade = mealFood.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
+                        gradeCounts[grade, default: 0] += 1
+                    }
+                }
+            } else {
+                if let grade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(grade) {
+                    gradeCounts[grade, default: 0] += 1
+                }
             }
         }
         
@@ -866,29 +1207,15 @@ struct NutriScoreDetailView: View {
         return sortedGrades.first?.key ?? "?"
     }
     
-    // Calculate the weekly percentage for a specific grade with a specific week offset
+    // Calculate the weekly percentage for a specific grade with a specific week offset - uses cached data
     private func calculateWeeklyPercentage(for grade: String, weekOffset: Int = 0) -> Double {
-        let days = getDaysOfWeek(for: weekOffset)
-        var totalGradeCount = 0
-        var totalItems = 0
-        
-        // Sum up items for each day
-        for day in days {
-            let date = getDateForDay(day, weekOffset: weekOffset)
-            let entries = getAllEntriesForDate(date)
-            
-            for entry in entries {
-                if let entryGrade = entry.foodItem.nutriScoreGrade?.lowercased(), ["a", "b", "c", "d", "e"].contains(entryGrade) {
-                    totalItems += 1
-                    if entryGrade == grade {
-                        totalGradeCount += 1
-                    }
-                }
-            }
+        // Use cached data if available for performance
+        if let cached = weeklyDataCache[weekOffset] {
+            let gradeCount = cached.gradeCounts[grade] ?? 0
+            let totalItems = cached.gradeCounts.values.reduce(0, +)
+            return totalItems > 0 ? (Double(gradeCount) / Double(totalItems) * 100.0) : 0
         }
-        
-        // Calculate percentage
-        return totalItems > 0 ? (Double(totalGradeCount) / Double(totalItems) * 100.0) : 0
+        return 0
     }
     
     // Get the date range string for a specific week offset
@@ -896,29 +1223,21 @@ struct NutriScoreDetailView: View {
         let calendar = Calendar.current
         let today = Date()
         
-        // For current week (offset 0), show rolling 7-day range
-        if offset == 0 {
-            guard let startDate = calendar.date(byAdding: .day, value: -6, to: today) else {
-                return "Week of \(formatDate(today))"
-            }
-            return "\(formatDate(startDate)) - \(formatDate(today))"
-        } else {
-            // For other weeks, use calendar week approach
-            let weekday = calendar.component(.weekday, from: today)
-            let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
-            
-            guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
-                return "Week of \(formatDate(today))"
-            }
-            
-            // Apply the week offset
-            guard let selectedWeekStart = calendar.date(byAdding: .day, value: 7 * offset, to: currentWeekStart),
-                  let selectedWeekEnd = calendar.date(byAdding: .day, value: 6, to: selectedWeekStart) else {
-                return "Week of \(formatDate(today))"
-            }
-            
-            return "\(formatDate(selectedWeekStart)) - \(formatDate(selectedWeekEnd))"
+        // Use calendar week approach for all weeks (Monday to Sunday)
+        let weekday = calendar.component(.weekday, from: today)
+        let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
+        
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
+            return "Week of \(formatDate(today))"
         }
+        
+        // Apply the week offset
+        guard let selectedWeekStart = calendar.date(byAdding: .day, value: 7 * offset, to: currentWeekStart),
+              let selectedWeekEnd = calendar.date(byAdding: .day, value: 6, to: selectedWeekStart) else {
+            return "Week of \(formatDate(today))"
+        }
+        
+        return "\(formatDate(selectedWeekStart)) - \(formatDate(selectedWeekEnd))"
     }
     
     // Format date as MMM d (e.g., "Jul 23")
@@ -933,46 +1252,25 @@ struct NutriScoreDetailView: View {
         let calendar = Calendar.current
         let today = Date()
         
-        // For current week (offset 0), use rolling 7-day approach like dashboard
-        if weekOffset == 0 {
-            // Map day abbreviation to how many days ago it was
-            let dayMap = ["M": 0, "Tu": 1, "W": 2, "Th": 3, "F": 4, "Sa": 5, "Su": 6]
-            
-            // Find today's weekday and calculate days back to target day
-            let todayWeekday = calendar.component(.weekday, from: today)
-            let todayDayAbbrev = ["Su", "M", "Tu", "W", "Th", "F", "Sa"][todayWeekday - 1]
-            
-            // Calculate how many days back the target day is from today
-            let todayIndex = dayMap[todayDayAbbrev] ?? 0
-            let targetIndex = dayMap[day] ?? 0
-            
-            var daysBack = todayIndex - targetIndex
-            if daysBack < 0 {
-                daysBack += 7 // If target day is "in the future", it's actually last week
-            }
-            
-            return calendar.date(byAdding: .day, value: -daysBack, to: today) ?? today
-        } else {
-            // For other weeks, use calendar week approach
-            // Get the start of the current week (Monday)
-            let weekday = calendar.component(.weekday, from: today)
-            let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
-            guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
-                return today
-            }
-            
-            // Apply the week offset to get the selected week's start date
-            guard let selectedWeekStart = calendar.date(byAdding: .day, value: 7 * weekOffset, to: currentWeekStart) else {
-                return today
-            }
-            
-            // Map day string to weekday integer (0 = Monday, 1 = Tuesday, etc.)
-            let dayMap = ["M": 0, "Tu": 1, "W": 2, "Th": 3, "F": 4, "Sa": 5, "Su": 6]
-            guard let dayOffset = dayMap[day] else { return today }
-            
-            // Create a date for the target day in the selected week
-            return calendar.date(byAdding: .day, value: dayOffset, to: selectedWeekStart) ?? today
+        // Use calendar week approach for all weeks (Monday to Sunday)
+        // Get the start of the current week (Monday)
+        let weekday = calendar.component(.weekday, from: today)
+        let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
+            return today
         }
+        
+        // Apply the week offset to get the selected week's start date
+        guard let selectedWeekStart = calendar.date(byAdding: .day, value: 7 * weekOffset, to: currentWeekStart) else {
+            return today
+        }
+        
+        // Map day string to weekday integer (0 = Monday, 1 = Tuesday, etc.)
+        let dayMap = ["M": 0, "Tu": 1, "W": 2, "Th": 3, "F": 4, "Sa": 5, "Su": 6]
+        guard let dayOffset = dayMap[day] else { return today }
+        
+        // Create a date for the target day in the selected week
+        return calendar.date(byAdding: .day, value: dayOffset, to: selectedWeekStart) ?? today
     }
     
     // Helper function to determine weekday order (Monday to Sunday)
@@ -1108,6 +1406,107 @@ struct NutriScoreDetailView: View {
             }
         }
         .frame(height: 40)
+    }
+}
+
+// 240-degree gauge view with needle for Nutri-Score
+struct NutriScoreGauge: View {
+    let score: Double // 0-100
+    let gaugeColors: [Color]
+    
+    // 240 degree arc: starts at 150° (bottom-left), ends at 30° (bottom-right)
+    // 0 score = 150° (left), 100 score = 390° (30° = 360+30)
+    private var needleRotation: Double {
+        // Map 0-100 to 150 to 390 degrees (240 degree sweep)
+        return 150.0 + (score / 100.0) * 240.0
+    }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let centerY = geometry.size.height * 0.6 // Move center up a bit for 240° arc
+            let center = CGPoint(x: geometry.size.width / 2, y: centerY)
+            let radius = min(geometry.size.width / 2, geometry.size.height * 0.8) - 10
+            let innerRadius = radius * 0.70
+            let segmentAngle = 240.0 / 5.0 // 48 degrees per segment
+            
+            ZStack {
+                // Draw colored segments (5 segments, 48 degrees each = 240/5)
+                ForEach(0..<5, id: \.self) { index in
+                    Path { path in
+                        // Start at 150° (bottom-left), sweep 240° clockwise to 390° (30°)
+                        let startAngle = Angle(degrees: 150.0 + Double(index) * segmentAngle)
+                        let endAngle = Angle(degrees: 150.0 + Double(index + 1) * segmentAngle - 2) // Small gap
+                        
+                        path.addArc(center: center, radius: radius,
+                                    startAngle: startAngle, endAngle: endAngle,
+                                    clockwise: false)
+                        path.addArc(center: center, radius: innerRadius,
+                                    startAngle: endAngle, endAngle: startAngle,
+                                    clockwise: true)
+                        path.closeSubpath()
+                    }
+                    .fill(gaugeColors[index])
+                }
+                
+                // Needle
+                Path { path in
+                    let needleLength = radius * 0.80
+                    let needleWidth: CGFloat = 6
+                    
+                    // Needle pointer (triangle)
+                    let angle = Angle(degrees: needleRotation).radians
+                    let tipX = center.x + cos(angle) * needleLength
+                    let tipY = center.y + sin(angle) * needleLength
+                    
+                    let leftAngle = angle + .pi / 2
+                    let rightAngle = angle - .pi / 2
+                    let baseLeftX = center.x + cos(leftAngle) * (needleWidth * 0.6)
+                    let baseLeftY = center.y + sin(leftAngle) * (needleWidth * 0.6)
+                    let baseRightX = center.x + cos(rightAngle) * (needleWidth * 0.6)
+                    let baseRightY = center.y + sin(rightAngle) * (needleWidth * 0.6)
+                    
+                    path.move(to: CGPoint(x: tipX, y: tipY))
+                    path.addLine(to: CGPoint(x: baseLeftX, y: baseLeftY))
+                    path.addLine(to: CGPoint(x: baseRightX, y: baseRightY))
+                    path.closeSubpath()
+                }
+                .fill(Color(.label))
+                
+                // Center dot
+                Circle()
+                    .fill(Color(.label))
+                    .frame(width: 12, height: 12)
+                    .position(center)
+                
+                Circle()
+                    .fill(Color(.systemBackground))
+                    .frame(width: 6, height: 6)
+                    .position(center)
+                
+                // Scale labels at arc ends
+                let labelRadius = radius + 12
+                let startLabelAngle = Angle(degrees: 150).radians
+                let endLabelAngle = Angle(degrees: 30).radians
+                
+                Text("0")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                    .position(
+                        x: center.x + cos(startLabelAngle) * labelRadius,
+                        y: center.y + sin(startLabelAngle) * labelRadius
+                    )
+                
+                Text("100")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                    .position(
+                        x: center.x + cos(endLabelAngle) * labelRadius,
+                        y: center.y + sin(endLabelAngle) * labelRadius
+                    )
+            }
+        }
     }
 }
 

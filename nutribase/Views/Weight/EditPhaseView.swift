@@ -9,16 +9,17 @@ import SwiftUI
 
 struct EditPhaseView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var phaseManager = WeightPhaseManager.shared
+    @ObservedObject private var phaseManager = WeightPhaseManager.shared
     let phase: WeightPhase
     
     @State private var name: String = ""
     @State private var startDate: Date = Date()
     @State private var endDate: Date = Date()
+    @State private var hasEndDate: Bool = true
     @State private var targetWeeklyRate: Double = -0.5
     @State private var goalWeight: String = ""
     @State private var currentWeight: Double = 0.0
-    @State private var selectedColor: PhaseColor = .red
+    @State private var selectedColor: PhaseColor = .blue
     @State private var notes: String = ""
     
     @State private var showingError = false
@@ -35,27 +36,37 @@ struct EditPhaseView: View {
                 
                 Section("Date Range") {
                     DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
-                    DatePicker("End Date", selection: $endDate, displayedComponents: .date)
                     
-                    if startDate >= endDate {
-                        Text("End date must be after start date")
-                            .foregroundColor(.red)
-                            .font(.caption)
+                    Toggle("Set End Date", isOn: $hasEndDate)
+                        .onChange(of: hasEndDate) { oldValue, newValue in
+                            if newValue {
+                                // When enabling end date, set it to a reasonable default
+                                endDate = Calendar.current.date(byAdding: .month, value: 2, to: startDate) ?? startDate
+                            }
+                        }
+                    
+                    if hasEndDate {
+                        DatePicker("End Date", selection: $endDate, displayedComponents: .date)
+                        
+                        if startDate >= endDate {
+                            Text("End date must be after start date")
+                                .foregroundColor(.red)
+                                .font(.caption)
+                        }
+                    } else {
+                        HStack {
+                            Text("End Date")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("Open-ended")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
+                        }
                     }
                 }
                 
                 Section("Target") {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Current Weight:")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("\(String(format: "%.1f", currentWeight)) kg")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                        
                         HStack {
                             Text("Goal Weight:")
                                 .font(.subheadline)
@@ -68,36 +79,6 @@ struct EditPhaseView: View {
                                 .multilineTextAlignment(.trailing)
                         }
                         
-                        if let goalWeightValue = Double(goalWeight), goalWeightValue > 0 {
-                            let weightDifference = goalWeightValue - currentWeight
-                            let phaseDurationWeeks = calculatePhaseDurationInWeeks()
-                            let calculatedWeeklyRate = phaseDurationWeeks > 0 ? weightDifference / phaseDurationWeeks : 0
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("Required Weekly Rate:")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(calculatedWeeklyRate >= 0 ? "+" : "")\(String(format: "%.2f", calculatedWeeklyRate)) kg/week")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(calculatedWeeklyRate < 0 ? .red : calculatedWeeklyRate > 0 ? .green : .blue)
-                                }
-                                
-                                HStack {
-                                    Text("Total Change:")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(weightDifference >= 0 ? "+" : "")\(String(format: "%.1f", weightDifference)) kg")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(weightDifference < 0 ? .red : weightDifference > 0 ? .green : .blue)
-                                }
-                            }
-                            .padding(.top, 8)
-                        }
                     }
                 }
                 
@@ -121,12 +102,6 @@ struct EditPhaseView: View {
                     .padding(.vertical, 8)
                 }
                 
-                Section("Notes (Optional)") {
-                    TextField("Additional notes...", text: $notes, axis: .vertical)
-                        .lineLimit(3...6)
-                        .textInputAutocapitalization(.sentences)
-                }
-                
                 // Delete Phase Section
                 Section {
                     Button("Delete Phase") {
@@ -134,6 +109,18 @@ struct EditPhaseView: View {
                     }
                     .foregroundColor(.red)
                     .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.blue)
+                    }
                 }
             }
             .navigationTitle("Edit Phase")
@@ -147,12 +134,14 @@ struct EditPhaseView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         savePhase()
                     }
+                    .foregroundColor(.primary)
                     .disabled(!isValidPhase)
                 }
             }
@@ -173,13 +162,43 @@ struct EditPhaseView: View {
     }
     
     private var isValidPhase: Bool {
-        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-               startDate < endDate
+        let nameValid = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let dateValid = hasEndDate ? startDate < endDate : true
+        return nameValid && dateValid
     }
     
     private func calculatePhaseDurationInWeeks() -> Double {
-        let totalDays = Calendar.current.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        let effectiveEndDate = hasEndDate ? endDate : getDefaultEndDate()
+        let totalDays = Calendar.current.dateComponents([.day], from: startDate, to: effectiveEndDate).day ?? 0
         return Double(totalDays) / 7.0
+    }
+    
+    private func getDefaultEndDate() -> Date {
+        // For open-ended phases, use end of current month
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // Get the end of the current month
+        guard let endOfMonth = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: calendar.startOfDay(for: calendar.date(from: calendar.dateComponents([.year, .month], from: now))!)) else {
+            return now
+        }
+        
+        return endOfMonth
+    }
+    
+    private func getDisplayEndDate() -> Date {
+        // For display purposes, show end of current month
+        let calendar = Calendar.current
+        let currentDate = Date()
+        let startOfCurrentMonth = calendar.dateInterval(of: .month, for: currentDate)?.start ?? currentDate
+        let endOfCurrentMonth = calendar.date(byAdding: .day, value: -1, to: calendar.date(byAdding: .month, value: 1, to: startOfCurrentMonth) ?? startOfCurrentMonth) ?? currentDate
+        return endOfCurrentMonth
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
     }
     
     private func loadPhaseData() {
@@ -193,6 +212,8 @@ struct EditPhaseView: View {
         name = currentPhase.name
         startDate = currentPhase.startDate
         endDate = currentPhase.endDate
+        // Check if this phase has a meaningful end date or is open-ended
+        hasEndDate = !isOpenEndedPhase(currentPhase)
         targetWeeklyRate = currentPhase.targetWeeklyRate
         selectedColor = currentPhase.color
         notes = currentPhase.notes ?? ""
@@ -209,6 +230,7 @@ struct EditPhaseView: View {
         name = phase.name
         startDate = phase.startDate
         endDate = phase.endDate
+        hasEndDate = !isOpenEndedPhase(phase)
         targetWeeklyRate = phase.targetWeeklyRate
         selectedColor = phase.color
         notes = phase.notes ?? ""
@@ -228,12 +250,9 @@ struct EditPhaseView: View {
     }
     
     private func savePhase() {
-        // Check for date conflicts (excluding current phase)
-        if phaseManager.hasConflict(startDate: startDate, endDate: endDate, excluding: phase.id) {
-            errorMessage = "This date range conflicts with an existing phase. Please choose different dates."
-            showingError = true
-            return
-        }
+        let effectiveEndDate = hasEndDate ? endDate : getDefaultEndDate()
+        
+        // Phases are allowed to overlap - no conflict check needed
         
         // Calculate weekly rate from goal weight if provided
         let finalWeeklyRate: Double
@@ -245,16 +264,22 @@ struct EditPhaseView: View {
             finalWeeklyRate = targetWeeklyRate
         }
         
+        // Normalize dates to start of day to avoid time component issues
+        let calendar = Calendar.current
+        let normalizedStartDate = calendar.startOfDay(for: startDate)
+        let normalizedEndDate = calendar.startOfDay(for: effectiveEndDate)
+        
         let updatedPhase = WeightPhase(
             id: phase.id,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             description: generateDefaultDescription(weeklyRate: finalWeeklyRate),
-            startDate: startDate,
-            endDate: endDate,
+            startDate: normalizedStartDate,
+            endDate: normalizedEndDate,
             targetWeeklyRate: finalWeeklyRate,
             color: selectedColor,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            goalWeight: goalWeight.isEmpty ? nil : Double(goalWeight)
+            goalWeight: goalWeight.isEmpty ? nil : Double(goalWeight),
+            isOpenEnded: !hasEndDate
         )
         
         phaseManager.updatePhase(updatedPhase)
@@ -275,6 +300,11 @@ struct EditPhaseView: View {
             return "Maintain current weight and body composition"
         }
     }
+    
+    private func isOpenEndedPhase(_ phase: WeightPhase) -> Bool {
+        // Check the isOpenEnded flag
+        return phase.isOpenEnded
+    }
 }
 
 #Preview {
@@ -284,6 +314,6 @@ struct EditPhaseView: View {
         startDate: Date(),
         endDate: Calendar.current.date(byAdding: .month, value: 2, to: Date()) ?? Date(),
         targetWeeklyRate: -0.5,
-        color: .red
+        color: .blue
     ))
 }

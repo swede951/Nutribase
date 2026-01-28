@@ -2,920 +2,1199 @@
 //  WeightChartCardView.swift
 //  nutribase
 //
-//  Created by Cascade on 2025-07-24.
+//  Rewritten for performance: Canvas-based detail chart with scrubbing
 //
 
 import SwiftUI
-import Charts
+import Charts   // still used for the tiny dashboard preview only
+
+// MARK: - Dashboard Card (unchanged UI, lightweight Chart)
+
+enum WeightChartSizeMode: String, CaseIterable {
+    case compact = "1×1"
+    case expanded = "2×3"
+}
 
 struct WeightChartCardView: View {
-    // MARK: - Dependencies
+    var isPreview: Bool = false
+    var customPreviewWeight: Double? = nil  // Optional custom weight for onboarding flat line
+    
     @ObservedObject private var weightLogManager = WeightLogManager.shared
-    @ObservedObject private var chartCache = WeightChartCache.shared
-    
-    // MARK: - State
     @State private var showingDetailView = false
-    @State private var isLoadingData = false
+    @AppStorage("weightChartSizeMode") private var sizeMode: WeightChartSizeMode = .compact
     
-    // MARK: - Computed Properties
-    /// Recent weight entries for card preview (last year with weekly averaging)
-    private var recentWeights: [WeightLogEntry] {
-        let allEntries = weightLogManager.allEntries.sorted { $0.date < $1.date }
-        
-        guard let mostRecentDate = allEntries.last?.date else { return [] }
-        
-        let oneYearAgo = Calendar.current.date(byAdding: .year, value: -1, to: mostRecentDate) ?? mostRecentDate
-        let filteredEntries = allEntries.filter { $0.date >= oneYearAgo }
-        
-        return calculateWeeklyAveragesForPreview(from: filteredEntries)
-    }
+    // Cache for dashboard preview data (compact mode)
+    @State private var cachedRecentWeights: [WeightLogEntry] = []
+    @State private var lastEntriesHash: Int = 0
     
-    // MARK: - Helper Methods
-    /// Calculate weekly averages for preview chart
-    private func calculateWeeklyAveragesForPreview(from entries: [WeightLogEntry]) -> [WeightLogEntry] {
-        guard !entries.isEmpty else { return entries }
-        
-        let sortedEntries = entries.sorted { $0.date < $1.date }
+    // Expanded mode state (detailed chart with scrubbing)
+    @State private var expandedSelectedTimeFrame: TimeFrame = .allTime
+    @State private var expandedPoints: [WeightLogEntry] = []
+    @State private var expandedXDomain: ClosedRange<Date> = Date()...Date()
+    @State private var expandedYDomain: ClosedRange<Double> = 0...100
+    @State private var expandedSelectedIndex: Int? = nil
+    @State private var expandedIsLoading = true
+    @State private var expandedSmoothedDataCache: [TimeFrame: [WeightLogEntry]] = [:]
+    @State private var expandedLastDataHash: Int = 0
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
+    
+    // Static preview data for Widget Gallery - use custom weight if provided (flat line)
+    private var previewWeights: [(date: Date, weight: Double)] {
         let calendar = Calendar.current
-        var weeklyAverages: [WeightLogEntry] = []
-        var currentWeekEntries: [WeightLogEntry] = []
-        var currentWeekStart: Date?
+        let today = Date()
         
-        for entry in sortedEntries {
-            let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.date)?.start
-            
-            if currentWeekStart == nil {
-                currentWeekStart = weekStart
-                currentWeekEntries = [entry]
-            } else if weekStart == currentWeekStart {
-                currentWeekEntries.append(entry)
+        // If custom weight provided, show flat line at that weight
+        if let customWeight = customPreviewWeight {
+            return [
+                (calendar.date(byAdding: .day, value: -60, to: today)!, customWeight),
+                (calendar.date(byAdding: .day, value: -30, to: today)!, customWeight),
+                (today, customWeight)
+            ]
+        }
+        
+        // Default preview with declining trend
+        return [
+            (calendar.date(byAdding: .day, value: -60, to: today)!, 88.5),
+            (calendar.date(byAdding: .day, value: -50, to: today)!, 87.8),
+            (calendar.date(byAdding: .day, value: -40, to: today)!, 87.2),
+            (calendar.date(byAdding: .day, value: -30, to: today)!, 86.5),
+            (calendar.date(byAdding: .day, value: -20, to: today)!, 86.0),
+            (calendar.date(byAdding: .day, value: -10, to: today)!, 85.5),
+            (today, 85.0)
+        ]
+    }
+
+    /// Always show 3 months for dashboard preview
+    private var dashboardTimeframe: TimeFrame {
+        return .threeMonths
+    }
+
+    /// Recent smoothed data for the small preview chart (3 months) - cached
+    private var recentWeights: [WeightLogEntry] {
+        return cachedRecentWeights
+    }
+    
+    /// Update cached data if entries changed
+    private func updateCacheIfNeeded() {
+        let allEntries = weightLogManager.allEntries
+        let currentHash = allEntries.map { $0.id.hashValue }.reduce(0, ^)
+        
+        if currentHash != lastEntriesHash {
+            let sorted = allEntries.sorted { $0.date < $1.date }
+            if !sorted.isEmpty {
+                cachedRecentWeights = smoothedTrendForDashboard(from: sorted, timeframe: dashboardTimeframe)
             } else {
-                // Process the completed week
-                if let avgEntry = createWeeklyAverageForPreview(from: currentWeekEntries) {
-                    weeklyAverages.append(avgEntry)
-                }
-                
-                // Start new week
-                currentWeekStart = weekStart
-                currentWeekEntries = [entry]
+                cachedRecentWeights = []
             }
+            lastEntriesHash = currentHash
         }
-        
-        // Process the last week
-        if let avgEntry = createWeeklyAverageForPreview(from: currentWeekEntries) {
-            weeklyAverages.append(avgEntry)
-        }
-        
-        return weeklyAverages
     }
-    
-    // Create a single weekly average entry for preview
-    private func createWeeklyAverageForPreview(from entries: [WeightLogEntry]) -> WeightLogEntry? {
-        guard !entries.isEmpty else { return nil }
-        
-        let averageWeight = entries.map { $0.weight }.reduce(0, +) / Double(entries.count)
-        let middleDate = entries.sorted { $0.date < $1.date }[entries.count / 2].date
-        
-        return WeightLogEntry(
-            id: UUID(),
-            date: middleDate,
-            weight: averageWeight,
-            movingAverage: averageWeight,
-            weeklyRate: nil,
-            notes: "Weekly Average"
-        )
-    }
-    
-    // Calculate dynamic Y-axis range for better visibility
+
+    /// Y-range for the preview chart
     private var yAxisRange: ClosedRange<Double> {
-        guard !recentWeights.isEmpty else { return 0...100 }
-        
-        let weights = recentWeights.map { $0.weight }
-        let minWeight = weights.min() ?? 0
-        let maxWeight = weights.max() ?? 100
-        
-        // Add 5% padding above and below the actual range
-        let range = maxWeight - minWeight
-        let padding = max(range * 0.05, 2.0) // At least 2kg padding
-        
-        return (minWeight - padding)...(maxWeight + padding)
+        guard !cachedRecentWeights.isEmpty else { return 0 ... 100 }
+        let weights = cachedRecentWeights.map { $0.weight }
+        let minW = weights.min() ?? 0
+        let maxW = weights.max() ?? 100
+        let range = maxW - minW
+        let padding = max(range * 0.05, 2.0)
+        return (minW - padding)...(maxW + padding)
     }
-    
+
     var body: some View {
-        Button(action: {
-            showingDetailView = true
-        }) {
+        ZStack(alignment: .topTrailing) {
+            FixedSizeCard(
+                title: "Weight Chart",
+                onCardTap: isPreview ? nil : {
+                    showingDetailView = true
+                },
+                customHeight: (sizeMode == .expanded && !isPreview) ? 482 : nil  // 150×3 + 16×2 (three cards + two spacings)
+            ) {
             VStack(alignment: .leading, spacing: 8) {
-            // Header with standardized top spacing
-            HStack {
-                Text("Weight Chart")
-                    .font(.custom("Montserrat-SemiBold", size: 17))
-                    .foregroundColor(.black)
-                Spacer()
+                if sizeMode == .expanded && !isPreview {
+                    // Expanded mode: Full detailed chart with scrubbing
+                    expandedChartContent
+                } else if recentWeights.count >= 2 {
+                    // Compact mode: Simple canvas chart
+                    Canvas { context, size in
+                        drawDashboardChart(in: context, size: size)
+                    }
+                    .frame(height: 80)
+                    .overlay(
+                        GeometryReader { geometry in
+                            Path { path in
+                                path.move(to: CGPoint(x: 0, y: 0))
+                                path.addLine(to: CGPoint(x: 0, y: geometry.size.height))
+                                path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height))
+                            }
+                            .stroke(Color.primary, lineWidth: 1.5)
+                        }
+                    )
+                } else if let entry = recentWeights.first {
+                    // Single-point preview (straight line)
+                    let previewData = [
+                        (date: Calendar.current.date(byAdding: .day, value: -7, to: entry.date) ?? entry.date,
+                         weight: entry.weight * 0.98),
+                        (date: entry.date, weight: entry.weight)
+                    ]
+
+                    Chart(previewData, id: \.date) { pt in
+                        LineMark(
+                            x: .value("Date", pt.date),
+                            y: .value("Weight", pt.weight)
+                        )
+                        .foregroundStyle(Color(hex: "#5ec5ff").opacity(0.8))
+                        .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.catmullRom)
+                    }
+                    .chartXAxis {
+                        AxisMarks(position: .bottom, values: .automatic(desiredCount: 3)) { _ in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.gray.opacity(0.2))
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.gray.opacity(0.2))
+                        }
+                    }
+                    .chartYScale(domain: yAxisRange)
+                    .frame(height: 80)
+                    .overlay(
+                        GeometryReader { geometry in
+                            Path { path in
+                                // Y-axis (left line)
+                                path.move(to: CGPoint(x: 0, y: 0))
+                                path.addLine(to: CGPoint(x: 0, y: geometry.size.height))
+                                // X-axis (bottom line)
+                                path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height))
+                            }
+                            .stroke(Color.primary, lineWidth: 1.5)
+                        }
+                    )
+                } else if isPreview {
+                    // Preview mode with static data - show gridlines and axis
+                    // Calculate Y domain from actual preview data
+                    let weights = previewWeights.map { $0.weight }
+                    let minWeight = weights.min() ?? 85.0
+                    let maxWeight = weights.max() ?? 85.0
+                    let range = maxWeight - minWeight
+                    let padding = max(range * 0.1, 1.0)
+                    let yMin = minWeight - padding
+                    let yMax = maxWeight + padding
+                    
+                    Chart(previewWeights, id: \.date) { pt in
+                        LineMark(
+                            x: .value("Date", pt.date),
+                            y: .value("Weight", pt.weight)
+                        )
+                        .foregroundStyle(Color(hex: "#5ec5ff").opacity(0.8))
+                        .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.catmullRom)
+                    }
+                    .chartXAxis {
+                        AxisMarks(position: .bottom, values: .automatic(desiredCount: 3)) { _ in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.gray.opacity(0.3))
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.gray.opacity(0.3))
+                        }
+                    }
+                    .chartYScale(domain: yMin...yMax)
+                    .frame(height: 80)
+                    .overlay(
+                        GeometryReader { geometry in
+                            Path { path in
+                                // Y-axis (left line)
+                                path.move(to: CGPoint(x: 0, y: 0))
+                                path.addLine(to: CGPoint(x: 0, y: geometry.size.height))
+                                // X-axis (bottom line)
+                                path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height))
+                            }
+                            .stroke(Color.primary, lineWidth: 1.5)
+                        }
+                    )
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.title2)
+                            .foregroundColor(.gray)
+                        Text("Not enough data")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 80)
+                }
             }
-            .padding(.bottom, 4)
-            
-            // Chart content
-            if recentWeights.count >= 2 {
-                Chart(recentWeights) { entry in
-                    // Main line chart with smooth curve
-                    LineMark(
-                        x: .value("Date", entry.date),
-                        y: .value("Weight", entry.weight)
-                    )
-                    .foregroundStyle(Color(red: 144/255, green: 191/255, blue: 255/255))
-                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .interpolationMethod(.catmullRom)
-                    
-                    // Add thin X-axis line (horizontal) at the bottom
-                    RuleMark(
-                        y: .value("Bottom", yAxisRange.lowerBound)
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 3))
-                    .foregroundStyle(.gray)
-                    
-                    // Add thin Y-axis line (vertical)
-                    RuleMark(
-                        x: .value("Start", recentWeights.first?.date ?? Date())
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 3))
-                    .foregroundStyle(.gray)
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .chartYScale(domain: yAxisRange)
-                .frame(height: 70)
-            } else if recentWeights.count == 1 {
-                // Show a simple preview with just one entry
-                let entry = recentWeights[0]
-                let previewData = [
-                    (date: Calendar.current.date(byAdding: .day, value: -7, to: entry.date) ?? entry.date, weight: entry.weight * 0.98),
-                    (date: entry.date, weight: entry.weight)
-                ]
-                
-                Chart(previewData, id: \.date) { dataPoint in
-                    // Main line chart with smooth curve
-                    LineMark(
-                        x: .value("Date", dataPoint.date),
-                        y: .value("Weight", dataPoint.weight)
-                    )
-                    .foregroundStyle(Color(red: 144/255, green: 191/255, blue: 255/255))
-                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .interpolationMethod(.catmullRom)
-                    
-                    // Add thin X-axis line (horizontal) at the bottom
-                    RuleMark(
-                        y: .value("Bottom", yAxisRange.lowerBound)
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 3))
-                    .foregroundStyle(.gray)
-                    
-                    // Add thin Y-axis line (vertical)
-                    RuleMark(
-                        x: .value("Start", previewData.first?.date ?? Date())
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 3))
-                    .foregroundStyle(.gray)
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .chartYScale(domain: yAxisRange)
-                .frame(height: 60)
-            } else {
-                // Placeholder when no data
-                VStack {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.title2)
-                        .foregroundColor(.gray)
-                    Text("Not enough data")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            
-            Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
-        .frame(height: 120)
+        .onAppear {
+            if !isPreview {
+                updateCacheIfNeeded()
+                if sizeMode == .expanded {
+                    haptic.prepare()
+                    loadExpandedData()
+                }
+            }
+        }
+        .onChange(of: weightLogManager.allEntries.count) { oldValue, newValue in
+            if !isPreview {
+                updateCacheIfNeeded()
+                if sizeMode == .expanded {
+                    loadExpandedData()
+                }
+            }
+        }
+        .onChange(of: sizeMode) { oldValue, newMode in
+            if newMode == .expanded && !isPreview {
+                haptic.prepare()
+                loadExpandedData()
+            }
         }
         .sheet(isPresented: $showingDetailView) {
             WeightChartDetailView()
         }
+            
+            if !isPreview {
+                Menu {
+                    ForEach(WeightChartSizeMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            sizeMode = mode
+                            NotificationCenter.default.post(name: NSNotification.Name("WeightChartSizeModeChanged"), object: nil)
+                        }) {
+                            HStack {
+                                Text(mode.rawValue)
+                                if sizeMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+    
+    // MARK: - Expanded Chart Content (2x2 mode)
+    
+    @ViewBuilder
+    private var expandedChartContent: some View {
+        VStack(spacing: 4) {
+            if expandedIsLoading {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if expandedPoints.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.title2)
+                        .foregroundColor(.gray)
+                    Text("Not enough data")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Full CanvasChart with scrubbing - taller for 2x3 layout
+                CanvasChart(
+                    points: expandedPoints,
+                    xDomain: expandedXDomain,
+                    yDomain: expandedYDomain,
+                    timeframe: expandedSelectedTimeFrame,
+                    chartHeight: 380,
+                    selectedIndex: $expandedSelectedIndex
+                )
+                
+                // X-axis labels
+                expandedXAxisLabels
+                    .frame(height: 16)
+                
+                // Timeframe buttons
+                expandedTimeFrameButtons
+                    .frame(height: 36)
+            }
+        }
+    }
+    
+    private var expandedXAxisLabels: some View {
+        let labels = expandedAxisLabels()
+        
+        return GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                ForEach(labels, id: \.0) { (date, label) in
+                    let xPos = expandedXPosition(for: date, in: CGSize(width: geo.size.width - 40, height: 0))
+                    Text(label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.primary)
+                        .position(x: xPos + 40, y: 8)
+                }
+            }
+        }
+    }
+    
+    private func expandedAxisLabels() -> [(Date, String)] {
+        guard !expandedPoints.isEmpty else { return [] }
+        
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: expandedXDomain.lowerBound, to: expandedXDomain.upperBound).day ?? 0
+        
+        if days <= 7 {
+            formatter.dateFormat = "EEE"
+        } else if days <= 90 {
+            formatter.dateFormat = "MMM"
+        } else if days <= 365 {
+            formatter.dateFormat = "MMMMM" // Single letter month (J, F, M, A, etc.)
+        } else {
+            formatter.dateFormat = "yyyy"
+        }
+        
+        // Generate labels based on timeframe
+        var result: [(Date, String)] = []
+        
+        if days > 365 {
+            // Year labels
+            let startYear = calendar.component(.year, from: expandedXDomain.lowerBound)
+            let endYear = calendar.component(.year, from: expandedXDomain.upperBound)
+            
+            for year in startYear...endYear {
+                if let yearDate = calendar.date(from: DateComponents(year: year, month: 7, day: 1)) {
+                    if yearDate >= expandedXDomain.lowerBound && yearDate <= expandedXDomain.upperBound {
+                        result.append((yearDate, "\(year)"))
+                    }
+                }
+            }
+        } else if days > 30 {
+            // Month labels - one per month, positioned in the middle
+            let startComponents = calendar.dateComponents([.year, .month], from: expandedXDomain.lowerBound)
+            let endComponents = calendar.dateComponents([.year, .month], from: expandedXDomain.upperBound)
+            
+            if let startDate = calendar.date(from: startComponents),
+               let endDate = calendar.date(from: endComponents) {
+                var currentDate = startDate
+                var seenMonths = Set<String>()
+                while currentDate <= endDate {
+                    let monthKey = "\(calendar.component(.year, from: currentDate))-\(calendar.component(.month, from: currentDate))"
+                    if !seenMonths.contains(monthKey) {
+                        if let midMonth = calendar.date(bySetting: .day, value: 15, of: currentDate) {
+                            result.append((midMonth, formatter.string(from: currentDate)))
+                            seenMonths.insert(monthKey)
+                        }
+                    }
+                    if let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) {
+                        currentDate = nextMonth
+                    } else {
+                        break
+                    }
+                }
+            }
+        } else if days > 7 {
+            // 1M view - show each month label once in the middle
+            let startComponents = calendar.dateComponents([.year, .month], from: expandedXDomain.lowerBound)
+            let endComponents = calendar.dateComponents([.year, .month], from: expandedXDomain.upperBound)
+            
+            if let startDate = calendar.date(from: startComponents),
+               let endDate = calendar.date(from: endComponents) {
+                var currentDate = startDate
+                var seenMonths = Set<String>()
+                while currentDate <= endDate {
+                    let monthKey = "\(calendar.component(.year, from: currentDate))-\(calendar.component(.month, from: currentDate))"
+                    if !seenMonths.contains(monthKey) {
+                        if let midMonth = calendar.date(bySetting: .day, value: 15, of: currentDate) {
+                            result.append((midMonth, formatter.string(from: currentDate)))
+                            seenMonths.insert(monthKey)
+                        }
+                    }
+                    if let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) {
+                        currentDate = nextMonth
+                    } else {
+                        break
+                    }
+                }
+            }
+        } else {
+            // Week view - day labels evenly spaced
+            let count = min(5, expandedPoints.count)
+            let step = max(1, expandedPoints.count / count)
+            for i in stride(from: 0, to: expandedPoints.count, by: step) {
+                let date = expandedPoints[i].date
+                result.append((date, formatter.string(from: date)))
+            }
+        }
+        
+        return result
+    }
+    
+    private func expandedXPosition(for date: Date, in size: CGSize) -> CGFloat {
+        let total = expandedXDomain.upperBound.timeIntervalSince(expandedXDomain.lowerBound)
+        guard total > 0 else { return 0 }
+        let t = date.timeIntervalSince(expandedXDomain.lowerBound) / total
+        return CGFloat(t) * size.width
+    }
+    
+    private var expandedTimeFrameButtons: some View {
+        HStack(spacing: 8) {
+            ForEach(TimeFrame.allCases, id: \.self) { tf in
+                Button {
+                    if tf != expandedSelectedTimeFrame {
+                        expandedSelectedTimeFrame = tf
+                        expandedSelectedIndex = nil
+                        loadExpandedData()
+                    }
+                } label: {
+                    Text(tf.rawValue)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(expandedSelectedTimeFrame == tf ? .white : .blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(expandedSelectedTimeFrame == tf ? Color.blue : Color.blue.opacity(0.1))
+                        )
+                }
+            }
+        }
+    }
+    
+    // MARK: - Expanded Data Loading
+    
+    private func loadExpandedData() {
+        let all = weightLogManager.allEntries.sorted { $0.date < $1.date }
+        guard !all.isEmpty else {
+            expandedPoints = []
+            expandedIsLoading = false
+            return
+        }
+        
+        let currentHash = all.map { $0.id.hashValue }.reduce(0, ^)
+        let dataChanged = currentHash != expandedLastDataHash
+        
+        // Determine effective smoothing timeframe
+        let smoothingTimeframe: TimeFrame
+        if expandedSelectedTimeFrame == .allTime, let firstDate = all.first?.date, let lastDate = all.last?.date {
+            let calendar = Calendar.current
+            let days = calendar.dateComponents([.day], from: firstDate, to: lastDate).day ?? 0
+            
+            if days <= 7 {
+                smoothingTimeframe = .oneWeek
+            } else if days <= 30 {
+                smoothingTimeframe = .oneMonth
+            } else if days <= 90 {
+                smoothingTimeframe = .threeMonths
+            } else if days <= 365 {
+                smoothingTimeframe = .oneYear
+            } else {
+                smoothingTimeframe = .allTime
+            }
+        } else {
+            smoothingTimeframe = expandedSelectedTimeFrame
+        }
+        
+        // Check cache
+        if !dataChanged, let cached = expandedSmoothedDataCache[smoothingTimeframe] {
+            applyExpandedSmoothedData(cached, all: all)
+            return
+        }
+        
+        expandedIsLoading = true
+        
+        Task(priority: .userInitiated) {
+            let smoothed = smoothedTrendForDashboard(from: all, timeframe: smoothingTimeframe)
+            
+            await MainActor.run {
+                expandedSmoothedDataCache[smoothingTimeframe] = smoothed
+                expandedLastDataHash = currentHash
+                applyExpandedSmoothedData(smoothed, all: all)
+            }
+        }
+    }
+    
+    private func applyExpandedSmoothedData(_ smoothed: [WeightLogEntry], all: [WeightLogEntry]) {
+        guard let lastDate = all.last?.date else {
+            expandedPoints = []
+            expandedIsLoading = false
+            return
+        }
+        
+        let firstDate: Date
+        if expandedSelectedTimeFrame == .allTime {
+            firstDate = all.first?.date ?? lastDate
+        } else if let days = expandedSelectedTimeFrame.days {
+            firstDate = Calendar.current.date(byAdding: .day, value: -days, to: lastDate) ?? lastDate
+        } else {
+            firstDate = all.first?.date ?? lastDate
+        }
+        
+        let weights = smoothed.map { $0.weight }
+        let minW = weights.min() ?? 0
+        let maxW = weights.max() ?? 100
+        let range = maxW - minW
+        let padding = max(range * 0.15, 0.5)
+        let yRange = (minW - padding)...(maxW + padding)
+        
+        expandedPoints = smoothed
+        expandedXDomain = firstDate...lastDate
+        expandedYDomain = yRange
+        expandedSelectedIndex = nil
+        expandedIsLoading = false
+    }
+    
+    // MARK: - Dashboard Chart Drawing (3M style, no labels)
+    
+    private func drawDashboardChart(in context: GraphicsContext, size: CGSize) {
+        guard recentWeights.count >= 2 else { return }
+        
+        // Draw gridlines first (background)
+        drawDashboardGrid(in: context, size: size)
+        
+        // Draw the weight line
+        drawDashboardLine(in: context, size: size)
+    }
+    
+    private func drawDashboardGrid(in context: GraphicsContext, size: CGSize) {
+        let range = yAxisRange.upperBound - yAxisRange.lowerBound
+        
+        // Determine Y-axis interval (same logic as detailed chart)
+        let interval: Double
+        if range <= 3.0 {
+            interval = 0.2
+        } else if range <= 7.0 {
+            interval = 0.5
+        } else if range <= 10.0 {
+            interval = 1.0
+        } else {
+            interval = 2.0
+        }
+        
+        // Generate Y-axis gridline values
+        let minRounded = (yAxisRange.lowerBound / interval).rounded(.down) * interval
+        var labels: [Double] = []
+        var current = minRounded
+        while current <= yAxisRange.upperBound {
+            if current >= yAxisRange.lowerBound {
+                labels.append(current)
+            }
+            current += interval
+        }
+        
+        // Draw horizontal gridlines
+        var gridPath = Path()
+        for value in labels {
+            let y = yPositionDashboard(for: value, in: size)
+            gridPath.move(to: CGPoint(x: 0, y: y))
+            gridPath.addLine(to: CGPoint(x: size.width, y: y))
+        }
+        context.stroke(gridPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+        
+        // Draw vertical monthly gridlines (3M style)
+        guard let firstDate = recentWeights.first?.date,
+              let lastDate = recentWeights.last?.date else { return }
+        
+        let calendar = Calendar.current
+        let startComponents = calendar.dateComponents([.year, .month], from: firstDate)
+        let endComponents = calendar.dateComponents([.year, .month], from: lastDate)
+        
+        if let startDate = calendar.date(from: startComponents),
+           let endDate = calendar.date(from: endComponents) {
+            
+            var monthPath = Path()
+            var currentDate = startDate
+            
+            while currentDate <= endDate {
+                if currentDate >= firstDate && currentDate <= lastDate {
+                    let x = xPositionDashboard(for: currentDate, in: size, firstDate: firstDate, lastDate: lastDate)
+                    monthPath.move(to: CGPoint(x: x, y: 0))
+                    monthPath.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                
+                if let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) {
+                    currentDate = nextMonth
+                } else {
+                    break
+                }
+            }
+            
+            context.stroke(monthPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+        }
+    }
+    
+    private func drawDashboardLine(in context: GraphicsContext, size: CGSize) {
+        guard recentWeights.count >= 2 else { return }
+        guard let firstDate = recentWeights.first?.date,
+              let lastDate = recentWeights.last?.date else { return }
+        
+        var path = Path()
+        
+        for (index, entry) in recentWeights.enumerated() {
+            let x = xPositionDashboard(for: entry.date, in: size, firstDate: firstDate, lastDate: lastDate)
+            let y = yPositionDashboard(for: entry.weight, in: size)
+            
+            if index == 0 {
+                path.move(to: CGPoint(x: x, y: y))
+            } else {
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        
+        context.stroke(
+            path,
+            with: .color(Color(hex: "#5ec5ff")),
+            style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+        )
+    }
+    
+    private func xPositionDashboard(for date: Date, in size: CGSize, firstDate: Date, lastDate: Date) -> CGFloat {
+        let total = lastDate.timeIntervalSince(firstDate)
+        guard total > 0 else { return 0 }
+        let t = date.timeIntervalSince(firstDate) / total
+        return CGFloat(t) * size.width
+    }
+    
+    private func yPositionDashboard(for weight: Double, in size: CGSize) -> CGFloat {
+        let range = yAxisRange.upperBound - yAxisRange.lowerBound
+        guard range > 0 else { return size.height / 2 }
+        let normalized = (weight - yAxisRange.lowerBound) / range
+        return size.height - (CGFloat(normalized) * size.height)
+    }
+    
+    // MARK: - Smoothing for Dashboard
+    
+    /// Apply same smoothing algorithm as detailed view for dashboard preview
+    private func smoothedTrendForDashboard(from allEntries: [WeightLogEntry], timeframe: TimeFrame) -> [WeightLogEntry] {
+        guard !allEntries.isEmpty else { return [] }
+        
+        let sorted = allEntries.sorted { $0.date < $1.date }
+        let params = timeframe.smoothingParameters
+        
+        // Build daily series with gap filling from full history
+        let daily = buildDailySeriesForDashboard(from: sorted)
+        
+        // Apply DES + turning damping + MA polish
+        let trend = buildTrendFromDailyForDashboard(
+            daily: daily,
+            alpha: params.alpha,
+            beta: params.beta,
+            window: params.windowSize,
+            turning: params.turning
+        )
+        
+        // Map to WeightLogEntry
+        var fullResult: [WeightLogEntry] = []
+        fullResult.reserveCapacity(daily.count)
+        
+        for (index, day) in daily.enumerated() {
+            let smoothedWeight = trend[index]
+            fullResult.append(
+                WeightLogEntry(
+                    id: UUID(),
+                    date: day.date,
+                    weight: smoothedWeight,
+                    movingAverage: smoothedWeight,
+                    weeklyRate: nil,
+                    notes: nil
+                )
+            )
+        }
+        
+        // Trim to timeframe (3 months)
+        if let days = timeframe.days, let fullEnd = fullResult.last?.date {
+            let calendar = Calendar.current
+            let cutoff = calendar.date(byAdding: .day, value: -days, to: fullEnd) ?? fullEnd
+            return fullResult.filter { $0.date >= cutoff }
+        }
+        
+        return fullResult
+    }
+    
+    /// Build daily series with gap filling
+    private func buildDailySeriesForDashboard(from entries: [WeightLogEntry]) -> [(date: Date, weight: Double)] {
+        guard !entries.isEmpty else { return [] }
+        
+        let calendar = Calendar.current
+        let sorted = entries.sorted { $0.date < $1.date }
+        
+        guard let firstDate = sorted.first?.date,
+              let lastDate = sorted.last?.date else { return [] }
+        
+        let startDay = calendar.startOfDay(for: firstDate)
+        let endDay = calendar.startOfDay(for: lastDate)
+        
+        var result: [(date: Date, weight: Double)] = []
+        var currentDate = startDay
+        var entryIndex = 0
+        
+        while currentDate <= endDay {
+            let currentDay = calendar.startOfDay(for: currentDate)
+            
+            // Find entry for this day
+            while entryIndex < sorted.count {
+                let entryDay = calendar.startOfDay(for: sorted[entryIndex].date)
+                if entryDay == currentDay {
+                    result.append((date: currentDay, weight: sorted[entryIndex].weight))
+                    entryIndex += 1
+                    break
+                } else if entryDay > currentDay {
+                    // Gap - interpolate
+                    if let prevWeight = result.last?.weight {
+                        result.append((date: currentDay, weight: prevWeight))
+                    }
+                    break
+                } else {
+                    entryIndex += 1
+                }
+            }
+            
+            if entryIndex >= sorted.count && currentDay < endDay {
+                // Fill remaining days with last weight
+                if let lastWeight = result.last?.weight {
+                    result.append((date: currentDay, weight: lastWeight))
+                }
+            }
+            
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+        }
+        
+        return result
+    }
+    
+    /// Build trend using DES + turning damping + MA polish
+    private func buildTrendFromDailyForDashboard(
+        daily: [(date: Date, weight: Double)],
+        alpha: Double,
+        beta: Double,
+        window: Int,
+        turning: Double
+    ) -> [Double] {
+        guard !daily.isEmpty else { return [] }
+        
+        let weights = daily.map { $0.weight }
+        
+        // Stage 1: Double Exponential Smoothing
+        var level = weights[0]
+        var trend = 0.0
+        var smoothed = [level]
+        
+        for i in 1..<weights.count {
+            let prevLevel = level
+            level = alpha * weights[i] + (1 - alpha) * (level + trend)
+            trend = beta * (level - prevLevel) + (1 - beta) * trend
+            smoothed.append(level + trend)
+        }
+        
+        // Stage 2: Turning point damping
+        var damped = smoothed
+        if smoothed.count > 2 {
+            for i in 1..<(smoothed.count - 1) {
+                let prev = smoothed[i - 1]
+                let curr = smoothed[i]
+                let next = smoothed[i + 1]
+                
+                let isTurning = (curr > prev && curr > next) || (curr < prev && curr < next)
+                if isTurning {
+                    damped[i] = curr * (1 - turning) + (prev + next) / 2 * turning
+                }
+            }
+        }
+        
+        // Stage 3: Moving average polish
+        let halfWindow = window / 2
+        var polished = damped
+        
+        for i in 0..<damped.count {
+            let start = max(0, i - halfWindow)
+            let end = min(damped.count - 1, i + halfWindow)
+            let slice = damped[start...end]
+            polished[i] = slice.reduce(0, +) / Double(slice.count)
+        }
+        
+        return polished
     }
 }
+
+// MARK: - Timeframe
 
 enum TimeFrame: String, CaseIterable {
     case oneWeek = "1W"
     case oneMonth = "1M"
     case threeMonths = "3M"
-    case sixMonths = "6M"
     case oneYear = "1Y"
     case allTime = "All"
-    
+
     var days: Int? {
         switch self {
         case .oneWeek: return 7
         case .oneMonth: return 30
         case .threeMonths: return 90
-        case .sixMonths: return 180
         case .oneYear: return 365
         case .allTime: return nil
         }
     }
     
-    
+    /// Parameters for Happy Scale-style smoothing
+    /// α (alpha): 0.06-0.20 range - level smoothing
+    /// β (beta): 0.03-0.10 range - trend smoothing
+    /// windowSize: 5-13 for centered MA polish
+    /// turning: 0.2-0.6 - turning point damping strength
+    var smoothingParameters: (alpha: Double, beta: Double, windowSize: Int, turning: Double) {
+        switch self {
+        case .oneWeek:
+            // Most responsive for short-term tracking
+            return (alpha: 0.45, beta: 0.25, windowSize: 3, turning: 0.2)
+        case .oneMonth:
+            // Balanced responsiveness
+            return (alpha: 0.35, beta: 0.18, windowSize: 5, turning: 0.3)
+        case .threeMonths:
+            // Medium smooth
+            return (alpha: 0.26, beta: 0.11, windowSize: 7, turning: 0.3)
+        case .oneYear:
+            // Smooth trend focus
+            return (alpha: 0.26, beta: 0.11, windowSize: 31, turning: 0.55)
+        case .allTime:
+            // Very smooth for long-term patterns
+            return (alpha: 0.18, beta: 0.07, windowSize: 37, turning: 0.75)
+        }
+    }
 }
+
+// MARK: - Detail View (Canvas-based, smooth scrubbing)
 
 struct WeightChartDetailView: View {
     @Environment(\.presentationMode) var presentationMode
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var weightLogManager = WeightLogManager.shared
-    @ObservedObject private var chartCache = WeightChartCache.shared
-    @State private var isLoadingData = false
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+
     @State private var selectedTimeFrame: TimeFrame = .allTime
-    @State private var showChart = false
-    @State private var isLoading = false
-    @State private var scrollPosition: Date?
+    @State private var points: [WeightLogEntry] = []
+    @State private var xDomain: ClosedRange<Date> = Date()...Date()
+    @State private var yDomain: ClosedRange<Double> = 0...100
+
+    @State private var selectedIndex: Int? = nil
+    @State private var isLoading = true
     
-    /// Cached chart data for selected timeframe
-    private var chartData: [WeightLogEntry] {
-        chartCache.getCachedData()
-    }
-    
-    // Get all available data for scrolling (not filtered by timeframe)
-    private var allChartData: [WeightLogEntry] {
-        return calculateWeeklyAverages(from: chartData)
-    }
-    
-    // Get filtered weight entries based on selected time frame
-    private var filteredData: [WeightLogEntry] {
-        print("WeightChart: filteredData called with \(chartData.count) cached entries")
-        let filteredData: [WeightLogEntry]
-        
-        if let days = selectedTimeFrame.days {
-            // Find the most recent weight entry date
-            guard let mostRecentDate = chartData.map({ $0.date }).max() else {
-                print("WeightChart: No recent date found, returning all cached data")
-                return chartData
-            }
-            
-            // Calculate cutoff date from the most recent entry, not from today
-            let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: mostRecentDate) ?? mostRecentDate
-            filteredData = chartData.filter { $0.date >= cutoffDate }
-            print("WeightChart: Filtered to \(filteredData.count) entries for \(selectedTimeFrame.rawValue)")
-        } else {
-            filteredData = chartData // All time
-            print("WeightChart: Using all time data: \(filteredData.count) entries")
+    // Cache for smoothed data per timeframe to avoid recalculation
+    @State private var smoothedDataCache: [TimeFrame: [WeightLogEntry]] = [:]
+    @State private var lastDataHash: Int = 0
+
+    // For simple throttling / haptics
+    @State private var lastSelectedIndex: Int? = nil
+    private let haptic = UIImpactFeedbackGenerator(style: .light)
+
+    // MARK: - Derived stats
+
+    private var statsData: [WeightLogEntry] {
+        // For stats we want real entries in this timeframe (unsmoothed)
+        let all = weightLogManager.allEntries.sorted { $0.date < $1.date }
+        guard !all.isEmpty else { return [] }
+
+        if selectedTimeFrame == .allTime {
+            return all
         }
-        
-        // Apply weekly averaging for better chart performance and readability
-        return calculateWeeklyAverages(from: filteredData)
-    }
-    
-    // Data to display in chart - use all data for scrollable timeframes, filtered for non-scrollable
-    /// Chart data prepared for display
-    private var displayChartData: [WeightLogEntry] {
-        let data = chartData
-        return data.isEmpty ? [] : data
-    }
-    
-    // Calculate weekly averages to smooth the data
-    private func calculateWeeklyAverages(from entries: [WeightLogEntry]) -> [WeightLogEntry] {
-        guard !entries.isEmpty else { return entries }
-        
-        let sortedEntries = entries.sorted { $0.date < $1.date }
-        let calendar = Calendar.current
-        var weeklyAverages: [WeightLogEntry] = []
-        
-        // Group entries by week
-        var currentWeekEntries: [WeightLogEntry] = []
-        var currentWeekStart: Date?
-        
-        for entry in sortedEntries {
-            let weekStart = calendar.dateInterval(of: .weekOfYear, for: entry.date)?.start
-            
-            if currentWeekStart == nil {
-                currentWeekStart = weekStart
-                currentWeekEntries = [entry]
-            } else if weekStart == currentWeekStart {
-                currentWeekEntries.append(entry)
-            } else {
-                // Process the completed week
-                if let avgEntry = createWeeklyAverage(from: currentWeekEntries) {
-                    weeklyAverages.append(avgEntry)
-                }
-                
-                // Start new week
-                currentWeekStart = weekStart
-                currentWeekEntries = [entry]
-            }
+
+        if let days = selectedTimeFrame.days,
+           let latest = all.last?.date {
+            let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: latest) ?? latest
+            return all.filter { $0.date >= cutoff }
         }
-        
-        // Process the last week
-        if let avgEntry = createWeeklyAverage(from: currentWeekEntries) {
-            weeklyAverages.append(avgEntry)
-        }
-        
-        return weeklyAverages
+
+        return all
     }
-    
-    // Create a single weekly average entry
-    private func createWeeklyAverage(from entries: [WeightLogEntry]) -> WeightLogEntry? {
-        guard !entries.isEmpty else { return nil }
-        
-        let averageWeight = entries.map { $0.weight }.reduce(0, +) / Double(entries.count)
-        let middleDate = entries.sorted { $0.date < $1.date }[entries.count / 2].date
-        
-        return WeightLogEntry(
-            id: UUID(),
-            date: middleDate,
-            weight: averageWeight,
-            movingAverage: averageWeight,
-            weeklyRate: nil,
-            notes: "Weekly Average"
-        )
-    }
-    
-    // Sample data points for large datasets to improve chart performance
-    private func sampleDataPoints(from entries: [WeightLogEntry], maxPoints: Int) -> [WeightLogEntry] {
-        guard entries.count > maxPoints else { return entries }
-        
-        let sortedEntries = entries.sorted { $0.date < $1.date }
-        let step = Double(sortedEntries.count) / Double(maxPoints)
-        var sampledEntries: [WeightLogEntry] = []
-        
-        for i in 0..<maxPoints {
-            let index = Int(Double(i) * step)
-            if index < sortedEntries.count {
-                sampledEntries.append(sortedEntries[index])
-            }
-        }
-        
-        return sampledEntries
-    }
-    
-    // Memoized calculations for better performance
-    @State private var cachedWeightRange: (min: Double, max: Double) = (0, 100)
-    @State private var cachedDateRange: (spansMultipleYears: Bool, yearStarts: [Date]) = (false, [])
-    
-    private var weightRange: (min: Double, max: Double) {
-        return cachedWeightRange
-    }
-    
-    private var dateRange: (spansMultipleYears: Bool, yearStarts: [Date]) {
-        return cachedDateRange
-    }
-    
-    // Calculate visible domain length based on timeframe (in days)
-    private var timeframeDays: Int {
-        switch selectedTimeFrame {
-        case .oneWeek:
-            return 7
-        case .oneMonth:
-            return 30
-        case .threeMonths:
-            return 90
-        case .sixMonths:
-            return 180
-        case .oneYear:
-            return 365
-        case .allTime:
-            // For all time, show everything without scrolling constraint
-            guard !allChartData.isEmpty,
-                  let firstDate = allChartData.map({ $0.date }).min(),
-                  let lastDate = allChartData.map({ $0.date }).max() else {
-                return 365
-            }
-            return Calendar.current.dateComponents([.day], from: firstDate, to: lastDate).day ?? 365
-        }
-    }
-    
-    // Calculate ranges when data loads or time frame changes
-    private func calculateRanges() {
-        let filteredData = chartData // Use the filtered data based on time frame
-        
-        guard !filteredData.isEmpty else {
-            cachedWeightRange = (0, 100)
-            cachedDateRange = (false, [])
-            return
-        }
-        
-        // Calculate weight range
-        let weights = filteredData.map { $0.weight }
-        let minWeight = weights.min() ?? 0
-        let maxWeight = weights.max() ?? 100
-        let padding = max((maxWeight - minWeight) * 0.05, 2.0)
-        let adjustedMin = floor(minWeight - padding)
-        let adjustedMax = maxWeight + padding
-        cachedWeightRange = (adjustedMin, adjustedMax)
-        
-        // Calculate date range and month boundaries for 1Y timeline
-        let dates = filteredData.map { $0.date }
-        let minDate = dates.min() ?? Date()
-        let maxDate = dates.max() ?? Date()
-        let calendar = Calendar.current
-        let minYear = calendar.component(.year, from: minDate)
-        let maxYear = calendar.component(.year, from: maxDate)
-        let spansMultipleYears = maxYear > minYear
-        
-        var monthStarts: [Date] = []
-        
-        // For 1Y timeline, generate monthly boundaries
-        if selectedTimeFrame == .oneYear {
-            let startOfMinMonth = calendar.dateInterval(of: .month, for: minDate)?.start ?? minDate
-            let endOfMaxMonth = calendar.dateInterval(of: .month, for: maxDate)?.end ?? maxDate
-            
-            var currentMonth = calendar.date(byAdding: .month, value: 1, to: startOfMinMonth) ?? startOfMinMonth
-            while currentMonth <= endOfMaxMonth {
-                monthStarts.append(currentMonth)
-                currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
-            }
-        } else if spansMultipleYears {
-            // For other timelines, use year boundaries as before
-            for year in (minYear + 1)...maxYear {
-                if let yearStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) {
-                    monthStarts.append(yearStart)
-                }
-            }
-        }
-        
-        cachedDateRange = (spansMultipleYears || selectedTimeFrame == .oneYear, monthStarts)
-    }
-    
+
+    // MARK: - Lifecycle
+
     var body: some View {
         NavigationView {
-            bodyContent
-        }
-    }
-    
-    private var bodyContent: some View {
-        // Use ZStack to ensure background covers entire view
-        ZStack {
-            // Background layer
-            Color.white.edgesIgnoringSafeArea(.all)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !chartData.isEmpty {
-                        chartSectionView
-                        statisticsSection
-                    } else {
-                        noDataView
-                    }
-                }
-                .padding()
-            }
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("Weight Chart Details")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-            }
-            
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Done") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .foregroundColor(.blue)
-            }
-        }
-        .onAppear {
-            loadDataAsync()
-        }
-    }
-    
-    private var chartSectionView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Chart Section - Title outside card
-            Text("Weight Trend (\(selectedTimeFrame.rawValue))")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .padding(.horizontal)
-            
-            // Chart and buttons inside card
-            VStack(spacing: 0) {
-                Group {
-                    if selectedTimeFrame != .allTime {
-                        ZStack(alignment: .leading) {
-                            ScrollViewReader { proxy in
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 0) {
-                                        Chart(displayChartData, id: \.id) { entry in
-                                            LineMark(
-                                                x: .value("Date", entry.date),
-                                                y: .value("Weight", entry.weight)
-                                            )
-                                            .foregroundStyle(Color.blue)
-                                            .lineStyle(StrokeStyle(lineWidth: 2))
-                                        }
-                                        .frame(width: chartWidth, height: 300)
-                                        .chartYScale(domain: dynamicYRange ?? 70...90, type: .linear)
-                                        .id("chart-\(dynamicYRange?.lowerBound ?? 0)-\(dynamicYRange?.upperBound ?? 0)")
-                                        .chartYAxis {
-                                            // Hide Y-axis labels from chart since we'll show them separately
-                                            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
-                                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                                            }
-                                        }
-                                        .chartXAxis(content: chartXAxisView)
-                                        .chartXScale(domain: fullDateDomain)
-                                        .clipped() // Ensure chart content doesn't overflow
-                                        .id("scrollable-chart")
-                                    }
-                                }
-                                .onAppear {
-                                    // Scroll to the end (most recent date) when chart appears - no animation
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        proxy.scrollTo("scrollable-chart", anchor: .trailing)
-                                    }
-                                }
-                                .onChange(of: selectedTimeFrame) { _, _ in
-                                    // Scroll to end when timeframe changes - no animation
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        proxy.scrollTo("scrollable-chart", anchor: .trailing)
-                                    }
-                                }
+            ZStack {
+                viewBackground.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        if isLoading {
+                            VStack(spacing: 16) {
+                                ProgressView().scaleEffect(1.2)
+                                Text("Loading weight data…")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
                             }
-                            .frame(height: 300)
-                            
-                            // Sticky Y-axis labels overlay
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(stickyYAxisLabels, id: \.self) { weight in
-                                    Text("\(Int(weight)) kg")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 8)
-                                        .frame(height: yAxisLabelHeight)
-                                        .background(
-                                            Rectangle()
-                                                .fill(Color(.systemBackground).opacity(0.9))
-                                                .frame(width: 50)
-                                        )
-                                }
-                            }
-                            .frame(height: 300, alignment: .leading)
-                            .simultaneousGesture(
-                                DragGesture()
-                                    .onChanged { value in
-                                        if selectedTimeFrame == .oneYear {
-                                            let newOffset = abs(value.translation.width)
-                                            // Smooth continuous updates without threshold
-                                            withAnimation(.linear(duration: 0.1)) {
-                                                scrollOffset = newOffset
-                                            }
-                                            
-                                            // Throttled Y-axis updates for performance
-                                            throttledUpdateYDomain()
-                                        }
-                                    }
-                            )
-                            .onAppear {
-                                print("🚀 Chart appeared - initializing Y-axis range")
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    updateVisibleYDomain()
-                                }
-                            }
-                            .onChange(of: selectedTimeFrame) { _, newTimeFrame in
-                                if newTimeFrame == .oneYear {
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        updateVisibleYDomain()
-                                    }
-                                }
-                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 60)
+                        } else if points.isEmpty {
+                            noDataView
+                        } else {
+                            chartSection
+                            statisticsSection
                         }
-                    } else {
-                        chartView
-                            .frame(height: 300)
-                            .chartYScale(domain: weightRange.min...weightRange.max)
-                            .chartXAxis(content: chartXAxisView)
-                            .chartYAxis(content: chartYAxisView)
+                    }
+                    .padding()
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack {
+                        Text("Weight Chart Details")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        Spacer()
                     }
                 }
-                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                    .foregroundColor(.primary)
+                }
+            }
+            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .onAppear {
+                haptic.prepare()
+                loadForCurrentTimeframe()
+            }
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+
+    // MARK: - Chart section
+
+    private var chartSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Weight Trends")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .padding(.leading, 14)
+                .padding(.top, 14)
+
+            VStack(spacing: 0) {
+                // Chart card
+                VStack(spacing: 0) {
+                    CanvasChart(
+                        points: points,
+                        xDomain: xDomain,
+                        yDomain: yDomain,
+                        timeframe: selectedTimeFrame,
+                        enableGestures: true,  // Enable crosshair in detail view
+                        selectedIndex: $selectedIndex
+                    )
+                    .id("\(points.count)-\(selectedTimeFrame.rawValue)")  // Force redraw on data change
+
+                    // X-axis labels (simple, but matches overall feel)
+                    xAxisLabelsView
+                }
+
                 timeFrameButtons
             }
             .padding()
-            .cardStyle()
-        }
-    }
-    
-    // Y-axis labels for sticky display
-    private var yAxisLabels: [Double] {
-        let min = weightRange.min
-        let max = weightRange.max
-        let rangeSize = max - min
-        
-        var labels: [Double] = []
-        let interval: Double
-        
-        if rangeSize > 6 {
-            interval = 2.0 // Every 2kg for large ranges
-        } else if rangeSize > 2 {
-            interval = 1.0 // Every 1kg for medium ranges
-        } else {
-            interval = 0.5 // Every 0.5kg for small ranges
-        }
-        
-        var currentWeight = min
-        while currentWeight <= max {
-            if currentWeight >= min {
-                labels.append(currentWeight)
-            }
-            currentWeight += interval
-        }
-        
-        return labels // Bottom to top (normal order)
-    }
-    
-    // Dynamic Y-axis labels that update with the dynamic range
-    private var dynamicYAxisLabels: [Double] {
-        guard let range = dynamicYRange else { return [] }
-        let min = range.lowerBound
-        let max = range.upperBound
-        let rangeSize = max - min
-        
-        var labels: [Double] = []
-        let interval: Double
-        
-        if rangeSize > 6 {
-            interval = 2.0 // Every 2kg for large ranges
-        } else if rangeSize > 2 {
-            interval = 1.0 // Every 1kg for medium ranges
-        } else {
-            interval = 0.5 // Every 0.5kg for small ranges
-        }
-        
-        var currentWeight = min
-        while currentWeight <= max {
-            if currentWeight >= min {
-                labels.append(currentWeight)
-            }
-            currentWeight += interval
-        }
-        
-        return labels // Bottom to top (normal order)
-    }
-    
-    // Preference key for tracking scroll offset
-    struct ScrollOffsetPreferenceKey: PreferenceKey {
-        static var defaultValue: CGPoint = .zero
-        static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
-            value = nextValue()
-        }
-    }
-    
-    // MARK: - Dynamic Y-Axis State
-    @State private var scrollOffset: CGFloat = 0
-    @State private var dynamicYRange: ClosedRange<Double>? = nil
-    @State private var currentWindowData: [WeightLogEntry] = []
-    @State private var updateTimer: Timer?
-    
-    // MARK: - Sticky Y-Axis Labels
-    private var stickyYAxisLabels: [Double] {
-        guard let range = dynamicYRange else { return [] }
-        let step = (range.upperBound - range.lowerBound) / 4
-        return stride(from: range.upperBound, through: range.lowerBound, by: -step).map { $0 }
-    }
-    
-    private var yAxisLabelHeight: CGFloat {
-        300 / 5 // 5 labels distributed across 300pt height
-    }
-    
-    // MARK: - Dynamic Y-Axis Methods
-    /// Updates Y-axis range based on visible viewport using Happy Scale approach
-    private func updateVisibleYDomain() {
-        guard selectedTimeFrame == .oneYear && !displayChartData.isEmpty else { return }
-        
-        let screenWidth = UIScreen.main.bounds.width - 32
-        let sortedData = displayChartData.sorted { $0.date < $1.date }
-        
-        guard let firstDate = sortedData.first?.date,
-              let lastDate = sortedData.last?.date else { 
-            return 
-        }
-        
-        // Calculate what dates are currently visible on screen (not 365-day window)
-        let totalWidth = chartWidth
-        let pixelsPerDay = totalWidth / CGFloat(Calendar.current.dateComponents([.day], from: firstDate, to: lastDate).day ?? 365)
-        
-        // Calculate visible date range based on screen viewport
-        let visibleDays = Int(screenWidth / pixelsPerDay)
-        let scrolledDays = Int(scrollOffset / pixelsPerDay)
-        
-        let viewportStart = Calendar.current.date(byAdding: .day, value: scrolledDays, to: firstDate) ?? firstDate
-        let viewportEnd = Calendar.current.date(byAdding: .day, value: visibleDays, to: viewportStart) ?? lastDate
-        
-        print("📱 Screen viewport dates: \(DateFormatter.shortDate.string(from: viewportStart)) to \(DateFormatter.shortDate.string(from: viewportEnd))")
-        
-        let allHistoricalData = weightLogManager.allEntries
-        
-        guard !allHistoricalData.isEmpty else { 
-            // Fallback to display data if no historical data
-            let allWeights = displayChartData.map { $0.weight }
-            if let minWeight = allWeights.min(), let maxWeight = allWeights.max() {
-                let padding = max((maxWeight - minWeight) * 0.3, 3.0)
-                dynamicYRange = (minWeight - padding)...(maxWeight + padding)
-            }
-            return 
-        }
-        
-        // Update statistics for visible window
-        currentWindowData = sortedData.filter { entry in
-            entry.date >= viewportStart && entry.date <= viewportEnd
-        }
-        
-        // Calculate Y-axis range from all historical data
-        let allHistoricalWeights = allHistoricalData.map { $0.weight }
-        guard let minWeight = allHistoricalWeights.min(),
-              let maxWeight = allHistoricalWeights.max() else { return }
-        
-        // Apply padding with iterative boundary checking
-        let _ = maxWeight - minWeight
-        let targetPadding = max((maxWeight - minWeight) * 0.3, 3.0)
-        var calculatedMin = minWeight - targetPadding
-        var calculatedMax = maxWeight + targetPadding
-        
-        // Iterative expansion to prevent data cutoff
-        for _ in 0..<5 {
-            let testRange = calculatedMin...calculatedMax
-            let boundaryHit = allHistoricalWeights.contains { weight in
-                weight <= testRange.lowerBound + 1.0 || weight >= testRange.upperBound - 1.0
-            }
-            
-            if !boundaryHit { break }
-            
-            let expansion = (calculatedMax - calculatedMin) * 0.2
-            calculatedMin -= expansion
-            calculatedMax += expansion
-        }
-        
-        dynamicYRange = calculatedMin...calculatedMax
-    }
-    
-    /// Throttled Y-axis update to prevent excessive recalculation during scrolling
-    private func throttledUpdateYDomain() {
-        updateTimer?.invalidate()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { _ in
-            updateVisibleYDomain()
-        }
-    }
-    
-    // MARK: - Chart Layout
-    /// Calculate chart width for horizontal scrolling
-    private var chartWidth: CGFloat {
-        guard selectedTimeFrame != .allTime && !displayChartData.isEmpty else { 
-            return UIScreen.main.bounds.width 
-        }
-        
-        let totalDays = Calendar.current.dateComponents([.day], 
-            from: displayChartData.first!.date, 
-            to: displayChartData.last!.date).day ?? timeframeDays
-        let screenWidth = UIScreen.main.bounds.width - 32
-        let pointsPerDay = screenWidth / CGFloat(timeframeDays)
-        return CGFloat(totalDays) * pointsPerDay
-    }
-    
-    // Full date domain for scrolling
-    private var fullDateDomain: ClosedRange<Date> {
-        guard !displayChartData.isEmpty else { return Date()...Date() }
-        let start = displayChartData.first!.date
-        let end = displayChartData.last!.date
-        return start...end
-    }
-    
-    private var chartView: some View {
-        Chart {
-            ForEach(displayChartData, id: \.id) { entry in
-                LineMark(
-                    x: .value("Date", entry.date),
-                    y: .value("Weight", entry.weight)
-                )
-                .foregroundStyle(Color(red: 144/255, green: 191/255, blue: 255/255))
-                .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.cardinal)
-            }
-            
-            // Add vertical lines for month/year boundaries
-            if dateRange.spansMultipleYears || selectedTimeFrame == .oneYear {
-                ForEach(dateRange.yearStarts, id: \.self) { monthStart in
-                    RuleMark(
-                        x: .value("Month", monthStart)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(
+                        color: Color.black.opacity(0.08),
+                        radius: 8, x: 0, y: 2
                     )
-                    .lineStyle(StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(Color.gray.opacity(0.3))
-                }
-            }
+            )
         }
     }
-    
-    
-    @AxisContentBuilder
-    private func chartXAxisView() -> some AxisContent {
-        if selectedTimeFrame == .oneYear {
-            // Show month labels for 1Y timeline
-            AxisMarks(values: .stride(by: .month)) { value in
-                AxisTick()
-                AxisValueLabel(centered: true) {
-                    if let date = value.as(Date.self) {
-                        let monthLetter = Calendar.current.monthSymbols[Calendar.current.component(.month, from: date) - 1].prefix(1).uppercased()
-                        Text(String(monthLetter))
-                    }
-                }
-            }
-        } else if selectedTimeFrame == .threeMonths {
-            // Force month labels for 90D timeline - use stride with smaller font
-            AxisMarks(values: .stride(by: .month)) { value in
-                AxisTick()
-                AxisValueLabel(centered: true) {
-                    if let date = value.as(Date.self) {
-                        let monthAbbr = Calendar.current.monthSymbols[Calendar.current.component(.month, from: date) - 1].prefix(3).uppercased()
-                        Text(String(monthAbbr))
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                }
-            }
-        } else if selectedTimeFrame == .oneMonth {
-            // Show 3-letter month labels for 30D timeline
-            AxisMarks(values: .stride(by: .month)) { value in
-                AxisTick()
-                AxisValueLabel(centered: true) {
-                    if let date = value.as(Date.self) {
-                        let monthAbbr = Calendar.current.monthSymbols[Calendar.current.component(.month, from: date) - 1].prefix(3).uppercased()
-                        Text(String(monthAbbr))
-                    }
-                }
-            }
-        } else if dateRange.spansMultipleYears {
-            // Show year labels when data spans multiple years
-            AxisMarks(values: .stride(by: .year)) { value in
-                AxisTick()
-                AxisValueLabel(format: .dateTime.year(), centered: true)
-            }
-        } else {
-            // Show day labels for 7D timeline
-            AxisMarks(values: .stride(by: .day, count: 7)) { value in
-                AxisTick()
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: true)
-            }
-        }
-    }
-    
-    private func chartYAxisView() -> some AxisContent {
-        // Calculate dynamic stride and label interval based on weight range
-        let range = weightRange.max - weightRange.min
-        let (stride, labelInterval): (Double, Double) = {
-            if range > 6 {
-                return (1.0, 2.0) // Grid every 1kg, labels every 2kg
-            } else if range > 2 {
-                return (0.5, 1.0) // Grid every 0.5kg, labels every 1kg
-            } else {
-                return (0.25, 0.5) // Grid every 0.25kg, labels every 0.5kg
-            }
-        }()
-        
-        return AxisMarks(position: .leading, values: .stride(by: stride)) { value in
-            // Only show gridlines and labels within our visible weight range
-            if let weight = value.as(Double.self), 
-               weight >= weightRange.min && weight <= weightRange.max {
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                AxisTick()
-                
-                // Show labels based on calculated interval
-                let weightRounded = (weight * 10).rounded() / 10 // Round to 1 decimal
-                let intervalCheck = (weightRounded * 10) / (labelInterval * 10)
-                if abs(intervalCheck - intervalCheck.rounded()) < 0.01 {
-                    AxisValueLabel {
-                        if labelInterval >= 1.0 {
-                            Text(String(format: "%.0f kg", weight))
-                        } else {
-                            Text(String(format: "%.1f kg", weight))
+
+    // MARK: - X-axis labels
+
+    private var xAxisLabelsView: some View {
+        let labels = axisLabels()
+
+        // For 1M, 3M, and 1Y timeframes, position labels based on actual dates
+        if selectedTimeFrame == .oneMonth || selectedTimeFrame == .oneYear || selectedTimeFrame == .threeMonths {
+            return AnyView(
+                GeometryReader { geo in
+                    ZStack(alignment: .topLeading) {
+                        ForEach(labels, id: \.0) { (date, label) in
+                            let xPos = xPosition(for: date, in: CGSize(width: geo.size.width - 40, height: 0))
+                            Text(label)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.primary)
+                                .position(x: xPos + 40, y: 10) // +40 for Y-axis label offset
                         }
                     }
                 }
+                .frame(height: 20)
+                .padding(.top, 8)
+            )
+        } else {
+            // For other timeframes, use evenly distributed HStack
+            return AnyView(
+                HStack {
+                    ForEach(labels, id: \.0) { (date, label) in
+                        Text(label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.top, 8)
+            )
+        }
+    }
+
+    /// Decide what to show on the X axis based on timeframe
+    private func axisLabels() -> [(Date, String)] {
+        guard !points.isEmpty else { return [] }
+
+        let formatter = DateFormatter()
+        formatter.locale = .current
+
+        // Use effective timeframe for All Time views
+        let effectiveTimeframe = effectiveTimeframeForAllTime()
+        
+        switch effectiveTimeframe {
+        case .oneWeek:
+            formatter.dateFormat = "EEE"
+        case .oneMonth:
+            formatter.dateFormat = "MMM" // Month abbreviation (Jan, Feb, etc.)
+        case .threeMonths:
+            formatter.dateFormat = "MMM" // Month abbreviation (Jan, Feb, etc.)
+        case .oneYear:
+            formatter.dateFormat = "MMMMM" // Single letter month (J, F, M, A, etc.)
+        case .allTime:
+            formatter.dateFormat = "yyyy"
+        }
+
+        // For 1M, 3M, and 1Y, show all months with labels positioned in the middle
+        if effectiveTimeframe == .oneMonth || effectiveTimeframe == .oneYear || effectiveTimeframe == .threeMonths {
+            var result: [(Date, String)] = []
+            let calendar = Calendar.current
+            
+            // Get start and end months
+            let startComponents = calendar.dateComponents([.year, .month], from: xDomain.lowerBound)
+            let endComponents = calendar.dateComponents([.year, .month], from: xDomain.upperBound)
+            
+            if let startDate = calendar.date(from: startComponents),
+               let endDate = calendar.date(from: endComponents) {
+                
+                var currentDate = startDate
+                
+                // Add label for each month, positioned in the middle of the month
+                while currentDate <= endDate {
+                    // Only show label if the 1st of this month is within the data range
+                    // (i.e., there's a gridline for this month)
+                    if currentDate >= xDomain.lowerBound && currentDate <= xDomain.upperBound {
+                        // Position label at day 15 (middle of month)
+                        if let midMonth = calendar.date(bySetting: .day, value: 15, of: currentDate) {
+                            result.append((midMonth, formatter.string(from: currentDate)))
+                        }
+                    }
+                    
+                    // Move to next month
+                    if let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) {
+                        currentDate = nextMonth
+                    } else {
+                        break
+                    }
+                }
             }
+            
+            return result
+        }
+        
+        // For other timeframes: 4–6 evenly spaced labels
+        let count = max(3, min(6, points.count))
+        let step = max(1, points.count / (count - 1))
+
+        var result: [(Date, String)] = []
+        for i in stride(from: 0, to: points.count, by: step) {
+            let idx = min(i, points.count - 1)
+            let date = points[idx].date
+            result.append((date, formatter.string(from: date)))
+        }
+
+        // Ensure end label is included
+        if let last = points.last {
+            let label = formatter.string(from: last.date)
+            if result.last?.1 != label {
+                result.append((last.date, label))
+            }
+        }
+
+        return result
+    }
+    
+    // MARK: - Helper functions
+    
+    /// Determine appropriate display mode for All Time based on actual data range
+    private func effectiveTimeframeForAllTime() -> TimeFrame {
+        guard selectedTimeFrame == .allTime, !points.isEmpty else {
+            return selectedTimeFrame
+        }
+        
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: xDomain.lowerBound, to: xDomain.upperBound).day ?? 0
+        
+        if days <= 7 {
+            return .oneWeek
+        } else if days <= 30 {
+            return .oneMonth
+        } else if days <= 90 {
+            return .threeMonths
+        } else if days <= 365 {
+            return .oneYear
+        } else {
+            return .allTime  // Keep as yearly for >365 days
         }
     }
     
+    private func xPosition(for date: Date, in size: CGSize) -> CGFloat {
+        let total = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
+        guard total > 0 else { return 0 }
+        let t = date.timeIntervalSince(xDomain.lowerBound) / total
+        return CGFloat(t) * size.width
+    }
+
+    // MARK: - Timeframe buttons
+
     private var timeFrameButtons: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(TimeFrame.allCases, id: \.self) { timeFrame in
-                    Button(action: {
-                        selectedTimeFrame = timeFrame
-                        calculateRanges() // Recalculate ranges for new time frame
-                    }) {
-                        Text(timeFrame.rawValue)
+                ForEach(TimeFrame.allCases, id: \.self) { tf in
+                    Button {
+                        if tf != selectedTimeFrame {
+                            selectedTimeFrame = tf
+                            selectedIndex = nil
+                            loadForCurrentTimeframe()
+                        }
+                    } label: {
+                        Text(tf.rawValue)
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(selectedTimeFrame == timeFrame ? .white : .blue)
-                            .lineLimit(1)
+                            .foregroundColor(selectedTimeFrame == tf ? .white : .blue)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 20)
-                                    .fill(selectedTimeFrame == timeFrame ? Color.blue : Color.blue.opacity(0.1))
+                                    .fill(selectedTimeFrame == tf ? Color.blue : Color.blue.opacity(0.1))
                             )
                     }
                 }
@@ -924,52 +1203,72 @@ struct WeightChartDetailView: View {
         }
         .padding(.vertical, 12)
     }
-    
+
+    // MARK: - Statistics section
+
     private var statisticsSection: some View {
-        // Statistics Section - use window data for 1Y timeframe, regular data for others
-        let statsData = (selectedTimeFrame == .oneYear && !currentWindowData.isEmpty) ? currentWindowData : chartData
-        
-        return VStack(alignment: .leading, spacing: 16) {
+        let data = statsData
+
+        return VStack(alignment: .leading, spacing: 8) {
             Text("Statistics")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
+                .font(.headline)
+                .foregroundColor(.primary)
+                .padding(.leading, 14)
+                .padding(.top, 14)
+
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
-                StatCard(title: "Current", value: String(format: "%.1f kg", statsData.last?.weight ?? 0), color: .blue)
-                StatCard(title: "Highest", value: String(format: "%.1f kg", statsData.map { $0.weight }.max() ?? 0), color: .red)
-                StatCard(title: "Lowest", value: String(format: "%.1f kg", statsData.map { $0.weight }.min() ?? 0), color: .green)
-                StatCard(title: "Change", value: calculateWindowChange(for: statsData), color: calculateWindowChangeColor(for: statsData))
+                StatCard(
+                    title: "Current",
+                    value: data.last.map { String(format: "%.1f kg", $0.weight) } ?? "—",
+                    color: .blue
+                )
+
+                StatCard(
+                    title: "Highest",
+                    value: data.map { $0.weight }.max().map { String(format: "%.1f kg", $0) } ?? "—",
+                    color: .red
+                )
+
+                StatCard(
+                    title: "Lowest",
+                    value: data.map { $0.weight }.min().map { String(format: "%.1f kg", $0) } ?? "—",
+                    color: .green
+                )
+
+                StatCard(
+                    title: "Change",
+                    value: changeText(for: data),
+                    color: changeColor(for: data)
+                )
             }
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.9)
         }
-        .cardStyle()
     }
-    
-    // Calculate weight change for current window
-    private func calculateWindowChange(for data: [WeightLogEntry]) -> String {
+
+    private func changeText(for data: [WeightLogEntry]) -> String {
         guard let first = data.first?.weight, let last = data.last?.weight else { return "—" }
-        let change = last - first
-        let sign = change >= 0 ? "+" : ""
-        return "\(sign)\(String(format: "%.1f", change)) kg"
+        let diff = last - first
+        let sign = diff >= 0 ? "+" : ""
+        return "\(sign)\(String(format: "%.1f", diff)) kg"
     }
-    
-    // Calculate weight change color for current window
-    private func calculateWindowChangeColor(for data: [WeightLogEntry]) -> Color {
+
+    private func changeColor(for data: [WeightLogEntry]) -> Color {
         guard let first = data.first?.weight, let last = data.last?.weight else { return .secondary }
-        let change = last - first
-        return change >= 0 ? .red : .green
+        return (last - first) >= 0 ? .red : .green
     }
-    
+
+    // MARK: - No data view
+
     private var noDataView: some View {
-        // No data state
         VStack(spacing: 16) {
             Image(systemName: "chart.line.uptrend.xyaxis")
                 .font(.system(size: 60))
                 .foregroundColor(.gray)
-            
+
             Text("No Weight Data")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Text("Start logging your weight to see your progress chart here.")
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -978,77 +1277,1107 @@ struct WeightChartDetailView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
     }
-    
-    // Async data loading function
-    private func loadDataAsync() {
-        Task {
-            // Load data on background thread
-            let allEntries = await Task.detached {
-                return weightLogManager.allEntries.sorted { $0.date < $1.date }
-            }.value
+
+    // MARK: - Data prep
+
+    private func loadForCurrentTimeframe() {
+        let all = weightLogManager.allEntries.sorted { $0.date < $1.date }
+        guard !all.isEmpty else {
+            self.points = []
+            self.isLoading = false
+            return
+        }
+        
+        // Calculate data hash to detect changes
+        let currentHash = all.map { $0.id.hashValue }.reduce(0, ^)
+        let dataChanged = currentHash != lastDataHash
+        
+        // Determine the effective smoothing timeframe
+        let smoothingTimeframe: TimeFrame
+        if self.selectedTimeFrame == .allTime, let firstDate = all.first?.date, let lastDate = all.last?.date {
+            let calendar = Calendar.current
+            let days = calendar.dateComponents([.day], from: firstDate, to: lastDate).day ?? 0
             
-            // Update UI on main thread
+            if days <= 7 {
+                smoothingTimeframe = .oneWeek
+            } else if days <= 30 {
+                smoothingTimeframe = .oneMonth
+            } else if days <= 90 {
+                smoothingTimeframe = .threeMonths
+            } else if days <= 365 {
+                smoothingTimeframe = .oneYear
+            } else {
+                smoothingTimeframe = .allTime
+            }
+        } else {
+            smoothingTimeframe = self.selectedTimeFrame
+        }
+        
+        // Check cache first - if data hasn't changed and we have cached results, use them
+        if !dataChanged, let cached = smoothedDataCache[smoothingTimeframe] {
+            // Use cached data - instant display
+            applySmoothedData(cached, all: all)
+            return
+        }
+        
+        // Need to compute - show loading indicator
+        isLoading = true
+        
+        Task(priority: .userInitiated) {
+            let smoothed = self.smoothedTrend(from: all, timeframe: smoothingTimeframe)
+            
             await MainActor.run {
-                // Update chart cache with loaded data
-                chartCache.updateCache(with: allEntries)
-                print("WeightChart: Loaded \(allEntries.count) entries")
-                print("WeightChart: First entry: \(allEntries.first?.date ?? Date()) - \(allEntries.first?.weight ?? 0)")
-                print("WeightChart: Last entry: \(allEntries.last?.date ?? Date()) - \(allEntries.last?.weight ?? 0)")
-                calculateRanges()
-                isLoading = false
+                // Update cache
+                self.smoothedDataCache[smoothingTimeframe] = smoothed
+                self.lastDataHash = currentHash
+                
+                // Apply the data
+                self.applySmoothedData(smoothed, all: all)
             }
         }
     }
     
-    private var weightChangeText: String {
-        guard chartData.count >= 2,
-              let first = chartData.first?.weight,
-              let last = chartData.last?.weight else {
-            return "N/A"
+    private func applySmoothedData(_ smoothed: [WeightLogEntry], all: [WeightLogEntry]) {
+        guard let lastDate = all.last?.date else {
+            self.points = []
+            self.isLoading = false
+            return
         }
         
-        let change = last - first
-        let sign = change >= 0 ? "+" : ""
-        return "\(sign)\(String(format: "%.1f", change)) kg"
+        // X-axis should span the full requested timeframe, not just available data
+        let firstDate: Date
+        if self.selectedTimeFrame == .allTime {
+            firstDate = all.first?.date ?? lastDate
+        } else if let days = self.selectedTimeFrame.days {
+            firstDate = Calendar.current.date(byAdding: .day, value: -days, to: lastDate) ?? lastDate
+        } else {
+            firstDate = all.first?.date ?? lastDate
+        }
+
+        let weights = smoothed.map { $0.weight }
+        let minW = weights.min() ?? 0
+        let maxW = weights.max() ?? 100
+        let range = maxW - minW
+        // Reduced padding: 15% of range with minimum of 0.5kg
+        let padding = max(range * 0.15, 0.5)
+        let yRange = (minW - padding)...(maxW + padding)
+
+        self.points = smoothed
+        self.xDomain = firstDate...lastDate
+        self.yDomain = yRange
+        self.selectedIndex = nil
+        self.isLoading = false
     }
     
-    /// Color for weight change indicator
-    private var weightChangeColor: Color {
-        guard chartData.count >= 2,
-              let first = chartData.first?.weight,
-              let last = chartData.last?.weight else {
-            return .gray
+    // MARK: - Happy Scale 4-Stage Algorithm (Complete Specification)
+    
+    /// STAGE 0: Build daily series with gradient-based gap filling
+    private func buildDailySeries(from entries: [WeightLogEntry]) -> [(date: Date, weight: Double)] {
+        guard let first = entries.first?.date,
+              let last = entries.last?.date else { return [] }
+        
+        var daily: [(date: Date, weight: Double)] = []
+        var idx = 0
+        let n = entries.count
+        let calendar = Calendar.current
+        
+        var current = calendar.startOfDay(for: first)
+        let endDate = calendar.startOfDay(for: last)
+        
+        while current <= endDate {
+            // Move idx until entries[idx].date >= current
+            while idx < n && calendar.startOfDay(for: entries[idx].date) < current {
+                idx += 1
+            }
+            
+            let w: Double
+            
+            if idx < n && calendar.isDate(entries[idx].date, inSameDayAs: current) {
+                // Exact match
+                w = entries[idx].weight
+            } else {
+                // In a gap - interpolate
+                let prevIdx = idx - 1
+                let nextIdx = idx
+                
+                if prevIdx >= 0 && nextIdx < n {
+                    // Linear interpolation between prev and next
+                    let prev = entries[prevIdx]
+                    let next = entries[nextIdx]
+                    
+                    let totalDays = calendar.dateComponents([.day], from: prev.date, to: next.date).day ?? 1
+                    let daysFromPrev = calendar.dateComponents([.day], from: prev.date, to: current).day ?? 0
+                    let t = max(0.0, min(1.0, Double(daysFromPrev) / Double(totalDays)))
+                    
+                    w = prev.weight + t * (next.weight - prev.weight)
+                } else if prevIdx >= 0 {
+                    // After last reading → hold forward
+                    w = entries[prevIdx].weight
+                } else {
+                    // Before first reading
+                    w = entries[nextIdx].weight
+                }
+            }
+            
+            daily.append((date: current, weight: w))
+            current = calendar.date(byAdding: .day, value: 1, to: current)!
         }
         
-        let change = last - first
-        return change >= 0 ? .red : .green
+        return daily
+    }
+    
+    /// STAGE 1 & 2: DES with STRONG turning point damping (affects α, β, and slope)
+    private func desWithStrongTurning(
+        values: [Double],
+        alpha: Double,
+        beta: Double,
+        turning: Double
+    ) -> [Double] {
+        let n = values.count
+        guard n >= 2 else { return values }
+        
+        var level = values[0]
+        var trend = values[1] - values[0]
+        var result = Array(repeating: 0.0, count: n)
+        
+        var prevDelta = values[1] - values[0]
+        
+        for i in 0..<n {
+            let x = values[i]
+            let delta = i > 0 ? x - values[i - 1] : prevDelta
+            
+            // Detect slope reversal (sign flip)
+            let isTurning = (i > 1 &&
+                           ((delta > 0 && prevDelta < 0) || (delta < 0 && prevDelta > 0)) &&
+                           delta != 0 && prevDelta != 0)
+            
+            var a = alpha
+            var b = beta
+            
+            if isTurning {
+                // Nonlinear punch for stronger damping
+                let t = turning * turning
+                a = alpha * (1 - 0.85 * t)  // Reduce alpha
+                b = beta * (1 - 0.90 * t)   // Reduce beta even more
+                trend *= (1 - 0.70 * t)     // Flatten slope
+            }
+            
+            let prevLevel = level
+            level = a * x + (1 - a) * (level + trend)
+            trend = b * (level - prevLevel) + (1 - b) * trend
+            
+            // Clamp slope to prevent runaway
+            trend = min(1.5, max(-1.5, trend))
+            
+            result[i] = level + trend
+            prevDelta = delta
+        }
+        
+        return result
+    }
+    
+    /// STAGE 3: Centered moving average polish
+    private func movingAverage(values: [Double], window: Int) -> [Double] {
+        guard window > 1, values.count > 1 else { return values }
+        
+        let w = window % 2 == 0 ? window + 1 : window
+        let radius = w / 2
+        let n = values.count
+        var out = Array(repeating: 0.0, count: n)
+        
+        for i in 0..<n {
+            let start = max(0, i - radius)
+            let end = min(n - 1, i + radius)
+            let slice = values[start...end]
+            out[i] = slice.reduce(0, +) / Double(slice.count)
+        }
+        
+        return out
+    }
+    
+    /// Complete pipeline: daily series → DES → MA → output
+    private func buildTrendFromDaily(
+        daily: [(date: Date, weight: Double)],
+        alpha: Double,
+        beta: Double,
+        window: Int,
+        turning: Double
+    ) -> [Double] {
+        let raw = daily.map { $0.weight }
+        let des = desWithStrongTurning(values: raw, alpha: alpha, beta: beta, turning: turning)
+        return movingAverage(values: des, window: window)
+    }
+    
+    /// Build Happy Scale-style smooth trend line using complete 4-stage algorithm
+    /// CRITICAL: Must be called with ALL entries, then trim result to timeframe
+    private func smoothedTrend(
+        from allEntries: [WeightLogEntry],
+        timeframe: TimeFrame,
+        trimToTimeframe: Bool = true
+    ) -> [WeightLogEntry] {
+        guard !allEntries.isEmpty else { return [] }
+        
+        let sorted = allEntries.sorted { $0.date < $1.date }
+        let params = timeframe.smoothingParameters
+        
+        // STAGE 0: Build daily series with gap filling FROM FULL HISTORY
+        // This is critical - gap filling needs previous data to interpolate
+        let daily = buildDailySeries(from: sorted)
+        
+        // STAGES 1-3: DES + turning damping + MA polish on FULL series
+        let trend = buildTrendFromDaily(
+            daily: daily,
+            alpha: params.alpha,
+            beta: params.beta,
+            window: params.windowSize,
+            turning: params.turning
+        )
+        
+        // Map full trend to WeightLogEntry
+        var fullResult: [WeightLogEntry] = []
+        fullResult.reserveCapacity(daily.count)
+        
+        for (index, day) in daily.enumerated() {
+            let smoothedWeight = trend[index]
+            
+            fullResult.append(
+                WeightLogEntry(
+                    id: UUID(),
+                    date: day.date,
+                    weight: smoothedWeight,
+                    movingAverage: smoothedWeight,
+                    weeklyRate: nil,
+                    notes: nil
+                )
+            )
+        }
+        
+        // NOW trim to timeframe (like Python does)
+        if trimToTimeframe, timeframe != .allTime, let days = timeframe.days,
+           let fullEnd = fullResult.last?.date {
+            let calendar = Calendar.current
+            let cutoff = calendar.date(byAdding: .day, value: -days, to: fullEnd) ?? fullEnd
+            return fullResult.filter { $0.date >= cutoff }
+        }
+        
+        return fullResult
+    }
+
+}
+
+// MARK: - Canvas Chart View
+
+private struct CanvasChart: View {
+    let points: [WeightLogEntry]
+    let xDomain: ClosedRange<Date>
+    let yDomain: ClosedRange<Double>
+    let timeframe: TimeFrame
+    var chartHeight: CGFloat = 320  // Default height, can be overridden
+    var enableGestures: Bool = false  // Disable by default for dashboard scrolling
+
+    @Binding var selectedIndex: Int?
+    
+    // Haptic feedback - throttled to avoid rate-limit errors
+    @State private var lastSelectedIndex: Int? = nil
+    @State private var lastHapticTime: Date = .distantPast
+    private let selectionHaptic = UISelectionFeedbackGenerator()
+    private let hapticThrottleInterval: TimeInterval = 0.05 // 50ms minimum between haptics
+
+    private let gridLineCount = 5
+    
+    /// Determine appropriate display mode for All Time based on actual data range
+    private func effectiveTimeframeForAllTime() -> TimeFrame {
+        guard timeframe == .allTime, !points.isEmpty else {
+            return timeframe
+        }
+        
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: xDomain.lowerBound, to: xDomain.upperBound).day ?? 0
+        
+        if days <= 7 {
+            return .oneWeek
+        } else if days <= 30 {
+            return .oneMonth
+        } else if days <= 90 {
+            return .threeMonths
+        } else if days <= 365 {
+            return .oneYear
+        } else {
+            return .allTime  // Keep as yearly for >365 days
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            // Calculate effective timeframe for All Time views before Canvas
+            let effectiveTimeframe = effectiveTimeframeForAllTime()
+
+            ZStack(alignment: .leading) {
+                // Main chart (line + grid) - offset to make room for Y-axis labels
+                Canvas { context, canvasSize in
+                    drawGrid(in: context, size: canvasSize, timeframe: timeframe, effectiveTimeframe: effectiveTimeframe)
+                    drawLine(in: context, size: canvasSize)
+                }
+                .frame(height: size.height)
+                .padding(.leading, 40) // Space for Y-axis labels
+
+                // Y-axis labels
+                yAxisLabels(height: size.height)
+                    .frame(width: 40, alignment: .trailing)
+
+                // Crosshair overlay (separate layer)
+                if let idx = selectedIndex, points.indices.contains(idx) {
+                    crosshair(for: points[idx], in: CGSize(width: size.width - 40, height: size.height))
+                        .offset(x: 40) // Offset to account for Y-axis labels
+                }
+            }
+            // Conditionally enable gestures (disabled on dashboard for scrolling)
+            .allowsHitTesting(enableGestures)
+            .onTapGesture { location in
+                guard enableGestures else { return }
+                let adjustedX = location.x - 40
+                let chartSize = CGSize(width: size.width - 40, height: size.height)
+                let idx = index(for: adjustedX, width: chartSize.width)
+                
+                if points.indices.contains(idx) {
+                    if selectedIndex == idx {
+                        selectedIndex = nil
+                    } else {
+                        selectedIndex = idx
+                        selectionHaptic.selectionChanged()
+                    }
+                }
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        guard enableGestures else { return }
+                        let horizontalDistance = abs(value.translation.width)
+                        let verticalDistance = abs(value.translation.height)
+                        guard horizontalDistance > verticalDistance else { return }
+                        
+                        let chartWidth = size.width - 40
+                        let adjustedX = value.location.x - 40
+                        let clamped = max(0, min(chartWidth, adjustedX))
+                        let ratio = clamped / chartWidth
+                        let idx = Int(round(ratio * CGFloat(points.count - 1)))
+                        let clampedIdx = max(0, min(points.count - 1, idx))
+                        
+                        if clampedIdx != selectedIndex {
+                            selectedIndex = clampedIdx
+                            if lastSelectedIndex != clampedIdx {
+                                let now = Date()
+                                if now.timeIntervalSince(lastHapticTime) >= hapticThrottleInterval {
+                                    selectionHaptic.selectionChanged()
+                                    lastHapticTime = now
+                                }
+                                lastSelectedIndex = clampedIdx
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        guard enableGestures else { return }
+                        selectedIndex = nil
+                        lastSelectedIndex = nil
+                    }
+            )
+        }
+        .frame(height: chartHeight)
+    }
+    
+    // MARK: - Y-axis labels
+    
+    private func yAxisLabels(height: CGFloat) -> some View {
+        GeometryReader { _ in
+            let range = yDomain.upperBound - yDomain.lowerBound
+            let interval = yAxisInterval(for: range)
+            let labels = generateYAxisLabels(range: range, interval: interval)
+            
+            ZStack(alignment: .trailing) {
+                ForEach(labels, id: \.self) { value in
+                    let y = yPosition(for: value, in: CGSize(width: 0, height: height))
+                    
+                    Text(String(format: "%.1f", value))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.primary)
+                        .position(x: 30, y: y)
+                }
+            }
+        }
+    }
+    
+    /// Determine Y-axis interval based on range
+    private func yAxisInterval(for range: Double) -> Double {
+        if range <= 3.0 {
+            return 0.2
+        } else if range <= 7.0 {
+            return 0.5
+        } else if range <= 10.0 {
+            return 1.0
+        } else {
+            return 2.0
+        }
+    }
+    
+    /// Generate Y-axis label values
+    private func generateYAxisLabels(range: Double, interval: Double) -> [Double] {
+        var labels: [Double] = []
+        
+        // Round min to nearest interval
+        let minRounded = (yDomain.lowerBound / interval).rounded(.down) * interval
+        
+        var current = minRounded
+        while current <= yDomain.upperBound {
+            if current >= yDomain.lowerBound {
+                labels.append(current)
+            }
+            current += interval
+        }
+        
+        return labels
+    }
+
+    // MARK: - Drawing helpers
+
+    private func drawGrid(in context: GraphicsContext, size: CGSize, timeframe: TimeFrame, effectiveTimeframe: TimeFrame) {
+        guard !points.isEmpty else { return }
+
+        var gridPath = Path()
+
+        // Horizontal gridlines - align with Y-axis labels
+        let range = yDomain.upperBound - yDomain.lowerBound
+        let interval = yAxisInterval(for: range)
+        let labels = generateYAxisLabels(range: range, interval: interval)
+        
+        for value in labels {
+            let y = yPosition(for: value, in: size)
+            gridPath.move(to: CGPoint(x: 0, y: y))
+            gridPath.addLine(to: CGPoint(x: size.width, y: y))
+        }
+
+        // All horizontal gridlines with Y-axis labels use consistent style
+        context.stroke(gridPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+        
+        // Add intermediate gridlines when labels are every 2kg
+        if interval == 2.0 {
+            var intermediateGridPath = Path()
+            
+            // Generate intermediate gridlines at 1kg intervals
+            let minRounded = (yDomain.lowerBound / 1.0).rounded(.down) * 1.0
+            var current = minRounded
+            
+            while current <= yDomain.upperBound {
+                // Only draw if this is NOT a label position (labels are at 2kg intervals)
+                let isLabelPosition = labels.contains(where: { abs($0 - current) < 0.01 })
+                
+                if !isLabelPosition && current >= yDomain.lowerBound {
+                    let y = yPosition(for: current, in: size)
+                    intermediateGridPath.move(to: CGPoint(x: 0, y: y))
+                    intermediateGridPath.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                current += 1.0
+            }
+            
+            // Draw intermediate gridlines with lighter style
+            context.stroke(intermediateGridPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+        }
+        
+        // Add intermediate gridlines when labels are every 1kg
+        if interval == 1.0 {
+            var intermediateGridPath = Path()
+            
+            // Generate intermediate gridlines at 0.5kg intervals
+            let minRounded = (yDomain.lowerBound / 0.5).rounded(.down) * 0.5
+            var current = minRounded
+            
+            while current <= yDomain.upperBound {
+                // Only draw if this is NOT a label position (labels are at 1kg intervals)
+                let isLabelPosition = labels.contains(where: { abs($0 - current) < 0.01 })
+                
+                if !isLabelPosition && current >= yDomain.lowerBound {
+                    let y = yPosition(for: current, in: size)
+                    intermediateGridPath.move(to: CGPoint(x: 0, y: y))
+                    intermediateGridPath.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                current += 0.5
+            }
+            
+            // Draw intermediate gridlines with lighter style
+            context.stroke(intermediateGridPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+        }
+        
+        // Add intermediate gridlines when labels are every 0.2kg (0-3kg range)
+        if interval == 0.2 {
+            var intermediateGridPath = Path()
+            
+            // Generate intermediate gridlines at 0.1kg intervals
+            let minRounded = (yDomain.lowerBound / 0.1).rounded(.down) * 0.1
+            var current = minRounded
+            
+            while current <= yDomain.upperBound {
+                // Only draw if this is NOT a label position (labels are at 0.2kg intervals)
+                let isLabelPosition = labels.contains(where: { abs($0 - current) < 0.01 })
+                
+                if !isLabelPosition && current >= yDomain.lowerBound {
+                    let y = yPosition(for: current, in: size)
+                    intermediateGridPath.move(to: CGPoint(x: 0, y: y))
+                    intermediateGridPath.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                current += 0.1
+            }
+            
+            // Draw intermediate gridlines with lighter style
+            context.stroke(intermediateGridPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+        }
+        
+        // Add intermediate gridlines when labels are every 0.5kg (3-7kg range)
+        if interval == 0.5 {
+            var intermediateGridPath = Path()
+            
+            // Generate intermediate gridlines at 0.1kg intervals
+            let minRounded = (yDomain.lowerBound / 0.1).rounded(.down) * 0.1
+            var current = minRounded
+            
+            while current <= yDomain.upperBound {
+                // Only draw if this is NOT a label position (labels are at 0.5kg intervals)
+                let isLabelPosition = labels.contains(where: { abs($0 - current) < 0.01 })
+                
+                if !isLabelPosition && current >= yDomain.lowerBound {
+                    let y = yPosition(for: current, in: size)
+                    intermediateGridPath.move(to: CGPoint(x: 0, y: y))
+                    intermediateGridPath.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                current += 0.1
+            }
+            
+            // Draw intermediate gridlines with lighter style
+            context.stroke(intermediateGridPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+        }
+        
+        // Vertical month markers for 1M, 3M, and 1Y timeframes
+        if effectiveTimeframe == .oneMonth || effectiveTimeframe == .oneYear || effectiveTimeframe == .threeMonths {
+            let calendar = Calendar.current
+            var monthPath = Path()
+            
+            // Get the start and end months
+            let startComponents = calendar.dateComponents([.year, .month], from: xDomain.lowerBound)
+            let endComponents = calendar.dateComponents([.year, .month], from: xDomain.upperBound)
+            
+            if let startDate = calendar.date(from: startComponents),
+               let endDate = calendar.date(from: endComponents) {
+                
+                var currentDate = startDate
+                
+                // Draw a line for the 1st of each month
+                while currentDate <= endDate {
+                    if currentDate >= xDomain.lowerBound && currentDate <= xDomain.upperBound {
+                        let x = xPosition(for: currentDate, in: size)
+                        monthPath.move(to: CGPoint(x: x, y: 0))
+                        monthPath.addLine(to: CGPoint(x: x, y: size.height))
+                    }
+                    
+                    // Move to next month
+                    if let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) {
+                        currentDate = nextMonth
+                    } else {
+                        break
+                    }
+                }
+                
+                // Draw month markers with consistent prominent style
+                context.stroke(monthPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+            }
+        }
+        
+        // Daily vertical gridlines for 1W and 1M timeframes
+        if effectiveTimeframe == .oneWeek || effectiveTimeframe == .oneMonth {
+            let calendar = Calendar.current
+            var dailyPath = Path()
+            
+            // Get start and end dates
+            let startDate = calendar.startOfDay(for: xDomain.lowerBound)
+            let endDate = calendar.startOfDay(for: xDomain.upperBound)
+            
+            var currentDate = startDate
+            
+            // Draw a line for each day
+            while currentDate <= endDate {
+                if currentDate >= xDomain.lowerBound && currentDate <= xDomain.upperBound {
+                    let x = xPosition(for: currentDate, in: size)
+                    dailyPath.move(to: CGPoint(x: x, y: 0))
+                    dailyPath.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                
+                // Move to next day
+                if let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDate) {
+                    currentDate = nextDay
+                } else {
+                    break
+                }
+            }
+            
+            // Draw daily gridlines with different styles
+            if effectiveTimeframe == .oneWeek {
+                context.stroke(dailyPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+            } else {
+                context.stroke(dailyPath, with: .color(Color.gray.opacity(0.25)), lineWidth: 0.5)
+            }
+        }
+        
+        // Vertical year markers for All time view if data spans multiple years
+        if effectiveTimeframe == .allTime {
+            let calendar = Calendar.current
+            let startYear = calendar.component(.year, from: xDomain.lowerBound)
+            let endYear = calendar.component(.year, from: xDomain.upperBound)
+            
+            if endYear > startYear {
+                var yearPath = Path()
+                
+                // Draw a line for each year boundary
+                for year in (startYear + 1)...endYear {
+                    if let yearStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) {
+                        // Only draw if within the domain
+                        if yearStart >= xDomain.lowerBound && yearStart <= xDomain.upperBound {
+                            let x = xPosition(for: yearStart, in: size)
+                            yearPath.move(to: CGPoint(x: x, y: 0))
+                            yearPath.addLine(to: CGPoint(x: x, y: size.height))
+                        }
+                    }
+                }
+                
+                // Draw year markers with slightly more visible line
+                context.stroke(yearPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+            }
+        }
+    }
+
+    private func drawLine(in context: GraphicsContext, size: CGSize) {
+        guard points.count >= 2 else { return }
+
+        let dates = points.map { $0.date }
+        let values = points.map { $0.weight }
+        
+        // Apply densified monotone spline (Stage 4)
+        let (splineDates, splineValues) = monotoneSpline(
+            dates: dates,
+            values: values,
+            samplesPerSegment: 8
+        )
+        
+        // Convert densified points to CGPoints
+        var path = Path()
+        
+        if splineDates.count > 0 {
+            let firstPoint = CGPoint(
+                x: xPosition(for: splineDates[0], in: size),
+                y: yPosition(for: splineValues[0], in: size)
+            )
+            path.move(to: firstPoint)
+            
+            for i in 1..<splineDates.count {
+                let point = CGPoint(
+                    x: xPosition(for: splineDates[i], in: size),
+                    y: yPosition(for: splineValues[i], in: size)
+                )
+                path.addLine(to: point)
+            }
+        }
+
+        context.stroke(
+            path,
+            with: .color(.blue),
+            style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+        )
+    }
+    
+    /// STAGE 4: Densified Fritsch-Carlson monotone cubic spline
+    /// Creates smooth interpolation with 8 samples per segment (matches Python spec)
+    private func monotoneSpline(
+        dates: [Date],
+        values: [Double],
+        samplesPerSegment: Int = 8
+    ) -> (dates: [Date], values: [Double]) {
+        let n = dates.count
+        guard n >= 2 else { return (dates, values) }
+        
+        // Convert dates to days from start
+        let firstDate = dates[0]
+        let xs = dates.map { $0.timeIntervalSince(firstDate) / 86400.0 }
+        let ys = values
+        
+        // Secant slopes
+        var d: [Double] = []
+        for i in 0..<(n-1) {
+            let dx = xs[i+1] - xs[i]
+            let dy = ys[i+1] - ys[i]
+            d.append(dx != 0 ? dy / dx : 0)
+        }
+        
+        // Tangents
+        var m = Array(repeating: 0.0, count: n)
+        m[0] = d[0]
+        for i in 1..<(n-1) {
+            m[i] = 0.5 * (d[i-1] + d[i])
+        }
+        m[n-1] = d[n-2]
+        
+        // Fritsch-Carlson correction for monotonicity
+        for i in 0..<(n-1) {
+            if abs(d[i]) < 1e-8 {
+                m[i] = 0
+                m[i+1] = 0
+            } else {
+                let a = m[i] / d[i]
+                let b = m[i+1] / d[i]
+                let s = a*a + b*b
+                if s > 9.0 {
+                    let t = 3.0 / sqrt(s)
+                    m[i] = t * a * d[i]
+                    m[i+1] = t * b * d[i]
+                }
+            }
+        }
+        
+        // Densify with cubic Hermite interpolation
+        var outX: [Double] = []
+        var outY: [Double] = []
+        
+        for i in 0..<(n-1) {
+            let x0 = xs[i]
+            let x1 = xs[i+1]
+            let y0 = ys[i]
+            let y1 = ys[i+1]
+            let dx = x1 - x0
+            
+            for k in 0..<samplesPerSegment {
+                let t = Double(k) / Double(samplesPerSegment)
+                let t2 = t * t
+                let t3 = t2 * t
+                
+                // Hermite basis functions
+                let h00 = 2*t3 - 3*t2 + 1
+                let h10 = t3 - 2*t2 + t
+                let h01 = -2*t3 + 3*t2
+                let h11 = t3 - t2
+                
+                let y = h00*y0 + h10*dx*m[i] + h01*y1 + h11*dx*m[i+1]
+                let x = x0 + t*dx
+                
+                outX.append(x)
+                outY.append(y)
+            }
+        }
+        
+        // Add final point
+        outX.append(xs.last!)
+        outY.append(ys.last!)
+        
+        // Convert back to dates
+        let outDates = outX.map { Date(timeInterval: $0 * 86400.0, since: firstDate) }
+        
+        return (dates: outDates, values: outY)
+    }
+
+    // MARK: - Coordinate transforms
+
+    private func xPosition(for date: Date, in size: CGSize) -> CGFloat {
+        let total = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
+        guard total > 0 else { return 0 }
+        let t = date.timeIntervalSince(xDomain.lowerBound) / total
+        return CGFloat(t) * size.width
+    }
+
+    private func yPosition(for value: Double, in size: CGSize) -> CGFloat {
+        let range = yDomain.upperBound - yDomain.lowerBound
+        guard range > 0 else { return size.height / 2 }
+        let normalized = (value - yDomain.lowerBound) / range
+        return size.height - CGFloat(normalized) * size.height
+    }
+
+    private func index(for x: CGFloat, width: CGFloat) -> Int {
+        guard !points.isEmpty else { return 0 }
+        let clamped = max(0, min(width, x))
+        let ratio = clamped / width
+        let idx = Int(round(ratio * CGFloat(points.count - 1)))
+        return max(0, min(points.count - 1, idx))
+    }
+
+    // MARK: - Crosshair
+
+    @ViewBuilder
+    private func crosshair(for point: WeightLogEntry, in size: CGSize) -> some View {
+        let x = xPosition(for: point.date, in: size)
+        let y = yPosition(for: point.weight, in: size)
+
+        ZStack {
+            Rectangle()
+                .fill(Color.blue.opacity(0.4))
+                .frame(width: 1, height: size.height)
+                .position(x: x, y: size.height / 2)
+
+            Rectangle()
+                .fill(Color.blue.opacity(0.4))
+                .frame(width: size.width, height: 1)
+                .position(x: size.width / 2, y: y)
+
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 10, height: 10)
+                .position(x: x, y: y)
+
+            VStack(spacing: 2) {
+                Text(point.date, format: .dateTime.day().month().year())
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.primary)
+                Text(String(format: "%.1f kg", point.weight))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.blue)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1)
+            )
+            .position(x: x, y: max(28, y - 36))
+        }
     }
 }
 
+// MARK: - Helpers
+
+/// Simple weekly averaging to keep long ranges lightweight
+private enum WeeklyAverageHelper {
+    static func weeklyAverages(from entries: [WeightLogEntry]) -> [WeightLogEntry] {
+        guard !entries.isEmpty else { return [] }
+
+        let sorted = entries.sorted { $0.date < $1.date }
+        let calendar = Calendar.current
+
+        var result: [WeightLogEntry] = []
+        var bucket: [WeightLogEntry] = []
+        var currentWeek: Date?
+
+        for e in sorted {
+            let weekStart = calendar.dateInterval(of: .weekOfYear, for: e.date)?.start
+
+            if currentWeek == nil {
+                currentWeek = weekStart
+                bucket = [e]
+            } else if weekStart == currentWeek {
+                bucket.append(e)
+            } else {
+                if let avg = makeAverage(from: bucket) {
+                    result.append(avg)
+                }
+                currentWeek = weekStart
+                bucket = [e]
+            }
+        }
+
+        if let avg = makeAverage(from: bucket) {
+            result.append(avg)
+        }
+        return result
+    }
+
+    private static func makeAverage(from entries: [WeightLogEntry]) -> WeightLogEntry? {
+        guard !entries.isEmpty else { return nil }
+        let avg = entries.map { $0.weight }.reduce(0, +) / Double(entries.count)
+        let middleDate = entries[entries.count / 2].date
+        return WeightLogEntry(
+            id: UUID(),
+            date: middleDate,
+            weight: avg,
+            movingAverage: avg,
+            weeklyRate: nil,
+            notes: "Weekly Average"
+        )
+    }
+}
+
+/// Savitzky-Golay smoother (Happy Scale, Fitbit, Garmin style)
+/// Preserves peaks and valleys better than simple moving average
+private enum SavitzkyGolaySmoother {
+    
+    /// Apply Savitzky-Golay smoothing with optional median pre-filtering and double-pass
+    static func smooth(
+        _ entries: [WeightLogEntry],
+        windowSize: Int,
+        polynomialOrder: Int = 2,
+        useMedianPrefilter: Bool = true,
+        useDoublePass: Bool = true
+    ) -> [WeightLogEntry] {
+        guard entries.count > windowSize else { return entries }
+        
+        let sorted = entries.sorted { $0.date < $1.date }
+        
+        // Step 1: Median pre-filtering to remove spikes (optional)
+        let prefiltered = useMedianPrefilter ? medianFilter(sorted, windowSize: 3) : sorted
+        
+        // Step 2: Forward pass Savitzky-Golay
+        let forwardSmoothed = applySavitzkyGolay(prefiltered, windowSize: windowSize, polynomialOrder: polynomialOrder)
+        
+        // Step 3: Backward pass for even smoother results (optional)
+        if useDoublePass {
+            let reversed = forwardSmoothed.reversed()
+            let backwardSmoothed = applySavitzkyGolay(Array(reversed), windowSize: windowSize, polynomialOrder: polynomialOrder)
+            return backwardSmoothed.reversed()
+        }
+        
+        return forwardSmoothed
+    }
+    
+    /// Median filter to remove outliers/spikes
+    private static func medianFilter(_ entries: [WeightLogEntry], windowSize: Int) -> [WeightLogEntry] {
+        guard windowSize > 1 else { return entries }
+        
+        var result: [WeightLogEntry] = []
+        let radius = windowSize / 2
+        
+        for i in entries.indices {
+            let start = max(0, i - radius)
+            let end = min(entries.count - 1, i + radius)
+            let window = entries[start...end].map { $0.weight }.sorted()
+            let median = window[window.count / 2]
+            
+            let base = entries[i]
+            result.append(
+                WeightLogEntry(
+                    id: base.id,
+                    date: base.date,
+                    weight: median,
+                    movingAverage: median,
+                    weeklyRate: base.weeklyRate,
+                    notes: base.notes
+                )
+            )
+        }
+        
+        return result
+    }
+    
+    /// Apply Savitzky-Golay filter
+    private static func applySavitzkyGolay(
+        _ entries: [WeightLogEntry],
+        windowSize: Int,
+        polynomialOrder: Int
+    ) -> [WeightLogEntry] {
+        guard windowSize > polynomialOrder else { return entries }
+        
+        // Ensure window size is odd
+        let actualWindowSize = windowSize % 2 == 0 ? windowSize + 1 : windowSize
+        let coefficients = getSavitzkyGolayCoefficients(windowSize: actualWindowSize, polynomialOrder: polynomialOrder)
+        
+        var result: [WeightLogEntry] = []
+        let radius = actualWindowSize / 2
+        
+        for i in entries.indices {
+            // Handle edge cases by using available data
+            let actualStart = i - radius
+            let actualEnd = i + radius
+            
+            var smoothedWeight = 0.0
+            var coeffIndex = 0
+            
+            for j in actualStart...actualEnd {
+                let dataIndex: Int
+                if j < 0 {
+                    dataIndex = 0 // Extend first value
+                } else if j >= entries.count {
+                    dataIndex = entries.count - 1 // Extend last value
+                } else {
+                    dataIndex = j
+                }
+                
+                smoothedWeight += entries[dataIndex].weight * coefficients[coeffIndex]
+                coeffIndex += 1
+            }
+            
+            let base = entries[i]
+            result.append(
+                WeightLogEntry(
+                    id: base.id,
+                    date: base.date,
+                    weight: smoothedWeight,
+                    movingAverage: smoothedWeight,
+                    weeklyRate: base.weeklyRate,
+                    notes: base.notes
+                )
+            )
+        }
+        
+        return result
+    }
+    
+    /// Get Savitzky-Golay coefficients for given window size and polynomial order
+    /// Pre-computed coefficients for common configurations
+    private static func getSavitzkyGolayCoefficients(windowSize: Int, polynomialOrder: Int) -> [Double] {
+        // Pre-computed coefficients for common cases (polynomial order 2)
+        // These are normalized convolution coefficients
+        
+        switch (windowSize, polynomialOrder) {
+        case (5, 2):
+            return [-3, 12, 17, 12, -3].map { Double($0) / 35.0 }
+        case (7, 2):
+            return [-2, 3, 6, 7, 6, 3, -2].map { Double($0) / 21.0 }
+        case (9, 2):
+            return [-21, 14, 39, 54, 59, 54, 39, 14, -21].map { Double($0) / 231.0 }
+        case (11, 2):
+            return [-36, 9, 44, 69, 84, 89, 84, 69, 44, 9, -36].map { Double($0) / 429.0 }
+        case (13, 2):
+            return [-11, 0, 9, 16, 21, 24, 25, 24, 21, 16, 9, 0, -11].map { Double($0) / 143.0 }
+        case (15, 2):
+            return [-78, -13, 42, 87, 122, 147, 162, 167, 162, 147, 122, 87, 42, -13, -78].map { Double($0) / 1105.0 }
+        case (21, 2):
+            return [-171, -76, 9, 84, 149, 204, 249, 284, 309, 324, 329, 324, 309, 284, 249, 204, 149, 84, 9, -76, -171].map { Double($0) / 3059.0 }
+        case (5, 3):
+            return [5, -30, 75, 131, 75, -30, 5].map { Double($0) / 231.0 }
+        case (7, 3):
+            return [15, -55, 30, 135, 179, 135, 30, -55, 15].map { Double($0) / 429.0 }
+        default:
+            // Fallback to simple moving average if coefficients not pre-computed
+            return Array(repeating: 1.0 / Double(windowSize), count: windowSize)
+        }
+    }
+}
+
+// MARK: - Stat Card (unchanged)
+
 struct StatCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let value: String
     let color: Color
     
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             Text(value)
                 .font(.title3)
                 .fontWeight(.semibold)
-                .foregroundColor(color)
+                .foregroundColor(.primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemGray6))
+                .fill(cardBackground)
+                .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 1)
         )
     }
 }
+
+// MARK: - Preview
 
 #Preview {
     WeightChartCardView()

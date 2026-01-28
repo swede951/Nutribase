@@ -6,3 +6,15 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+
+# Sensitive files - do not commit
+GoogleService-Info.plist
+*.pem
+*.p12
+*.key
+Secrets.swift
+APIKeys.swift
+region_data_for_typesense.jsonl
+usda_foods_typesense.json
+FoodData_Central_*.json
+FoodData_Central_*.zip

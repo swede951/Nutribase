@@ -5,6 +5,21 @@ struct NovaGroupsDetailView: View {
     @ObservedObject var foodLogManager: FoodLogManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.presentationMode) var presentationMode
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    /// Bar empty background: provides contrast against card background
+    private var barEmptyBackground: Color {
+        colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)
+    }
+    
     @State private var currentWeekOffset: Int = 0
     @State private var animationOpacity: Double = 1.0
     
@@ -24,12 +39,37 @@ struct NovaGroupsDetailView: View {
     @State private var animationDirection = 0 // -1 for left, 1 for right
     @State private var nextWeekOffset: Int? = nil // Tracks the week offset for the card being swiped in
     
+    // Cache for weekly data to avoid recalculating on every swipe
+    @State private var weeklyDataCache: [Int: WeeklyNovaData] = [:]
+    
+    // State for week selector scroll position
+    @State private var scrolledWeekID: Int? = 0
+    
+    // Loading state for initial data computation
+    @State private var isLoading: Bool = true
+    
+    // Struct to hold pre-computed weekly data
+    struct WeeklyNovaData {
+        let percentages: [Double] // Percentages for groups 1-4
+        let dailyData: [String: [Double]] // Day -> [group1%, group2%, group3%, group4%]
+        let hasEntries: [String: Bool] // Day -> hasEntries
+    }
+    
     // Colors for each NOVA group
     private let novaColors: [Color] = [
         Color(hex: "#3f993f"),      // Group 1 - Unprocessed - darker green
         Color(hex: "#b7ce0d"),      // Group 2 - Processed ingredients - lime green
         Color(hex: "#f28e16"),      // Group 3 - Processed - orange
         Color(hex: "#e4032f")       // Group 4 - Ultra-processed - bright red
+    ]
+    
+    // Gauge colors (red to green, left to right)
+    private let gaugeColors: [Color] = [
+        Color(hex: "#e4032f"),      // Red (0-20)
+        Color(hex: "#f28e16"),      // Orange (20-40)
+        Color(hex: "#f7c700"),      // Yellow (40-60)
+        Color(hex: "#b7ce0d"),      // Lime (60-80)
+        Color(hex: "#3f993f")       // Green (80-100)
     ]
     
     // Names for each NOVA group
@@ -45,157 +85,227 @@ struct NovaGroupsDetailView: View {
         
         NavigationView {
             ZStack {
-                Color(hex: "#F0F1F4")
+                viewBackground
                     .ignoresSafeArea()
                 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                    
-                    // Weekly chart carousel with snap behavior
-                    ScrollViewReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 20) {
-                                // Generate cards chronologically: oldest (-10) on left, newest (0) on right
-                                ForEach(-10...0, id: \.self) { offset in
-                                    weeklyChartCard(for: offset)
-                                        .frame(width: screenWidth * 0.85, height: 280)
-                                        .fixedSize()
-                                        .id(offset)
+                if isLoading {
+                    // Show loading indicator while data is being computed
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                        Text("Loading NOVA data...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                        
+                        // Week selector carousel at the top
+                        weekSelectorCarousel
+                        
+                        // NOVA Score Gauge Card
+                        novaScoreGaugeCard(for: currentWeekOffset)
+                            .padding(.horizontal)
+                        
+                        // Weekly chart card (static, updates based on selected week)
+                        weeklyChartCard(for: currentWeekOffset)
+                            .padding(.horizontal)
+                            .opacity(animationOpacity)
+                        
+                        // NOVA group percentages
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Title
+                            Text("NOVA Group Distribution")
+                                .font(.headline)
+                                .padding(.bottom, 4)
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 16) {
+                                ForEach(0..<4, id: \.self) { index in
+                                    novaGroupPercentageView(
+                                        percentage: getCachedWeeklyPercentage(for: index, weekOffset: currentWeekOffset),
+                                        groupName: novaGroupNames[index],
+                                        color: novaColors[index]
+                                    )
                                 }
                             }
-                            .padding(.horizontal, screenWidth * 0.075)
-                            .scrollTargetLayout()
                         }
-                        .scrollTargetBehavior(.viewAligned)
-                        .defaultScrollAnchor(.trailing)
-                        .onScrollTargetVisibilityChange(idType: Int.self) { visibleIDs in
-                            if let centerID = visibleIDs.first {
-                                self.updateCurrentWeek(to: centerID)
-                            }
-                        }
-                        .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                proxy.scrollTo(0, anchor: .center)
-                            }
-                        }
-                        .frame(height: 320)
-                    }
-                    
-                    // NOVA group percentages
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Title
-                        Text("NOVA Group Distribution")
-                            .font(.headline)
-                            .padding(.top, 16)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 4)
-                            
-                        // Group percentages grid
-                        LazyVGrid(columns: [
-                            GridItem(.flexible()),
-                            GridItem(.flexible())
-                        ], spacing: 16) {
-                            ForEach(0..<4) { index in
-                                novaGroupPercentageView(
-                                    percentage: calculateWeeklyPercentage(for: index + 1, weekOffset: currentWeekOffset),
-                                    groupName: novaGroupNames[index],
-                                    color: novaColors[index]
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                    }
-                    .opacity(animationOpacity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-                    
-                    // NOVA classification explanation
-                    novaExplanationView
+                        .opacity(animationOpacity)
                         .padding(.horizontal)
+                        
+                        // NOVA classification explanation
+                        novaExplanationView
+                            .padding(.horizontal)
+                    }
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
+                }
             }
-            .navigationTitle("NOVA Groups")
             .navigationBarTitleDisplayMode(.inline)
-            }
-            .background(Color.white)
+            .background(Color(.systemBackground))
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("NOVA Groups")
-                        .font(.headline)
-                        .fontWeight(.bold)
+                    HStack {
+                        Text("NOVA Groups")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
-            .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .task {
+                // Pre-compute data for current week and adjacent weeks asynchronously
+                await precomputeInitialData()
+            }
+        }
+    }
+    
+    // Pre-compute data for the current week and adjacent weeks
+    private func precomputeInitialData() async {
+        // Check if global cache already has data (pre-warmed by card view)
+        if let globalCache = ChartDataCacheManager.shared.getWeeklyNovaCache(weekOffset: 0) {
+            // Convert global cache format to our local format
+            let percentages = (1...4).map { globalCache.weeklyAverage[$0] ?? 0.0 }
+            var dailyData: [String: [Double]] = [:]
+            var hasEntries: [String: Bool] = [:]
+            
+            for (day, data) in globalCache.dailyData {
+                let dayTotal = data.values.reduce(0, +)
+                if dayTotal > 0 {
+                    dailyData[day] = (1...4).map { Double(data[$0] ?? 0) / Double(dayTotal) * 100.0 }
+                } else {
+                    dailyData[day] = [0, 0, 0, 0]
+                }
+            }
+            hasEntries = globalCache.hasEntries
+            
+            let cachedData = WeeklyNovaData(
+                percentages: percentages,
+                dailyData: dailyData,
+                hasEntries: hasEntries
+            )
+            
+            await MainActor.run {
+                weeklyDataCache[0] = cachedData
+                isLoading = false
+            }
+        } else {
+            // Compute current week first (most important)
+            let currentData = await computeWeeklyData(for: 0)
+            await MainActor.run {
+                weeklyDataCache[0] = currentData
+                isLoading = false
+            }
+        }
+        
+        // Pre-compute adjacent weeks in background
+        Task.detached(priority: .background) {
+            let lastWeekData = await self.computeWeeklyData(for: -1)
+            await MainActor.run {
+                self.weeklyDataCache[-1] = lastWeekData
+            }
         }
     }
     
     // Helper function to update current week with animation
     private func updateCurrentWeek(to offset: Int) {
         if currentWeekOffset != offset {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            // Pre-compute data for the new week in background if not cached
+            if weeklyDataCache[offset] == nil {
+                Task.detached(priority: .userInitiated) {
+                    let data = await computeWeeklyData(for: offset)
+                    await MainActor.run {
+                        weeklyDataCache[offset] = data
+                    }
+                }
+            }
+            
+            withAnimation(.easeInOut(duration: 0.2)) {
                 animationOpacity = 0.0
             }
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 currentWeekOffset = offset
-                withAnimation(.easeInOut(duration: 0.3)) {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     animationOpacity = 1.0
                 }
             }
         }
     }
     
+    // Compute all data for a week in background
+    private func computeWeeklyData(for offset: Int) async -> WeeklyNovaData {
+        let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
+        var dailyData: [String: [Double]] = [:]
+        var hasEntries: [String: Bool] = [:]
+        var totalGroupCalories = [0, 0, 0, 0]
+        var totalCalories = 0
+        
+        // Calculate data for each day
+        for day in days {
+            let date = getDateForDay(day, weekOffset: offset)
+            let entries = getAllEntriesForDate(date)
+            hasEntries[day] = !entries.isEmpty
+            
+            if !entries.isEmpty {
+                // Expand meals into component foods for accurate NOVA scoring
+                let expandedFoods = foodLogManager.expandedFoodItems(for: entries)
+                
+                let dayTotalCalories = expandedFoods.reduce(0) { $0 + $1.calories }
+                totalCalories += dayTotalCalories
+                
+                var dayPercentages: [Double] = []
+                for group in 1...4 {
+                    let groupCalories = expandedFoods.reduce(0) { result, food in
+                        let foodNovaScore = food.novaScore > 0 ?
+                            food.novaScore :
+                            NovaScoreService.shared.predictNovaScoreByName(food.name)
+                        return result + (foodNovaScore == group ? food.calories : 0)
+                    }
+                    totalGroupCalories[group - 1] += groupCalories
+                    let percentage = dayTotalCalories > 0 ? (Double(groupCalories) / Double(dayTotalCalories) * 100.0) : 0
+                    dayPercentages.append(percentage)
+                }
+                dailyData[day] = dayPercentages
+            } else {
+                dailyData[day] = [0, 0, 0, 0]
+            }
+        }
+        
+        // Calculate weekly percentages
+        let weeklyPercentages = totalGroupCalories.map { groupCal in
+            totalCalories > 0 ? (Double(groupCal) / Double(totalCalories) * 100.0) : 0
+        }
+        
+        return WeeklyNovaData(
+            percentages: weeklyPercentages,
+            dailyData: dailyData,
+            hasEntries: hasEntries
+        )
+    }
+    
     // Weekly stacked bar chart
     // Create a complete card for a specific week offset
     private func weeklyChartCard(for offset: Int) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Card header with week navigation
-            HStack {
-                Text("Weekly Average")
-                    .font(.headline)
-                    .foregroundColor(.black)
-                
-                Spacer()
-                
-                // Week navigation
-                HStack(spacing: 12) {
-                    Button(action: {
-                        animateWeekTransition(direction: -1)
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Text(weekDateRangeString(for: offset))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Button(action: {
-                        if offset < 0 {
-                            animateWeekTransition(direction: 1)
-                        }
-                    }) {
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(offset < 0 ? .secondary : .gray)
-                    }
-                    .disabled(offset >= 0)
-                }
-            }
-            .padding(.top, 12) // Consistent with memory about card title spacing
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
+            // Card header (date is now in week selector)
+            Text("Weekly Average")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
             
             // Weekly chart for the specific week
             weeklyStackedBarChart(for: offset)
@@ -204,7 +314,7 @@ struct NovaGroupsDetailView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -264,13 +374,13 @@ struct NovaGroupsDetailView: View {
                                 ForEach(getDaysOfWeek(for: offset), id: \.self) { day in
                                     VStack(spacing: 4) {
                                         // State for long press
-                                        let hasEntries = hasFoodEntriesForDay(day, weekOffset: offset)
+                                        let hasEntries = getCachedHasEntries(day: day, weekOffset: offset)
                                         
                                         // Stacked bar
                                         ZStack(alignment: .bottom) {
                                             // Background
                                             Rectangle()
-                                                .fill(Color(.systemGray6))
+                                                .fill(barEmptyBackground)
                                                 .frame(height: geometry.size.height * 0.8) // Reduce height to match grid lines
                                             
                                             // Stacked segments
@@ -279,7 +389,7 @@ struct NovaGroupsDetailView: View {
                                                     // Draw segments from bottom to top (Group 1 at bottom, Group 4 at top)
                                                     // This ensures proper stacking order
                                                     let segments = (1...4).map { group -> (group: Int, height: CGFloat) in
-                                                        let height = calculateBarSegmentHeight(
+                                                        let height = getCachedBarSegmentHeight(
                                                             day: day,
                                                             novaGroup: group,
                                                             maxHeight: geometry.size.height,
@@ -341,12 +451,7 @@ struct NovaGroupsDetailView: View {
                        barPositions.count > dayIndex {
                         DayDetailTooltip(
                             day: activeDay,
-                            novaPercentages: [
-                                calculateDailyPercentage(for: activeDay, novaGroup: 1),
-                                calculateDailyPercentage(for: activeDay, novaGroup: 2),
-                                calculateDailyPercentage(for: activeDay, novaGroup: 3),
-                                calculateDailyPercentage(for: activeDay, novaGroup: 4)
-                            ],
+                            novaPercentages: getCachedDailyPercentages(day: activeDay, weekOffset: offset),
                             novaGroupNames: novaGroupNames,
                             novaColors: novaColors,
                             width: 150
@@ -398,7 +503,7 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -446,7 +551,7 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
         }
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -472,6 +577,136 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
                     .foregroundColor(.secondary)
             }
         }
+    }
+    
+    // MARK: - NOVA Score Gauge
+    
+    // Calculate the overall NOVA score (0-100, higher is better)
+    private func calculateNovaScore(for weekOffset: Int) -> Double {
+        let group1 = getCachedWeeklyPercentage(for: 0, weekOffset: weekOffset)
+        let group2 = getCachedWeeklyPercentage(for: 1, weekOffset: weekOffset)
+        let group3 = getCachedWeeklyPercentage(for: 2, weekOffset: weekOffset)
+        // Group 4 contributes 0 points
+        
+        // Weighted formula: Group1 = 100%, Group2 = 75%, Group3 = 50%, Group4 = 0%
+        let score = group1 + (group2 * 0.75) + (group3 * 0.50)
+        return min(100, max(0, score))
+    }
+    
+    // Get score description based on value
+    private func getScoreDescription(_ score: Double) -> String {
+        switch score {
+        case 80...100: return "Excellent"
+        case 60..<80: return "Good"
+        case 40..<60: return "Fair"
+        case 20..<40: return "Poor"
+        default: return "Needs Improvement"
+        }
+    }
+    
+    // Get score color based on value
+    private func getScoreColor(_ score: Double) -> Color {
+        switch score {
+        case 80...100: return gaugeColors[4] // Green
+        case 60..<80: return gaugeColors[3]  // Lime
+        case 40..<60: return gaugeColors[2]  // Yellow
+        case 20..<40: return gaugeColors[1]  // Orange
+        default: return gaugeColors[0]       // Red
+        }
+    }
+    
+    // Week selector carousel
+    private var weekSelectorCarousel: some View {
+        let cardWidth: CGFloat = 170
+        
+        return ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 12) {
+                ForEach(-10...0, id: \.self) { offset in
+                    weekSelectorCard(for: offset)
+                        .frame(width: cardWidth)
+                        .id(offset)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollPosition(id: $scrolledWeekID)
+        .scrollTargetBehavior(.viewAligned)
+        .safeAreaPadding(.horizontal, (UIScreen.main.bounds.width - cardWidth) / 2)
+        .defaultScrollAnchor(.trailing)
+        .onChange(of: scrolledWeekID) { oldValue, newValue in
+            if let newValue = newValue, newValue != currentWeekOffset {
+                updateCurrentWeek(to: newValue)
+            }
+        }
+        .onAppear {
+            // Pre-cache current week and adjacent weeks
+            Task {
+                for offset in [-1, 0, 1] {
+                    if weeklyDataCache[offset] == nil {
+                        let data = await computeWeeklyData(for: offset)
+                        weeklyDataCache[offset] = data
+                    }
+                }
+            }
+        }
+        .frame(height: 50)
+    }
+    
+    // Individual week selector card
+    private func weekSelectorCard(for offset: Int) -> some View {
+        let isSelected = offset == currentWeekOffset
+        
+        return Text(weekDateRangeString(for: offset))
+            .font(.subheadline)
+            .fontWeight(isSelected ? .semibold : .regular)
+            .foregroundColor(isSelected ? .white : .primary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color(hex: "#35b8ff") : cardBackground)
+                    .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+            )
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    scrolledWeekID = offset
+                }
+            }
+    }
+    
+    // NOVA Score Gauge Card
+    private func novaScoreGaugeCard(for weekOffset: Int) -> some View {
+        let score = calculateNovaScore(for: weekOffset)
+        
+        return VStack(spacing: 8) {
+            // Title only (date is now in week selector)
+            Text("NOVA Score")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
+            
+            // Gauge
+            VStack(spacing: 0) {
+                NovaScoreGauge(score: score, gaugeColors: gaugeColors)
+                    .frame(height: 120)
+                
+                // Score display below the gauge
+                Text("\(Int(score))")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(getScoreColor(score))
+                    .offset(y: -28)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(cardBackground)
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+        )
+        .opacity(animationOpacity)
     }
     
     // MARK: - Helper Methods
@@ -500,16 +735,19 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
             return 0
         }
         
-        // Calculate total calories for the day
-        let totalCalories = entries.reduce(0) { $0 + $1.totalCalories }
+        // Expand meals into component foods for accurate NOVA scoring
+        let expandedFoods = foodLogManager.expandedFoodItems(for: entries)
         
-        // Calculate calories from the specified NOVA group
-        let groupCalories = entries.reduce(0) { result, entry in
-            let entryNovaScore = entry.foodItem.novaScore > 0 ? 
-                entry.foodItem.novaScore : 
-                NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
+        // Calculate total calories for the day
+        let totalCalories = expandedFoods.reduce(0) { $0 + $1.calories }
+        
+        // Calculate calories from the specified NOVA group using expanded foods
+        let groupCalories = expandedFoods.reduce(0) { result, food in
+            let foodNovaScore = food.novaScore > 0 ? 
+                food.novaScore : 
+                NovaScoreService.shared.predictNovaScoreByName(food.name)
             
-            return result + (entryNovaScore == novaGroup ? entry.totalCalories : 0)
+            return result + (foodNovaScore == novaGroup ? food.calories : 0)
         }
         
         // Calculate percentage
@@ -571,6 +809,46 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
         }
     }
     
+    // Get cached weekly percentage or calculate if not cached
+    private func getCachedWeeklyPercentage(for groupIndex: Int, weekOffset: Int) -> Double {
+        if let cached = weeklyDataCache[weekOffset] {
+            return cached.percentages[groupIndex]
+        }
+        // Fallback to direct calculation if not cached
+        return calculateWeeklyPercentage(for: groupIndex + 1, weekOffset: weekOffset)
+    }
+    
+    // Get cached daily percentages
+    private func getCachedDailyPercentages(day: String, weekOffset: Int) -> [Double] {
+        if let cached = weeklyDataCache[weekOffset],
+           let dailyData = cached.dailyData[day] {
+            return dailyData
+        }
+        // Fallback to direct calculation
+        return (1...4).map { calculateDailyPercentage(for: day, novaGroup: $0, weekOffset: weekOffset) }
+    }
+    
+    // Get cached has entries status
+    private func getCachedHasEntries(day: String, weekOffset: Int) -> Bool {
+        if let cached = weeklyDataCache[weekOffset],
+           let hasEntries = cached.hasEntries[day] {
+            return hasEntries
+        }
+        // Fallback to direct calculation
+        return hasFoodEntriesForDay(day, weekOffset: weekOffset)
+    }
+    
+    // Get cached bar segment height
+    private func getCachedBarSegmentHeight(day: String, novaGroup: Int, maxHeight: CGFloat, weekOffset: Int) -> CGFloat {
+        if let cached = weeklyDataCache[weekOffset],
+           let dailyData = cached.dailyData[day] {
+            let percentage = dailyData[novaGroup - 1]
+            return CGFloat(percentage / 100.0) * (maxHeight * 0.8)
+        }
+        // Fallback to direct calculation
+        return calculateBarSegmentHeight(day: day, novaGroup: novaGroup, maxHeight: maxHeight, weekOffset: weekOffset)
+    }
+    
     // Calculate the weekly percentage for a specific NOVA group with a specific week offset
     private func calculateWeeklyPercentage(for novaGroup: Int, weekOffset: Int = 0) -> Double {
         let days = getDaysOfWeek(for: weekOffset)
@@ -582,17 +860,20 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
             let date = getDateForDay(day, weekOffset: weekOffset)
             let entries = getAllEntriesForDate(date)
             
+            // Expand meals into component foods for accurate NOVA scoring
+            let expandedFoods = foodLogManager.expandedFoodItems(for: entries)
+            
             // Add to total calories
-            let dayTotalCalories = entries.reduce(0) { $0 + $1.totalCalories }
+            let dayTotalCalories = expandedFoods.reduce(0) { $0 + $1.calories }
             totalCalories += dayTotalCalories
             
-            // Add to group calories
-            let dayGroupCalories = entries.reduce(0) { result, entry in
-                let entryNovaScore = entry.foodItem.novaScore > 0 ? 
-                    entry.foodItem.novaScore : 
-                    NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
+            // Add to group calories using expanded food items
+            let dayGroupCalories = expandedFoods.reduce(0) { result, food in
+                let foodNovaScore = food.novaScore > 0 ? 
+                    food.novaScore : 
+                    NovaScoreService.shared.predictNovaScoreByName(food.name)
                 
-                return result + (entryNovaScore == novaGroup ? entry.totalCalories : 0)
+                return result + (foodNovaScore == novaGroup ? food.calories : 0)
             }
             totalGroupCalories += dayGroupCalories
         }
@@ -635,10 +916,10 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
     private func weekDateRangeString(for offset: Int = 0) -> String {
         let calendar = Calendar.current
         
-        // Get the start of the current week (Sunday)
+        // Get the start of the current week (Monday) - matching getDateForDay logic
         let today = Date()
         let weekday = calendar.component(.weekday, from: today)
-        let daysToSubtract = weekday - 1 // 1 = Sunday
+        let daysToSubtract = weekday == 1 ? 6 : weekday - 2 // Adjust for Monday start (weekday 1 = Sunday, 2 = Monday)
         
         guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysToSubtract, to: today) else {
             return "Week of \(formatDate(today))"
@@ -694,11 +975,17 @@ private func novaGroupPercentageView(percentage: Double, groupName: String, colo
 
 // Tooltip view for displaying detailed percentages on long press
 struct DayDetailTooltip: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let day: String
     let novaPercentages: [Double]
     let novaGroupNames: [String]
     let novaColors: [Color]
     let width: CGFloat
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -730,10 +1017,111 @@ struct DayDetailTooltip: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.2), radius: 6, x: 0, y: 3)
         )
         .frame(width: width)
+    }
+}
+
+// 240-degree gauge view with needle
+struct NovaScoreGauge: View {
+    let score: Double // 0-100
+    let gaugeColors: [Color]
+    
+    // 240 degree arc: starts at 150° (bottom-left), ends at 30° (bottom-right)
+    // 0 score = 150° (left), 100 score = 390° (30° = 360+30)
+    private var needleRotation: Double {
+        // Map 0-100 to 150 to 390 degrees (240 degree sweep)
+        return 150.0 + (score / 100.0) * 240.0
+    }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let centerY = geometry.size.height * 0.6 // Move center up a bit for 240° arc
+            let center = CGPoint(x: geometry.size.width / 2, y: centerY)
+            let radius = min(geometry.size.width / 2, geometry.size.height * 0.8) - 10
+            let innerRadius = radius * 0.70
+            let segmentAngle = 240.0 / 5.0 // 48 degrees per segment
+            
+            ZStack {
+                // Draw colored segments (5 segments, 48 degrees each = 240/5)
+                ForEach(0..<5, id: \.self) { index in
+                    Path { path in
+                        // Start at 150° (bottom-left), sweep 240° clockwise to 390° (30°)
+                        let startAngle = Angle(degrees: 150.0 + Double(index) * segmentAngle)
+                        let endAngle = Angle(degrees: 150.0 + Double(index + 1) * segmentAngle - 2) // Small gap
+                        
+                        path.addArc(center: center, radius: radius,
+                                    startAngle: startAngle, endAngle: endAngle,
+                                    clockwise: false)
+                        path.addArc(center: center, radius: innerRadius,
+                                    startAngle: endAngle, endAngle: startAngle,
+                                    clockwise: true)
+                        path.closeSubpath()
+                    }
+                    .fill(gaugeColors[index])
+                }
+                
+                // Needle
+                Path { path in
+                    let needleLength = radius * 0.80
+                    let needleWidth: CGFloat = 6
+                    
+                    // Needle pointer (triangle)
+                    let angle = Angle(degrees: needleRotation).radians
+                    let tipX = center.x + cos(angle) * needleLength
+                    let tipY = center.y + sin(angle) * needleLength
+                    
+                    let leftAngle = angle + .pi / 2
+                    let rightAngle = angle - .pi / 2
+                    let baseLeftX = center.x + cos(leftAngle) * (needleWidth * 0.6)
+                    let baseLeftY = center.y + sin(leftAngle) * (needleWidth * 0.6)
+                    let baseRightX = center.x + cos(rightAngle) * (needleWidth * 0.6)
+                    let baseRightY = center.y + sin(rightAngle) * (needleWidth * 0.6)
+                    
+                    path.move(to: CGPoint(x: tipX, y: tipY))
+                    path.addLine(to: CGPoint(x: baseLeftX, y: baseLeftY))
+                    path.addLine(to: CGPoint(x: baseRightX, y: baseRightY))
+                    path.closeSubpath()
+                }
+                .fill(Color(.label))
+                
+                // Center dot
+                Circle()
+                    .fill(Color(.label))
+                    .frame(width: 12, height: 12)
+                    .position(center)
+                
+                Circle()
+                    .fill(Color(.systemBackground))
+                    .frame(width: 6, height: 6)
+                    .position(center)
+                
+                // Scale labels at arc ends
+                let labelRadius = radius + 12
+                let startLabelAngle = Angle(degrees: 150).radians
+                let endLabelAngle = Angle(degrees: 30).radians
+                
+                Text("0")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                    .position(
+                        x: center.x + cos(startLabelAngle) * labelRadius,
+                        y: center.y + sin(startLabelAngle) * labelRadius
+                    )
+                
+                Text("100")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                    .position(
+                        x: center.x + cos(endLabelAngle) * labelRadius,
+                        y: center.y + sin(endLabelAngle) * labelRadius
+                    )
+            }
+        }
     }
 }
 

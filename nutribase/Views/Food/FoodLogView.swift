@@ -16,6 +16,7 @@ struct ScrollViewOffsetKey: PreferenceKey {
     }
 }
 
+
 // Wrapper to prevent complex calculations during drag operations
 struct DailyGoalsCardWrapper: View {
     let proteinConsumed: Int
@@ -23,17 +24,14 @@ struct DailyGoalsCardWrapper: View {
     let fatConsumed: Int
     let nova4Percentage: Double
     let nova4Goal: Double
+    let caloriesConsumed: Int // Use actual calories from food items
+    let selectedDate: Date // Date for which to show data
     
     @ObservedObject private var userProfile = UserProfile.shared
     
     // Pre-calculate values to avoid complex expressions during drag
     private var proteinGoal: Int {
         userProfile.proteinGoalGrams > 0 ? userProfile.proteinGoalGrams : 50
-    }
-    
-    private var caloriesConsumed: Int {
-        // Simple calculation to avoid complex function calls during drag
-        (proteinConsumed * 4) + (carbsConsumed * 4) + (fatConsumed * 9)
     }
     
     private var caloriesGoal: Int {
@@ -52,6 +50,7 @@ struct DailyGoalsCardWrapper: View {
         DailyGoalsCard(
             proteinConsumed: proteinConsumed,
             proteinGoal: proteinGoal,
+            selectedDate: selectedDate,
             nova4Percentage: nova4Percentage,
             nova4Goal: nova4Goal,
             caloriesConsumed: caloriesConsumed,
@@ -70,6 +69,17 @@ enum ScrollDirection {
 }
 
 struct FoodLogView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var visibilityService = MetricVisibilityService.shared
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
     // Date formatter for the header
     private var dateFormatter: DateFormatter {
         let formatter = DateFormatter()
@@ -104,9 +114,24 @@ struct FoodLogView: View {
             return dateFormatter.string(from: date)
         }
     }
-    // Keys for UserDefaults storage
-    private let visibleMealsKey = "foodLogVisibleMeals"
-    private let hiddenMealsKey = "foodLogHiddenMeals"
+    // Keys for UserDefaults storage (user-specific)
+    private var visibleMealsKey: String {
+        if let userId = FirebaseAuthService.shared.currentUser?.id {
+            return "foodLogVisibleMeals_\(userId)"
+        } else if let localUserId = UserDefaults.standard.string(forKey: "current_user_id") {
+            return "foodLogVisibleMeals_\(localUserId)"
+        }
+        return "foodLogVisibleMeals_default"
+    }
+    
+    private var hiddenMealsKey: String {
+        if let userId = FirebaseAuthService.shared.currentUser?.id {
+            return "foodLogHiddenMeals_\(userId)"
+        } else if let localUserId = UserDefaults.standard.string(forKey: "current_user_id") {
+            return "foodLogHiddenMeals_\(localUserId)"
+        }
+        return "foodLogHiddenMeals_default"
+    }
     
     // Weekly overview state
     @State private var weeklyOverviewHeight: CGFloat = 0
@@ -119,6 +144,8 @@ struct FoodLogView: View {
         didSet {
             // Update metrics whenever the date changes
             updateMetrics()
+            // Load completion status for the new date
+            loadDayCompletionStatus()
         }
     }
     
@@ -146,6 +173,8 @@ struct FoodLogView: View {
     @State private var fatConsumed: Int = 0
     // Steps are now handled directly by ActivityManager and HealthKitManager
     @State private var stepsGoal: Int = 10000
+    @State private var stepsForSelectedDate: Int = 0
+    @State private var activityCaloriesForSelectedDate: Int = 0
     @State private var nova4Percentage: Double = 0
     @State private var nova4Goal: Double = 20
     
@@ -160,6 +189,20 @@ struct FoodLogView: View {
     @State private var scrollDirection: ScrollDirection = .none
     @State private var scrollDragActive: Bool = false
     @State private var isEditing = false
+    
+    // Sticky header state
+    @State private var showStickyMetrics = false
+    @State private var showStickyCaloriesRemaining = false
+    @State private var dailyGoalsVisible = true
+    
+    // Day completion tracking
+    @State private var isDayCompleted = false
+    
+    // Track if view has appeared to avoid redundant work
+    @State private var hasAppearedOnce = false
+    
+    // Detail view state
+    @State private var showingCaloriesDetailView = false
     
     // Meal data structure
     struct Meal: Identifiable {
@@ -235,6 +278,82 @@ struct FoodLogView: View {
         return meals.reduce(0) { $0 + $1.totalCalories }
     }
     
+    // Helper functions for day completion tracking
+    private func completedDaysKey() -> String {
+        return "completedFoodLogDays"
+    }
+    
+    private func dateKey(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    
+    private func loadDayCompletionStatus() {
+        let key = completedDaysKey()
+        let completedDays = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let currentDateKey = dateKey(for: selectedDate)
+        isDayCompleted = completedDays.contains(currentDateKey)
+    }
+    
+    private func saveDayCompletionStatus() {
+        let key = completedDaysKey()
+        var completedDays = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let currentDateKey = dateKey(for: selectedDate)
+        
+        if isDayCompleted {
+            if !completedDays.contains(currentDateKey) {
+                completedDays.append(currentDateKey)
+            }
+        } else {
+            completedDays.removeAll { $0 == currentDateKey }
+        }
+        
+        UserDefaults.standard.set(completedDays, forKey: key)
+        
+        // Clear phase cache to force recalculation with new completion data
+        NotificationCenter.default.post(name: Notification.Name("clearAllPhaseCache"), object: nil)
+    }
+    
+    // Check if a specific date is marked as completed
+    func isDayCompleted(for date: Date) -> Bool {
+        let key = completedDaysKey()
+        let completedDays = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let dateKey = dateKey(for: date)
+        return completedDays.contains(dateKey)
+    }
+    
+    // Static function to get completed days for phase analytics
+    static func getCompletedDays() -> [String] {
+        return UserDefaults.standard.stringArray(forKey: "completedFoodLogDays") ?? []
+    }
+    
+    // Static function to check if a date is completed (for external use)
+    static func isDayCompleted(for date: Date) -> Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let dateKey = formatter.string(from: date)
+        let completedDays = getCompletedDays()
+        return completedDays.contains(dateKey)
+    }
+    
+    // Get calories for a specific date only if the day is marked as completed
+    static func getCaloriesForCompletedDay(date: Date) -> Int? {
+        guard isDayCompleted(for: date) else { return nil }
+        
+        // Get entries for the date
+        let foodLogManager = FoodLogManager.shared
+        let mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"]
+        
+        var totalCalories = 0
+        for mealType in mealTypes {
+            let entries = foodLogManager.entries(for: date, mealType: mealType)
+            totalCalories += entries.reduce(0) { $0 + $1.totalCalories }
+        }
+        
+        return totalCalories
+    }
+    
     // Hide a meal card
     private func hideMeal(_ mealType: MealType) {
         // Only hide if there's more than one visible meal
@@ -265,8 +384,10 @@ struct FoodLogView: View {
             return 0
         }
         
-        let totalProtein = allEntries.reduce(0.0) { total, entry in
-            return total + entry.totalProtein
+        // Expand meals into individual food items for accurate calculation
+        let expandedItems = foodLogManager.expandedFoodItems(for: allEntries)
+        let totalProtein = expandedItems.reduce(0.0) { total, item in
+            return total + item.protein
         }
         return Int(totalProtein)
     }
@@ -281,23 +402,34 @@ struct FoodLogView: View {
             return 0
         }
         
-        // Calculate total calories and NOVA 4 calories
-        var totalCalories = 0
-        var nova4Calories = 0
+        // Expand meals into individual food items for accurate NOVA scoring
+        let expandedItems = foodLogManager.expandedFoodItems(for: allEntries)
         
-        for entry in allEntries {
-            let entryCalories = entry.totalCalories
-            totalCalories += entryCalories
+        // Calculate total calories and NOVA 4 calories
+        var totalCalories = 0.0
+        var nova4Calories = 0.0
+        
+        for item in expandedItems {
+            totalCalories += Double(item.calories)
             
-            // Check if this is a NOVA 4 food
-            if entry.foodItem.novaScore == 4 {
-                nova4Calories += entryCalories
+            // Get the actual or predicted NOVA score
+            let novaScore: Int
+            if item.novaScore > 0 {
+                novaScore = item.novaScore
+            } else {
+                // Use predicted score by name if actual score is missing
+                novaScore = NovaScoreService.shared.predictNovaScoreByName(item.name)
+            }
+            
+            // Check if this is a NOVA 4 food (actual or predicted)
+            if novaScore == 4 {
+                nova4Calories += Double(item.calories)
             }
         }
         
         // Calculate percentage
         if totalCalories > 0 {
-            return (Double(nova4Calories) / Double(totalCalories)) * 100.0
+            return (nova4Calories / totalCalories) * 100.0
         } else {
             return 0
         }
@@ -322,6 +454,10 @@ struct FoodLogView: View {
         fatConsumed = 0
         nova4Percentage = 0
         
+        // Load NOVA 4 goal from UserDefaults (use "nova4Limit" key from settings)
+        let savedGoal = UserDefaults.standard.integer(forKey: "nova4Limit")
+        nova4Goal = savedGoal > 0 ? Double(savedGoal) : 20.0
+        
         // Only calculate if there are meals with entries
         if !meals.flatMap({ $0.entries }).isEmpty {
             // Update protein
@@ -335,14 +471,37 @@ struct FoodLogView: View {
             nova4Percentage = calculateNova4Percentage()
         }
         
-        // Update steps from activity manager
-        // Steps are now handled directly by ActivityManager and HealthKitManager
+        // Update steps and activity calories for selected date
+        let calendar = Calendar.current
+        if calendar.isDateInToday(selectedDate) {
+            // For today, use current activity values
+            stepsForSelectedDate = activityManager.currentActivity.steps
+            activityCaloriesForSelectedDate = HealthKitManager.shared.todayActiveCalories
+        } else {
+            // For other dates, fetch from HealthKit
+            let startOfDay = calendar.startOfDay(for: selectedDate)
+            let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? selectedDate
+            
+            // Fetch steps for selected date
+            HealthKitManager.shared.fetchStepsForDateRange(start: startOfDay, end: endOfDay) { steps, error in
+                DispatchQueue.main.async {
+                    self.stepsForSelectedDate = steps
+                }
+            }
+            
+            // Fetch activity calories for selected date
+            HealthKitManager.shared.fetchActiveCaloriesForDateRange(start: startOfDay, end: endOfDay) { calories, error in
+                DispatchQueue.main.async {
+                    self.activityCaloriesForSelectedDate = calories
+                }
+            }
+        }
     }
     
     var body: some View {
         ZStack(alignment: .top) {
             // Background color layer - matching dashboard
-            Color(hex: "#F0F1F4")
+            viewBackground
                 .ignoresSafeArea()
             VStack(spacing: 0) {
                 // Custom header with date navigation
@@ -354,8 +513,8 @@ struct FoodLogView: View {
                             selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
                         }) {
                             Image(systemName: "chevron.left")
-                                .font(.custom("Montserrat-Bold", size: 17))
-                                .foregroundColor(.black)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundColor(.primary)
                         }
                         
                         // Date picker
@@ -369,8 +528,8 @@ struct FoodLogView: View {
                             .labelsHidden()
                         } label: {
                             Text(getDateDisplayText(for: selectedDate))
-                                .font(.custom("Montserrat-Bold", size: 17))
-                                .foregroundColor(.black)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundColor(.primary)
                         }
                         
                         Button(action: {
@@ -378,48 +537,190 @@ struct FoodLogView: View {
                             selectedDate = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate
                         }) {
                             Image(systemName: "chevron.right")
-                                .font(.custom("Montserrat-Bold", size: 17))
-                                .foregroundColor(.black)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundColor(.primary)
                         }
                     }
                     .frame(maxWidth: .infinity)
                     
-                    // Left side - empty for balance
+                    // Left side - empty space (completion moved to bottom card)
                     HStack {
                         Spacer()
                     }
+                    .padding(.leading, 8)
                     
                     // Right side - edit button
                     HStack {
                         Spacer()
                         
-                        HStack(spacing: 12) {
-                            // Settings button
-                            Button(action: {
-                                showingMealStorage = true
-                            }) {
-                                Image(systemName: "gear")
-                                    .foregroundColor(.black)
+                        // Edit button
+                        Button(action: {
+                            withAnimation {
+                                isEditing.toggle()
                             }
-                            
-                            // Edit button
-                            Button(action: {
-                                withAnimation {
-                                    isEditing.toggle()
-                                }
-                            }) {
-                                Text(isEditing ? "Done" : "Edit")
-                                    .font(.custom("Montserrat-Bold", size: 17))
-                                    .foregroundColor(.primary)
-                            }
+                        }) {
+                            Image(systemName: isEditing ? "checkmark" : "slider.horizontal.3")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.primary)
                         }
                         .padding(.trailing, 8)
                     }
                 }
                 .padding(.horizontal)
+                .padding(.bottom, 8)
                 .padding(.top, 1) // Reduced top padding
-                .background(Color(hex: "#F0F1F4"))
-                .zIndex(3)
+                .frame(maxWidth: .infinity)
+                .background(viewBackground)
+                
+                // Sticky Calories Remaining bar - appears when scrolled past Calories Remaining card (only if it's first and calories visible)
+                if showStickyCaloriesRemaining && !isEditing && visibleMeals.first == .caloriesSummary && visibilityService.showCalories {
+                    let goal = userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
+                    let consumed = totalCaloriesForDay()
+                    let activityCalories = activityCaloriesForSelectedDate
+                    let includeActivity = UserDefaults.standard.bool(forKey: "includeActivityCaloriesInGoal")
+                    let adjustedGoal = includeActivity ? goal + activityCalories : goal
+                    let remaining = max(adjustedGoal - consumed, 0)
+                    let progress = min(CGFloat(consumed) / CGFloat(adjustedGoal), 1.0)
+                    let progressColor: Color = {
+                        if progress > 1.0 {
+                            return .red
+                        } else if progress > 0.9 {
+                            return .orange
+                        } else {
+                            return .blue
+                        }
+                    }()
+                    
+                    HStack(spacing: 0) {
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("\(goal)")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Goal")
+                                .font(.custom("Montserrat-SemiBold", size: 12))
+                                .foregroundColor(.gray)
+                                .offset(y: 18)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("-")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.secondary)
+                            
+                            Text(" ")
+                                .font(.custom("Montserrat-SemiBold", size: 12))
+                                .foregroundColor(.clear)
+                                .offset(y: 18)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            Text("\(consumed)")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text("Consumed")
+                                .font(.custom("Montserrat-SemiBold", size: 12))
+                                .foregroundColor(.gray)
+                                .offset(y: 18)
+                        }
+                        
+                        Spacer()
+                        
+                        // Show activity calories if enabled
+                        if includeActivity {
+                            VStack(spacing: 4) {
+                                Text("+")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                
+                                Text(" ")
+                                    .font(.custom("Montserrat-SemiBold", size: 12))
+                                    .foregroundColor(.clear)
+                                    .offset(y: 18)
+                            }
+                            
+                            Spacer()
+                            
+                            VStack(spacing: 4) {
+                                Text("\(activityCalories)")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                
+                                Text("Activity")
+                                    .font(.custom("Montserrat-SemiBold", size: 12))
+                                    .foregroundColor(.gray)
+                                    .offset(y: 18)
+                            }
+                            
+                            Spacer()
+                        }
+                        
+                        VStack(spacing: 4) {
+                            Text("=")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.secondary)
+                            
+                            Text(" ")
+                                .font(.custom("Montserrat-SemiBold", size: 12))
+                                .foregroundColor(.clear)
+                                .offset(y: 18)
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 4) {
+                            ZStack {
+                                Circle()
+                                    .stroke(progressColor.opacity(0.2), lineWidth: 4)
+                                    .frame(width: 50, height: 50)
+                                Circle()
+                                    .trim(from: 0, to: 1 - progress)
+                                    .stroke(progressColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                    .frame(width: 50, height: 50)
+                                    .rotationEffect(.degrees(-90))
+                                
+                                Text("\(remaining)")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            Text("Remaining")
+                                .font(.custom("Montserrat-SemiBold", size: 12))
+                                .foregroundColor(.gray)
+                                .fixedSize()
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                // Sticky metrics bar - appears when scrolled past Daily Goals (only if it's first)
+                if showStickyMetrics && !isEditing && visibleMeals.first == .dailyGoals {
+                    HStack(spacing: 20) {
+                        // Dynamically show metrics based on user's Daily Goals selection
+                        ForEach(metricsManager.selectedMetrics.prefix(4)) { metric in
+                            stickyMetricView(for: metric.type)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .background(Color(.systemGray6))
+            .zIndex(3)
                 
                 // Weekly overview (hidden completely)
                 // WeeklyOverviewView(currentDate: Date(), selectedDate: $selectedDate)
@@ -429,24 +730,10 @@ struct FoodLogView: View {
                 
                 // Meal cards with scroll-to-reveal functionality
                 ScrollView(.vertical, showsIndicators: false) {
-                    // Detect scroll position with GeometryReader
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: ScrollViewOffsetKey.self,
-                            value: proxy.frame(in: .global).minY
-                        )
-                    }
-                    .frame(height: 0)
-                    .onAppear {
-                        // Initialize scroll offset on appear
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            scrollOffset = 0
-                            previousScrollOffset = 0
-                        }
-                    }
-                    
-                    VStack(spacing: 16) {
-                        
+                    LazyVStack(spacing: 16) {
+                        // Add spacer to account for overlaying header
+                        Color.clear
+                            .frame(height:18) // Approximate header height
                         // Use indices for ForEach to support drag and drop
                         ForEach(visibleMeals.indices, id: \.self) { index in
                             let mealType = visibleMeals[index]
@@ -454,24 +741,58 @@ struct FoodLogView: View {
                             Group {
                                 switch mealType {
                                 case .caloriesSummary:
-                                    CalorieSummaryCard(
+                                    // Only show Calories Remaining card if calories are visible
+                                    if visibilityService.showCalories {
+                                        CalorieSummaryCard(
                                         consumedCalories: totalCaloriesForDay(),
-                                        targetCalories: userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
+                                        targetCalories: userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000,
+                                        activityCalories: activityCaloriesForSelectedDate,
+                                        onCardTap: { showingCaloriesDetailView = true }
+                                    )
+                                    .background(
+                                        GeometryReader { geo in
+                                            Color.clear
+                                                .onChange(of: geo.frame(in: .global).maxY) { oldValue, newValue in
+                                                    let threshold: CGFloat = 100
+                                                    let shouldShowSticky = newValue < threshold
+                                                    
+                                                    if showStickyCaloriesRemaining != shouldShowSticky {
+                                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                                            showStickyCaloriesRemaining = shouldShowSticky
+                                                        }
+                                                    }
+                                                }
+                                        }
                                     )
                                     .overlay(
                                         isEditing ?
-                                        Button(action: {
-                                            hideMeal(mealType)
-                                        }) {
-                                            Image(systemName: "minus.circle.fill")
-                                                .font(.title2)
-                                                .foregroundColor(.red)
-                                                .background(Circle().fill(Color.white))
-                                                .padding(6)
+                                        VStack {
+                                            HStack {
+                                                Button(action: {
+                                                    hideMeal(mealType)
+                                                }) {
+                                                    Image(systemName: "minus.circle.fill")
+                                                        .font(.title2)
+                                                        .foregroundColor(Color.red.opacity(0.9))
+                                                        .background(Circle().fill(cardBackground))
+                                                }
+                                                .opacity(0.7)
+                                                Spacer()
+                                            }
+                                            Spacer()
                                         }
-                                            .position(x: 20, y: 20)
+                                        .offset(x: -10, y: -10)
                                         : nil
                                     )
+                                    .onLongPressGesture(minimumDuration: 1) {
+                                        if !isEditing {
+                                            HapticManager.shared.mediumFeedback()
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                isEditing = true
+                                            }
+                                        }
+                                    }
+                                    }
                                     
                                 case .dailyGoals:
                                     DailyGoalsCardWrapper(
@@ -479,23 +800,56 @@ struct FoodLogView: View {
                                         carbsConsumed: carbsConsumed,
                                         fatConsumed: fatConsumed,
                                         nova4Percentage: nova4Percentage,
-                                        nova4Goal: nova4Goal
+                                        nova4Goal: nova4Goal,
+                                        caloriesConsumed: totalCaloriesForDay(),
+                                        selectedDate: selectedDate
                                     )
-                                    .padding(.top, 4)
+                                    .background(
+                                        GeometryReader { geo in
+                                            Color.clear
+                                                .onChange(of: geo.frame(in: .global).maxY) { oldValue, newValue in
+                                                    // Show sticky when card is mostly scrolled off (bottom edge above 100pt)
+                                                    // This triggers earlier, when card is still partially visible
+                                                    let threshold: CGFloat = 100
+                                                    let shouldShowSticky = newValue < threshold
+                                                    
+                                                    if showStickyMetrics != shouldShowSticky {
+                                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                                            showStickyMetrics = shouldShowSticky
+                                                        }
+                                                        print("📊 Card bottom Y: \(newValue), Threshold: \(threshold), Sticky: \(shouldShowSticky)")
+                                                    }
+                                                }
+                                        }
+                                    )
                                     .overlay(
                                         isEditing ?
-                                        Button(action: {
-                                            hideMeal(mealType)
-                                        }) {
-                                            Image(systemName: "minus.circle.fill")
-                                                .font(.title2)
-                                                .foregroundColor(.red)
-                                                .background(Circle().fill(Color.white))
-                                                .padding(6)
+                                        VStack {
+                                            HStack {
+                                                Button(action: {
+                                                    hideMeal(mealType)
+                                                }) {
+                                                    Image(systemName: "minus.circle.fill")
+                                                        .font(.title2)
+                                                        .foregroundColor(Color.red.opacity(0.7))
+                                                        .background(Circle().fill(cardBackground))
+                                                }
+                                                .opacity(0.7)
+                                                Spacer()
+                                            }
+                                            Spacer()
                                         }
-                                            .position(x: 20, y: 20)
+                                        .offset(x: -10, y: -10)
                                         : nil
                                     )
+                                    .onLongPressGesture(minimumDuration: 1) {
+                                        if !isEditing {
+                                            HapticManager.shared.mediumFeedback()
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                isEditing = true
+                                            }
+                                        }
+                                    }
                                     
                                 case .breakfast, .lunch, .dinner, .snacks:
                                     // Find the meal data for this meal type
@@ -503,18 +857,32 @@ struct FoodLogView: View {
                                         MealCardView(meal: meal, selectedDate: selectedDate)
                                             .overlay(
                                                 isEditing ?
-                                                Button(action: {
-                                                    hideMeal(mealType)
-                                                }) {
-                                                    Image(systemName: "minus.circle.fill")
-                                                        .font(.title2)
-                                                        .foregroundColor(.red)
-                                                        .background(Circle().fill(Color.white))
-                                                        .padding(6)
+                                                VStack {
+                                                    HStack {
+                                                        Button(action: {
+                                                            hideMeal(mealType)
+                                                        }) {
+                                                            Image(systemName: "minus.circle.fill")
+                                                                .font(.title2)
+                                                                .foregroundColor(Color.red.opacity(0.7))
+                                                                .background(Circle().fill(cardBackground))
+                                                        }
+                                                        .opacity(0.7)
+                                                        Spacer()
+                                                    }
+                                                    Spacer()
                                                 }
-                                                    .position(x: 20, y: 20)
+                                                .offset(x: -10, y: -10)
                                                 : nil
                                             )
+                                            .onLongPressGesture(minimumDuration: 1) {
+                                                if !isEditing {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        isEditing = true
+                                                    }
+                                                }
+                                            }
                                     }
                                 }
                             }
@@ -527,7 +895,88 @@ struct FoodLogView: View {
                             .onDrop(of: [.text], delegate: MealDropDelegate(item: mealType, items: $visibleMeals, current: index))
                         }
                         
-                        // Add extra padding at the bottom to ensure the last card is fully visible
+                        // Add Section button appears in edit mode
+                        if isEditing {
+                            Button(action: {
+                                showingMealStorage = true
+                            }) {
+                                VStack {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.largeTitle)
+                                        .foregroundColor(.blue)
+                                    Text("Add Section")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 120)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [5]))
+                                        .foregroundColor(.blue.opacity(0.5))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .padding(.top, 16)
+                        }
+                        
+                        // Day completion card at the bottom
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isDayCompleted.toggle()
+                                saveDayCompletionStatus()
+                            }
+                        }) {
+                            HStack(spacing: 16) {
+                                // Text content
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(isDayCompleted ? "Day Completed" : "Mark Day as Complete")
+                                        .font(.system(size: 17, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    
+                                    Text(isDayCompleted ? "Great job logging your food today!" : "Tap to confirm")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                }
+                                
+                                Spacer()
+                                
+                                // Checkmark circle
+                                ZStack {
+                                    Circle()
+                                        .stroke(isDayCompleted ? Color.green : Color.gray.opacity(0.3), lineWidth: 3)
+                                        .frame(width: 50, height: 50)
+                                    
+                                    if isDayCompleted {
+                                        Circle()
+                                            .fill(Color.green)
+                                            .frame(width: 50, height: 50)
+                                        
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 24, weight: .bold))
+                                            .foregroundColor(.white)
+                                    } else {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 24, weight: .bold))
+                                            .foregroundColor(.gray.opacity(0.3))
+                                    }
+                                }
+                            }
+                            .padding(16)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(cardBackground)
+                                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+                        )
+                        .accessibilityLabel(isDayCompleted ? "Day marked as complete" : "Mark day as complete")
+                        .accessibilityHint("Toggle to mark this day's food logging as complete for accurate phase analytics")
+                        .padding(.top, 8)
+                        
+                        // Add extra padding at the bottom to ensure the card is fully visible
                         Spacer().frame(height: 100)
                     }
                     .padding(.horizontal, 16)
@@ -558,34 +1007,9 @@ struct FoodLogView: View {
                 )
             }
             .navigationBarHidden(true)
-            .onAppear {
-                // Update metrics when view appears
-                updateMetrics()
-            }
             .onReceive(NotificationCenter.default.publisher(for: .foodLogUpdated)) { _ in
                 // Update metrics when food log changes
                 updateMetrics()
-            }
-            .onPreferenceChange(ScrollViewOffsetKey.self) { offset in
-                // Determine scroll direction for future use if needed
-                if offset < previousScrollOffset {
-                    scrollDirection = .up
-                } else if offset > previousScrollOffset {
-                    scrollDirection = .down
-                }
-                
-                // Weekly overview functionality disabled
-                // Always keep weekly overview hidden
-                weeklyOverviewVisible = false
-                weeklyOverviewHeight = 0
-                
-                // Update previous offset for next comparison
-                previousScrollOffset = offset
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .foodLogUpdated)) { _ in
-                // This will force the view to refresh when food log changes
-                updateMetrics()
-                refreshID = UUID()
             }
             .onReceive(NotificationCenter.default.publisher(for: .goalMetricsUpdated)) { _ in
                 // This will force the view to refresh when goal metrics order changes
@@ -593,25 +1017,17 @@ struct FoodLogView: View {
             }
             // Use a standard sheet presentation to ensure proper scrolling
             .sheet(isPresented: $showingMealStorage) {
-                MealStorageView(visibleMeals: $visibleMeals, hiddenMeals: $hiddenMeals, onDismiss: {
-                    showingMealStorage = false
-                })
-                .onDisappear {
-                    // Clean up any duplicates and save changes when dismissed
-                    // Use the existing cleanup logic from onChange handler
-                    // Remove duplicates between visible and hidden meals
-                    let visibleSet = Set(visibleMeals)
-                    hiddenMeals = hiddenMeals.filter { !visibleSet.contains($0) }
-                    
-                    // Save meal visibility preferences
-                    saveVisibleMeals()
-                    saveHiddenMeals()
-                    
-                    // Refresh UI
-                    NotificationCenter.default.post(name: NSNotification.Name("RefreshFoodLog"), object: nil)
-                }
+                MealStorageView(visibleMeals: $visibleMeals, hiddenMeals: $hiddenMeals, onDismiss: {})
+                    .onDisappear {
+                        // Save changes when view is dismissed
+                        saveVisibleMeals()
+                        saveHiddenMeals()
+                    }
             }
-            .animation(.spring(), value: showingMealStorage)
+            .sheet(isPresented: $showingCaloriesDetailView) {
+                CaloriesDetailView(foodLogManager: foodLogManager, userProfile: userProfile)
+            }
+            // Animation removed - was potentially interfering with sheet presentation
             .ignoresSafeArea(edges: .bottom)
             .onChange(of: showingMealStorage) { oldValue, isShowing in
                 if !isShowing {
@@ -644,26 +1060,256 @@ struct FoodLogView: View {
                 saveVisibleMeals()
                 saveHiddenMeals()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .exitEditMode)) { _ in
+                // Exit edit mode when switching tabs
+                if isEditing {
+                    isEditing = false
+                }
+            }
+            .onChange(of: selectedDate) { oldValue, newValue in
+                // Reset sticky metrics when date changes
+                showStickyMetrics = false
+                showStickyCaloriesRemaining = false
+            }
             .onAppear {
+                // Only do full initialization on first appear
+                if !hasAppearedOnce {
+                    hasAppearedOnce = true
+                    // Track page view
+                    AnalyticsService.shared.trackFoodLogView()
+                    // Load completion status
+                    loadDayCompletionStatus()
+                }
+                
                 // Always reset to today's date when view appears
                 selectedDate = Date()
                 
-                // Update metrics when view appears
+                // Lightweight updates on every appear
                 updateMetrics()
-                // Refresh activity data
-                activityManager.refreshActivityData()
                 
                 // Store current date as last open date
                 lastOpenDate = Date().timeIntervalSince1970
             }
             .id(refreshID)
+    }
+    
+    // Helper function to create sticky metric view for each type
+    @ViewBuilder
+    private func stickyMetricView(for metricType: GoalMetric.MetricType) -> some View {
+        switch metricType {
+        case .nova4:
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(nova4Percentage) / CGFloat(nova4Goal > 0 ? nova4Goal : 20), 1.0))
+                        .stroke(Color.orange, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(Int(nova4Percentage))%")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(Int(nova4Goal))%")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("NOVA 4")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .protein:
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.green.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(proteinConsumed) / CGFloat(userProfile.proteinGoalGrams > 0 ? userProfile.proteinGoalGrams : 50), 1.0))
+                        .stroke(Color.green, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(proteinConsumed)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(userProfile.proteinGoalGrams > 0 ? userProfile.proteinGoalGrams : 50)g")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Protein")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .calories:
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.purple.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(totalCaloriesForDay()) / CGFloat(userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000), 1.0))
+                        .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(totalCaloriesForDay())")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Calories")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .caloriesRemaining:
+            VStack(spacing: 4) {
+                let goal = userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
+                let consumed = totalCaloriesForDay()
+                let remaining = max(goal - consumed, 0)
+                let progress = min(CGFloat(consumed) / CGFloat(goal), 1.0)
+                ZStack {
+                    Circle()
+                        .stroke(Color.blue.opacity(0.2), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: 1 - progress)
+                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(remaining)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(goal)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Calories")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .carbs:
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.yellow.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(carbsConsumed) / CGFloat(userProfile.carbGoalGrams > 0 ? userProfile.carbGoalGrams : 300), 1.0))
+                        .stroke(Color.yellow, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(carbsConsumed)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(userProfile.carbGoalGrams > 0 ? userProfile.carbGoalGrams : 300)g")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Carbs")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .fat:
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.pink.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(fatConsumed) / CGFloat(userProfile.fatGoalGrams > 0 ? userProfile.fatGoalGrams : 65), 1.0))
+                        .stroke(Color.pink, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(fatConsumed)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(userProfile.fatGoalGrams > 0 ? userProfile.fatGoalGrams : 65)g")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Fat")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .steps:
+            VStack(spacing: 4) {
+                let stepsGoal = UserDefaults.standard.integer(forKey: "stepsGoal") > 0 ? UserDefaults.standard.integer(forKey: "stepsGoal") : 10000
+                ZStack {
+                    Circle()
+                        .stroke(Color.blue.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(stepsForSelectedDate) / CGFloat(stepsGoal), 1.0))
+                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(stepsForSelectedDate)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(stepsGoal)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Steps")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            
+        case .activityCalories:
+            VStack(spacing: 4) {
+                let activityCaloriesGoal = UserDefaults.standard.integer(forKey: "activityCaloriesGoal") > 0 ? UserDefaults.standard.integer(forKey: "activityCaloriesGoal") : 500
+                let activityCalories = activityCaloriesForSelectedDate
+                ZStack {
+                    Circle()
+                        .stroke(Color(red: 1.0, green: 0.3, blue: 0.0).opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(activityCalories) / CGFloat(activityCaloriesGoal), 1.0))
+                        .stroke(Color(red: 1.0, green: 0.3, blue: 0.0), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(activityCalories)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(activityCaloriesGoal)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Activity")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
         }
-        
-        
     }
     
     // Meal card component
     struct MealCardView: View {
+        @Environment(\.colorScheme) private var colorScheme
+        @StateObject private var visibilityService = MetricVisibilityService.shared
         let meal: FoodLogView.Meal
         let selectedDate: Date
         @State private var showingFoodSearch = false
@@ -672,12 +1318,20 @@ struct FoodLogView: View {
         @State private var showingFoodEntry = false
         @State private var foundFood: FoodItem? = nil
         @StateObject private var foodLogManager = FoodLogManager.shared
-        @StateObject private var typesenseService = TypesenseService.shared
+        @StateObject private var typesenseService = TypesenseDirectService.shared
         @State private var showingCopyConfirmation = false
+        
+        private var cardBackground: Color {
+            colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        }
         
         // Barcode search states (matching FoodSearchView)
         @State private var isSearchingBarcode = false
         @State private var barcodeError: String? = nil
+        @State private var showingAddFoodView = false
+        
+        // Collapse state
+        @State private var isExpanded = true
         
         // Observe the metrics manager to get selected daily goal metrics
         @ObservedObject private var metricsManager = GoalMetricsManager.shared
@@ -708,12 +1362,10 @@ struct FoodLogView: View {
                     metrics.append("P:\(mealProtein)g")
                 case .carbs:
                     metrics.append("C:\(mealCarbs)g")
-                case .calories:
-                    metrics.append("Cal:\(meal.totalCalories)")
                 case .fat:
                     metrics.append("F:\(mealFat)g")
                 default:
-                    continue // Skip non-nutrition metrics like steps, nova4, etc.
+                    continue // Skip non-nutrition metrics like calories, steps, nova4, etc.
                 }
             }
             
@@ -722,54 +1374,72 @@ struct FoodLogView: View {
         
         var body: some View {
             VStack(alignment: .leading, spacing: 0) {
-                // Meal header
-                HStack {
-                    Text(meal.name)
-                        .font(.custom("Montserrat-SemiBold", size: 17))
-                        .padding(.vertical, 16)
-                        .padding(.horizontal)
-                    
-                    Spacer()
-                    
-                    Text("\(meal.totalCalories) kcal")
-                        .font(.custom("Montserrat-SemiBold", size: 16))
-                        .foregroundColor(.secondary)
-                        .padding(.trailing)
+                // Meal header - tappable to expand/collapse
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack {
+                        Text(meal.name)
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(.primary)
+                            .padding(.vertical, 16)
+                            .padding(.horizontal)
+                        
+                        Spacer()
+                        
+                        if visibilityService.showCalories {
+                            Text("\(meal.totalCalories) kcal")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        // Chevron indicator
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.trailing)
+                    }
                 }
+                .buttonStyle(PlainButtonStyle())
                 
-                // Yesterday's meal suggestion (if available and current meal is empty)
-                if meal.entries.isEmpty {
-                    if let yesterdayMeal = getYesterdayMealEntries() {
-                        VStack(alignment: .leading, spacing: 8) {
-                            YesterdayMealSuggestion(
-                                yesterdayEntries: yesterdayMeal,
-                                mealName: meal.name,
-                                selectedDate: selectedDate
-                            )
+                // Collapsible content - only show when expanded
+                if isExpanded {
+                    // Yesterday's meal suggestion (if available and current meal is empty)
+                    if meal.entries.isEmpty {
+                        if let yesterdayMeal = getYesterdayMealEntries() {
+                            VStack(alignment: .leading, spacing: 4) {
+                                YesterdayMealSuggestion(
+                                    yesterdayEntries: yesterdayMeal,
+                                    mealName: meal.name,
+                                    selectedDate: selectedDate
+                                )
+                            }
+                            .padding(.horizontal)
+                            .padding(.bottom, 2)
+                        }
+                    }
+                    
+                    // Food items (if any)
+                    if !meal.entries.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(meal.entries) { entry in
+                                MealFoodItemRow(entry: entry)
+                            }
                         }
                         .padding(.horizontal)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, 2)
                     }
                 }
                 
-                // Food items (if any)
-                if !meal.entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(meal.entries) { entry in
-                            MealFoodItemRow(entry: entry)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                }
-                
-                // Add food buttons
+                // Add food buttons - ALWAYS VISIBLE (outside collapsed section)
                 HStack(spacing: 16) {
                     Button(action: {
                         showingFoodSearch = true
                     }) {
                         Image(systemName: "plus")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.secondary)
                             .font(.system(size: 18))
                     }
                     
@@ -777,7 +1447,7 @@ struct FoodLogView: View {
                         showingBarcodeScanner = true
                     }) {
                         Image(systemName: "barcode.viewfinder")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.secondary)
                             .font(.system(size: 18))
                     }
                     
@@ -806,7 +1476,15 @@ struct FoodLogView: View {
                             }
                         }
                 )
-                .sheet(isPresented: $showingFoodSearch) {
+                
+                // Sheets remain outside the conditional - always available
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(cardBackground)
+                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+            )
+            .sheet(isPresented: $showingFoodSearch) {
                     NavigationStack {
                         FoodSearchView(mealType: meal.name, selectedDate: selectedDate)
                     }
@@ -853,6 +1531,26 @@ struct FoodLogView: View {
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
                                         .padding()
+                                    
+                                    Button(action: {
+                                        // Close current sheet and open AddFoodView
+                                        showingFoodEntry = false
+                                        barcodeError = nil
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            showingAddFoodView = true
+                                        }
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "plus.circle.fill")
+                                            Text("Add New Food")
+                                        }
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .padding()
+                                        .background(.blue)
+                                        .cornerRadius(12)
+                                    }
+                                    .padding()
                                 }
                                 Spacer()
                             }
@@ -868,19 +1566,29 @@ struct FoodLogView: View {
                             }
                         }
                     } else if let food = foundFood {
+                        // Show BasicFoodEntryView for found food
                         NavigationStack {
                             BasicFoodEntryView(
                                 food: food,
                                 mealType: meal.name,
                                 selectedDate: selectedDate,
+                                onFoodAdded: { _ in
+                                    // Dismiss the sheet after adding the food
+                                    self.foundFood = nil
+                                    self.showingFoodEntry = false
+                                },
                                 showScanAgainButton: true,
-                                initialServingSize: nil,
-                                initialServingUnit: nil,
-                                initialNumberOfServings: nil,
-                                initialSelectedServingSizeOption: nil
+                                editingEntry: nil,
+                                initialServingSize: food.cachedServingSize,
+                                initialServingUnit: food.cachedServingUnit,
+                                initialNumberOfServings: food.cachedNumberOfServings,
+                                initialSelectedServingSizeOption: food.cachedSelectedServingSizeOption
                             )
                         }
                     }
+                }
+                .sheet(isPresented: $showingAddFoodView) {
+                    AddFoodView(mealType: meal.name, selectedDate: selectedDate)
                 }
                 .alert("Copy Yesterday's \(meal.name)?", isPresented: $showingCopyConfirmation) {
                     Button("Cancel", role: .cancel) { }
@@ -890,12 +1598,6 @@ struct FoodLogView: View {
                 } message: {
                     Text("This will add all foods from yesterday's \(meal.name.lowercased()) to today.")
                 }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(hex: "#FFFFFF"))
-                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
-            )
         }
         
         // MARK: - Barcode Handling
@@ -994,6 +1696,7 @@ struct FoodLogView: View {
         @StateObject private var foodLogManager = FoodLogManager.shared
         @State private var offset: CGFloat = 0
         @State private var showingCopyIcon = false
+        @State private var isPulsing = false
         
         private var totalCalories: Int {
             yesterdayEntries.reduce(0) { $0 + $1.totalCalories }
@@ -1010,7 +1713,7 @@ struct FoodLogView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Image(systemName: "clock.arrow.circlepath")
-                            .foregroundColor(.orange)
+                            .foregroundColor(Color(hex: "#5ec5ff"))
                             .font(.caption)
                         Text("Yesterday's \(mealName.lowercased())")
                             .font(.caption)
@@ -1031,35 +1734,57 @@ struct FoodLogView: View {
                         .font(.title2)
                         .transition(.scale.combined(with: .opacity))
                 } else {
-                    Text("\(totalCalories) kcal")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        Text("\(totalCalories) kcal")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        // Swipe hint
+                        HStack(spacing: -2) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Color(hex: "#5ec5ff").opacity(1))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Color(hex: "#5ec5ff").opacity(1))
+                        }
+                        .opacity(isPulsing ? 0.4 : 1.0)
+                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isPulsing)
+                    }
                 }
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
+            .onAppear {
+                isPulsing = true
+            }
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color(.systemGray6))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                            .stroke(Color(hex: "#5ec5ff").opacity(0.3), lineWidth: 1)
                     )
             )
             .offset(x: offset)
             .gesture(
-                DragGesture()
+                DragGesture(minimumDistance: 30, coordinateSpace: .local)
                     .onChanged { gesture in
-                        // Only allow right swipe
-                        if gesture.translation.width > 0 {
-                            offset = gesture.translation.width
+                        let translation = gesture.translation.width
+                        let verticalTranslation = gesture.translation.height
+                        
+                        // Only allow right swipe when clearly horizontal
+                        if translation > 0 && abs(verticalTranslation) < abs(translation) * 0.3 {
+                            offset = translation
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 showingCopyIcon = offset > 50
                             }
                         }
                     }
                     .onEnded { gesture in
-                        if gesture.translation.width > 80 {
+                        let verticalTranslation = gesture.translation.height
+                        
+                        if gesture.translation.width > 80 && abs(verticalTranslation) < abs(gesture.translation.width) * 0.3 {
                             // Start animation to slide off screen
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 offset = UIScreen.main.bounds.width
@@ -1125,10 +1850,16 @@ struct FoodLogView: View {
     struct MealFoodItemRow: View {
         let entry: FoodEntry
         @StateObject private var foodLogManager = FoodLogManager.shared
+        @StateObject private var visibilityService = MetricVisibilityService.shared
         @State private var offset: CGFloat = 0
         @State private var isSwiping = false
         @State private var showingEditView = false
         @State private var showDeleteButton = false
+        
+        // Check if this entry is a meal (using the isMeal flag on FoodItem)
+        private var isMeal: Bool {
+            return entry.foodItem.isMeal
+        }
         
         // Get color based on NOVA score
         private var novaScoreColor: Color {
@@ -1164,14 +1895,14 @@ struct FoodLogView: View {
                 Button(action: {
                     // Provide haptic feedback
                     HapticManager.shared.mediumFeedback()
-                    // Delete the entry
+                    // Delete the entry immediately
                     withAnimation {
                         foodLogManager.deleteEntry(id: entry.id)
                     }
                 }) {
                     Image(systemName: "trash")
                         .foregroundColor(.white)
-                        .frame(width: 90, height: 50)
+                        .frame(width: 60, height: 50)
                         .background(Color.red)
                         .cornerRadius(8)
                 }
@@ -1191,123 +1922,118 @@ struct FoodLogView: View {
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
                             
-                            // Second row: Brand (if available), amount, NOVA score (if available), NutriScore grade (if available)
-                            HStack(spacing: 4) {
-                                // Brand name if available
-                                if let brandName = entry.foodItem.brandName, !brandName.isEmpty {
-                                    Text(brandName)
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                        .lineLimit(1)
-                                    
-                                    // Add comma after brand name
-                                    Text(",")
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                }
-                                
-                                // Amount - use extractWeightFromServingSize for accurate weight
-                                Text(calculateDisplayWeight(for: entry))
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                                
-                                // NOVA score if available
-                                if entry.foodItem.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: entry.foodItem) > 0 {
-                                    // Add comma before NOVA score
-                                    Text(",")
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                    
-                                    let novaScore = entry.foodItem.novaScore > 0 ? entry.foodItem.novaScore : NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
-                                    Text("NOVA \(novaScore)")
-                                        .font(.caption2)
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(novaScoreColor)
-                                        .cornerRadius(4)
-                                }
-                                
-                                // NutriScore grade if available
-                                if let nutriScoreGrade = entry.foodItem.nutriScoreGrade, !nutriScoreGrade.isEmpty {
-                                    // Add comma before NutriScore grade
-                                    Text(",")
-                                        .font(.caption2)
-                                        .foregroundColor(.gray)
-                                    let nutriScoreColor: Color = {
-                                        switch nutriScoreGrade.uppercased() {
-                                        case "A": return Color(hex: "#22e83d")  // Match NOVA Group 1 color
-                                        case "B": return Color(hex: "#8eff00")  // Match NOVA Group 2 color
-                                        case "C": return Color(hex: "#f4df70")  // Custom yellow color
-                                        case "D": return Color(hex: "#ffb300")  // Match NOVA Group 3 color
-                                        case "E": return Color(hex: "#ff5722")  // Match NOVA Group 4 color
-                                        default: return .gray
+                            // Second row: amount, NOVA score (if available), NutriScore grade (if available)
+                            // Hide all metadata for Quick Add foods since they don't have real serving/ingredient data
+                            if entry.foodItem.name != "Quick Add" {
+                                HStack(spacing: 4) {
+                                    // For meals: show servings instead of weight, hide NOVA/NutriScore
+                                    if isMeal {
+                                        Text("\(formatAmount(entry.numberOfServings)) serving\(entry.numberOfServings == 1 ? "" : "s")")
+                                            .font(.caption2)
+                                            .foregroundColor(.gray)
+                                    } else {
+                                        // Amount - use extractWeightFromServingSize for accurate weight
+                                        Text(calculateDisplayWeight(for: entry))
+                                            .font(.caption2)
+                                            .foregroundColor(.gray)
+                                        
+                                        // NOVA score if available and visible
+                                        if visibilityService.showNovaScore && (entry.foodItem.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: entry.foodItem) > 0) {
+                                            // Add comma before NOVA score
+                                            Text(",")
+                                                .font(.caption2)
+                                                .foregroundColor(.gray)
+                                            
+                                            let novaScore = entry.foodItem.novaScore > 0 ? entry.foodItem.novaScore : NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
+                                            let isNovaEstimated = entry.foodItem.novaScoreIsEstimated
+                                            Text("\(isNovaEstimated ? "✨ " : "")NOVA \(novaScore)")
+                                                .font(.caption2)
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(novaScoreColor)
+                                                .cornerRadius(4)
                                         }
-                                    }()
-                                    
-                                    Text(nutriScoreGrade.uppercased())
-                                        .font(.caption2)
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(nutriScoreColor)
-                                        .cornerRadius(4)
+                                        
+                                        // NutriScore grade if available and visible
+                                        if visibilityService.showNutriScore, let nutriScoreGrade = entry.foodItem.nutriScoreGrade, !nutriScoreGrade.isEmpty {
+                                            // Add comma before NutriScore grade
+                                            Text(",")
+                                                .font(.caption2)
+                                                .foregroundColor(.gray)
+                                            let nutriScoreColor: Color = {
+                                                switch nutriScoreGrade.uppercased() {
+                                                case "A": return Color(hex: "#22e83d")  // Match NOVA Group 1 color
+                                                case "B": return Color(hex: "#8eff00")  // Match NOVA Group 2 color
+                                                case "C": return Color(hex: "#f4df70")  // Custom yellow color
+                                                case "D": return Color(hex: "#ffb300")  // Match NOVA Group 3 color
+                                                case "E": return Color(hex: "#ff5722")  // Match NOVA Group 4 color
+                                                default: return .gray
+                                                }
+                                            }()
+                                            
+                                            Text("\(entry.foodItem.nutriScoreIsEstimated ? "✨ " : "")\(nutriScoreGrade.uppercased())")
+                                                .font(.caption2)
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(nutriScoreColor)
+                                                .cornerRadius(4)
+                                        }
+                                    }
                                 }
                             }
                         }
                         
                         Spacer()
                         
-                        Text("\(entry.totalCalories) kcal")
-                            .font(.custom("Montserrat-SemiBold", size: 15))
-                            .foregroundColor(.secondary)
+                        // Only show calories if visibility is enabled
+                        if visibilityService.showCalories {
+                            Text("\(entry.totalCalories) kcal")
+                                .font(.custom("Montserrat-SemiBold", size: 15))
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .padding(8)
-                    .background(Color(.systemBackground))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                     .cornerRadius(8)
                     .offset(x: offset)
-                    .simultaneousGesture(
-                        DragGesture()
+                    .gesture(
+                        DragGesture(minimumDistance: 30, coordinateSpace: .local)
                             .onChanged { gesture in
-                                // Detect if this is primarily a horizontal swipe
-                                let isHorizontalSwipe = abs(gesture.translation.width) > abs(gesture.translation.height)
+                                let translation = gesture.translation.width
+                                let verticalTranslation = gesture.translation.height
                                 
-                                if isHorizontalSwipe {
+                                // Only handle clearly horizontal swipes (horizontal > 3x vertical)
+                                if abs(translation) > 30 && abs(verticalTranslation) < abs(translation) * 0.3 {
                                     isSwiping = true
-                                    if gesture.translation.width < 0 {
-                                        // Only allow dragging to the left (negative values)
-                                        offset = gesture.translation.width
+                                    if translation < 0 {
+                                        offset = translation
                                     }
                                 }
                             }
                             .onEnded { gesture in
-                                // Only handle horizontal swipes
-                                let isHorizontalSwipe = abs(gesture.translation.width) > abs(gesture.translation.height)
+                                let translation = gesture.translation.width
+                                let verticalTranslation = gesture.translation.height
                                 
-                                if isHorizontalSwipe {
+                                // Only handle clearly horizontal swipes
+                                if abs(translation) > 30 && abs(verticalTranslation) < abs(translation) * 0.3 {
                                     withAnimation {
-                                        // If dragged more than 90 points to the left, delete
-                                        if gesture.translation.width < -90 {
-                                            // Provide haptic feedback
-                                            HapticManager.shared.mediumFeedback()
-                                            // Delete the entry
-                                            foodLogManager.deleteEntry(id: entry.id)
-                                        } else if gesture.translation.width < -60 {
-                                            // If dragged between 60-90 points, show delete button
+                                        if translation < -60 {
+                                            HapticManager.shared.lightFeedback()
                                             offset = -90
                                         } else {
-                                            // Otherwise, snap back
                                             offset = 0
                                         }
                                     }
                                 } else {
-                                    // For vertical swipes, just reset offset
                                     withAnimation {
                                         offset = 0
                                     }
                                 }
                                 
-                                // Reset swiping flag after a short delay
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                     isSwiping = false
                                 }
@@ -1318,11 +2044,21 @@ struct FoodLogView: View {
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
-            .padding(.vertical, 4)
             .sheet(isPresented: $showingEditView) {
                 NavigationView {
                     if let retrievedEntry = foodLogManager.entry(withID: entry.id) {
-                        FoodEntryEditView(entry: retrievedEntry)
+                        BasicFoodEntryView(
+                            food: retrievedEntry.foodItem,
+                            mealType: retrievedEntry.mealType,
+                            selectedDate: retrievedEntry.dateAdded,
+                            onFoodAdded: nil,
+                            showScanAgainButton: false,
+                            editingEntry: retrievedEntry,
+                            initialServingSize: nil,
+                            initialServingUnit: nil,
+                            initialNumberOfServings: nil,
+                            initialSelectedServingSizeOption: nil
+                        )
                     }
                 }
             }
@@ -1330,22 +2066,23 @@ struct FoodLogView: View {
         
         // Calculate the correct display weight using the actual serving size selected
         private func calculateDisplayWeight(for entry: FoodEntry) -> String {
-            print("=== calculateDisplayWeight for \(entry.foodItem.name) ===")
-            print("entry.servingSize = \(entry.servingSize)")
-            print("entry.servingUnit = \(entry.servingUnit)")
-            print("entry.numberOfServings = \(entry.numberOfServings)")
+            let unitLower = entry.servingUnit.lowercased()
+            
+            // For "serving", "servings", or "meal" units, check if servingSize represents grams
+            if unitLower == "meal" || unitLower == "serving" || unitLower == "servings" {
+                // If servingSize is a typical gram value (>=1), calculate total grams
+                if entry.servingSize >= 1 {
+                    let totalGrams = entry.servingSize * entry.numberOfServings
+                    return formatAmount(totalGrams) + "g"
+                }
+                // Otherwise show servings count
+                let servingCount = Int(entry.numberOfServings)
+                return servingCount == 1 ? "1 serving" : "\(servingCount) servings"
+            }
             
             // Use the actual serving size and unit that were selected by the user
             let totalAmount = entry.servingSize * entry.numberOfServings
-            let result = formatAmount(totalAmount) + entry.servingUnit
-            
-            print("✅ Display calculation:")
-            print("  - servingSize: \(entry.servingSize)")
-            print("  - servingUnit: \(entry.servingUnit)")
-            print("  - numberOfServings: \(entry.numberOfServings)")
-            print("  - totalAmount: \(totalAmount) (\(entry.servingSize) × \(entry.numberOfServings))")
-            print("  - result: \(result)")
-            return result
+            return formatAmount(totalAmount) + entry.servingUnit
         }
     }
     

@@ -5,6 +5,8 @@
 //  Created on 16/07/2025.
 //
 
+// TEMPORARILY DISABLED - Water tracking feature
+/*
 import SwiftUI
 import Combine
 
@@ -32,27 +34,24 @@ struct WaterCardView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header with standardized top spacing
-            HStack {
-                Image(systemName: "drop.fill")
-                    .foregroundColor(.blue)
-                Text("Water")
-                    .font(.custom("Montserrat-SemiBold", size: 17))
-                Spacer()
+        FixedSizeCard(title: "Water", onCardTap: {
+            // This would navigate to water tracking view in a real app
+            // For now, just increment water intake for demo purposes
+            withAnimation {
+                dailyWaterIntake += 0.25
+                if dailyWaterIntake > 5.0 {
+                    dailyWaterIntake = 0.0
+                }
             }
-            .padding(.bottom, 4)
-            
-            // Content
+        }) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(String(format: "%.1fL", dailyWaterIntake))
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        .font(.system(size: 30, weight: .bold))
                     
                     Text("/ \(String(format: "%.1fL", waterTarget))")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(.accessibleSecondary)
                 }
                 
                 ProgressView(value: progressPercentage)
@@ -61,23 +60,8 @@ struct WaterCardView: View {
                 Text(waterRemaining > 0 ? 
                      "\(String(format: "%.1fL", waterRemaining)) remaining" : 
                      "Goal exceeded by \(String(format: "%.1fL", abs(waterRemaining)))L")
-                    .font(.caption)
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(waterRemaining > 0 ? .secondary : .green)
-            }
-            
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
-        .frame(height: 120)
-        .onTapGesture {
-            // This would navigate to water tracking view in a real app
-            // For now, just increment water intake for demo purposes
-            withAnimation {
-                dailyWaterIntake += 0.25
-                if dailyWaterIntake > 5.0 {
-                    dailyWaterIntake = 0.0
-                }
             }
         }
         // Reset water intake at midnight
@@ -120,3 +104,4 @@ struct WaterCardView: View {
         .frame(width: 180, height: 120)
         .padding()
 }
+*/

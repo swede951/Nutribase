@@ -11,6 +11,9 @@ class UserProfile: ObservableObject {
     // Timer for debouncing saves
     private var saveTimer: Timer?
     
+    // Flag to temporarily disable auto-saving during Firebase sync
+    private var isSyncingFromFirebase = false
+    
     // Current user identifier for local storage
     private var currentUserId: String {
         // Try to get user ID from UserDefaults, or create a new one
@@ -25,10 +28,8 @@ class UserProfile: ObservableObject {
     
     // Helper method to get user-specific UserDefaults key
     private func userSpecificKey(_ baseKey: String) -> String {
-        if UserDefaults.standard.bool(forKey: "guest_mode") {
-            return "\(baseKey)_guest"
-        } else if let authenticatedUser = SimpleAuthService.shared.currentUser {
-            // Use Supabase user ID for authenticated users
+        if let authenticatedUser = FirebaseAuthService.shared.currentUser {
+            // Use Firebase user ID for authenticated users
             return "\(baseKey)_\(authenticatedUser.id)"
         } else {
             // Fallback to local UUID for users not yet authenticated
@@ -37,11 +38,25 @@ class UserProfile: ObservableObject {
     }
     
     // Personal Information
-    @Published var age: Int = 30 {
-        didSet { 
-            UserDefaults.standard.set(age, forKey: userSpecificKey("userAge"))
+    @Published var displayName: String = "" {
+        didSet {
+            UserDefaults.standard.set(displayName, forKey: userSpecificKey("userDisplayName"))
             saveToLocalStorageIfNeeded()
         }
+    }
+    
+    @Published var dateOfBirth: Date = Calendar.current.date(byAdding: .year, value: -30, to: Date()) ?? Date() {
+        didSet { 
+            UserDefaults.standard.set(dateOfBirth.timeIntervalSince1970, forKey: userSpecificKey("userDateOfBirth"))
+            saveToLocalStorageIfNeeded()
+        }
+    }
+    
+    // Computed age from date of birth - always current
+    var age: Int {
+        let calendar = Calendar.current
+        let ageComponents = calendar.dateComponents([.year], from: dateOfBirth, to: Date())
+        return ageComponents.year ?? 30
     }
     
     @Published var gender: Gender = .notSpecified {
@@ -72,6 +87,16 @@ class UserProfile: ObservableObject {
         }
     }
     
+    @Published var preferredRegion: String = "All Regions" {
+        didSet {
+            UserDefaults.standard.set(preferredRegion, forKey: userSpecificKey("preferredRegion"))
+            // Also update the key used by food search services
+            UserDefaults.standard.set(preferredRegion, forKey: "preferredFoodRegion")
+            print("🌍 [UserProfile] Updated preferred region to: \(preferredRegion)")
+            saveToLocalStorageIfNeeded()
+        }
+    }
+    
     // Weight Goals
     @Published var weightGoalType: WeightGoalType = .maintain {
         didSet { 
@@ -90,6 +115,13 @@ class UserProfile: ObservableObject {
     }
     
     // Nutrition Goals
+    @Published var useCustomCalorieGoal: Bool = false {
+        didSet {
+            UserDefaults.standard.set(useCustomCalorieGoal, forKey: userSpecificKey("useCustomCalorieGoal"))
+            saveToLocalStorageIfNeeded()
+        }
+    }
+    
     @Published var dailyCalorieGoal: Int = 2000 {
         didSet { 
             UserDefaults.standard.set(dailyCalorieGoal, forKey: userSpecificKey("dailyCalorieGoal"))
@@ -200,7 +232,7 @@ class UserProfile: ObservableObject {
     }
     
     // Calculate TDEE without updating goals (to avoid recursion)
-    private func calculateTDEEOnly() -> Int {
+    func calculateTDEEOnly() -> Int {
         // Calculate BMR using Mifflin-St Jeor Equation
         var bmr: Double
         
@@ -220,8 +252,40 @@ class UserProfile: ObservableObject {
         return Int(bmr * activityLevel.multiplier)
     }
     
+    // Public method to force recalculation of calorie goal (ignores custom flag)
+    func recalculateCalorieGoal() {
+        print("[UserProfile] recalculateCalorieGoal called - forcing recalculation")
+        
+        let calculatedTDEE = max(calculateTDEEOnly(), 1500)
+        var newCalorieGoal = calculatedTDEE
+        
+        if abs(weeklyWeightChangeKg) >= 0.01 {
+            let safeWeeklyChange = max(min(abs(weeklyWeightChangeKg), 1.0), 0.1)
+            let calorieAdjustment = Int(safeWeeklyChange * 7700 / 7)
+            
+            if weeklyWeightChangeKg < 0 {
+                newCalorieGoal = calculatedTDEE - calorieAdjustment
+            } else if weeklyWeightChangeKg > 0 {
+                newCalorieGoal = calculatedTDEE + calorieAdjustment
+            }
+        }
+        
+        dailyCalorieGoal = max(newCalorieGoal, 1200)
+        print("[UserProfile] Recalculated calorie goal: \(dailyCalorieGoal)")
+    }
+    
     // Update nutrition goals based on TDEE and weight goals
     private func updateNutritionGoals(basedOn tdee: Int? = nil) {
+        print("[UserProfile] updateNutritionGoals called")
+        print("[UserProfile] weeklyWeightChangeKg: \(weeklyWeightChangeKg)")
+        print("[UserProfile] weightGoalType: \(weightGoalType)")
+        
+        // Skip automatic recalculation if user has set a custom calorie goal
+        if useCustomCalorieGoal {
+            print("[UserProfile] Using custom calorie goal, skipping automatic recalculation")
+            return
+        }
+        
         // Use provided TDEE or calculate from scratch
         let calculatedTDEE: Int
         if let tdee = tdee, tdee > 0 {
@@ -230,6 +294,7 @@ class UserProfile: ObservableObject {
             // Calculate TDEE without updating goals to avoid recursion
             calculatedTDEE = max(calculateTDEEOnly(), 1500) // Ensure minimum value
         }
+        print("[UserProfile] calculatedTDEE: \(calculatedTDEE)")
         
         // Calculate new calorie goal based on weight goal type
         var newCalorieGoal = calculatedTDEE
@@ -238,24 +303,31 @@ class UserProfile: ObservableObject {
         if abs(weeklyWeightChangeKg) < 0.01 {
             // No adjustment needed, maintain current weight
             newCalorieGoal = calculatedTDEE
+            print("[UserProfile] Weekly change near zero, maintaining at TDEE")
         } else {
             // 1kg of body fat ≈ 7700 calories, so for weekly changes:
             // Calculate daily calorie adjustment
             let safeWeeklyChange = max(min(abs(weeklyWeightChangeKg), 1.0), 0.1) // Limit to reasonable range
             let calorieAdjustment = Int(safeWeeklyChange * 7700 / 7) // 7700 calories per kg / 7 days
+            print("[UserProfile] safeWeeklyChange: \(safeWeeklyChange), calorieAdjustment: \(calorieAdjustment)")
             
             switch weightGoalType {
             case .lose:
                 newCalorieGoal = calculatedTDEE - calorieAdjustment
+                print("[UserProfile] Losing weight: \(calculatedTDEE) - \(calorieAdjustment) = \(newCalorieGoal)")
             case .gain:
                 newCalorieGoal = calculatedTDEE + calorieAdjustment
+                print("[UserProfile] Gaining weight: \(calculatedTDEE) + \(calorieAdjustment) = \(newCalorieGoal)")
             case .maintain:
                 newCalorieGoal = calculatedTDEE
+                print("[UserProfile] Maintaining weight at TDEE")
             }
         }
         
         // Ensure calorie goal is reasonable (at least 1200 calories)
-        dailyCalorieGoal = max(newCalorieGoal, 1200)
+        let finalCalorieGoal = max(newCalorieGoal, 1200)
+        print("[UserProfile] Setting dailyCalorieGoal from \(dailyCalorieGoal) to \(finalCalorieGoal)")
+        dailyCalorieGoal = finalCalorieGoal
         
         // Update macro goals based on new calorie goal
         // Use async to prevent UI freezes
@@ -315,24 +387,33 @@ class UserProfile: ObservableObject {
         }
     }
     
-    // Save profile to Supabase
-    private func saveToSupabaseIfAuthenticated() {
+    // Save profile to Firebase
+    private func saveToFirebaseIfAuthenticated() {
+        print("[UserProfile] saveToFirebaseIfAuthenticated called")
+        print("[UserProfile] FirebaseAuthService.shared.isAuthenticated: \(FirebaseAuthService.shared.isAuthenticated)")
+        print("[UserProfile] FirebaseAuthService.shared.currentUser: \(FirebaseAuthService.shared.currentUser?.email ?? "nil")")
+        
         // Only save if user is authenticated
-        guard let currentUser = SimpleAuthService.shared.currentUser else {
-            print("[UserProfile] Not authenticated - skipping Supabase save")
+        guard let currentUser = FirebaseAuthService.shared.currentUser else {
+            print("[UserProfile] ❌ Not authenticated - skipping Firebase save")
             return
         }
         
-        print("[UserProfile] Saving profile to Supabase for user: \(currentUser.id)")
+        print("[UserProfile] ✅ Authenticated - saving profile to Firebase for user: \(currentUser.email)")
         
-        // Save profile data matching exact Supabase schema
+        // Get onboarding status from UserDefaults
+        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        
+        // Save profile data to Firebase
         let profileData: [String: Any] = [
-            "user_id": currentUser.id,
-            "age": age,
+            "display_name": displayName,
+            "date_of_birth": dateOfBirth.timeIntervalSince1970,
+            "age": age, // Computed from DOB for convenience
             "gender": gender.rawValue,
             "height_cm": heightCm,
             "weight_kg": weightKg,
             "activity_level": activityLevel.rawValue,
+            "preferred_region": preferredRegion,
             "target_weight_kg": weightKg,
             "daily_calorie_target": dailyCalorieGoal,
             "weekly_weight_goal": weeklyWeightChangeKg,
@@ -342,40 +423,70 @@ class UserProfile: ObservableObject {
             "protein_goal_grams": proteinGoalGrams,
             "carb_goal_grams": carbGoalGrams,
             "fat_goal_grams": fatGoalGrams,
-            "water_goal_liters": waterGoalLiters
+            "water_goal_liters": waterGoalLiters,
+            "has_completed_onboarding": hasCompletedOnboarding
         ]
         
-        SupabaseService.shared.saveUserProfile(profileData) { success in
+        print("[UserProfile] Calling FirebaseProfileService.saveUserProfile with data: \(profileData)")
+        FirebaseProfileService.shared.saveUserProfile(profileData, userId: currentUser.id) { success in
             if success {
-                print("✅ Profile synced to Supabase")
+                print("✅ Profile synced to Firebase successfully")
             } else {
-                print("❌ Failed to sync profile")
+                print("❌ Failed to sync profile to Firebase")
             }
         }
     }
     
-    // Load profile from Supabase
-    func fetchFromSupabase() {
-        print("[UserProfile] Fetching profile from Supabase...")
+    // Load profile from Firebase
+    func fetchFromFirebase() {
+        print("[UserProfile] Fetching profile from Firebase...")
         
-        SupabaseService.shared.loadUserProfile { [weak self] profileData in
-            guard let self = self, let data = profileData else {
-                print("❌ No profile data found")
-                return
-            }
+        guard let currentUser = FirebaseAuthService.shared.currentUser else {
+            print("[UserProfile] ❌ Not authenticated - skipping Firebase fetch")
+            return
+        }
+        
+        FirebaseProfileService.shared.fetchUserProfile(userId: currentUser.id) { [weak self] profileData in
+            guard let self = self else { return }
             
-            self.updateFromProfileData(data)
+            if let data = profileData {
+                // Firebase data exists - use it
+                print("[UserProfile] ✅ Found Firebase profile data - updating local profile")
+                self.isSyncingFromFirebase = true
+                self.updateFromProfileData(data)
+                self.isSyncingFromFirebase = false
+            } else {
+                // No Firebase data - load from local UserDefaults and then save to Firebase
+                print("[UserProfile] No Firebase profile found - loading local data and syncing to Firebase")
+                self.clearCurrentUserData()
+                self.loadFromUserDefaults()
+                
+                // Save current local profile to Firebase for future syncing
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.saveToFirebaseIfAuthenticated()
+                }
+            }
         }
     }
     
-    // Update profile from Supabase data
+    // Update profile from Firebase data
     
     private func updateFromProfileData(_ data: [String: Any]) {
-        print("[UserProfile] Updating from Supabase data: \(data)")
+        print("[UserProfile] Updating from Firebase data: \(data)")
         
-        if let age = data["age"] as? Int { 
-            print("[UserProfile] Setting age: \(age)")
-            self.age = age 
+        // Load display name
+        if let name = data["display_name"] as? String {
+            print("[UserProfile] Setting display name: \(name)")
+            self.displayName = name
+        }
+        
+        // Prefer date_of_birth if available, otherwise convert from legacy age
+        if let dobTimestamp = data["date_of_birth"] as? Double {
+            print("[UserProfile] Setting date of birth from timestamp: \(dobTimestamp)")
+            self.dateOfBirth = Date(timeIntervalSince1970: dobTimestamp)
+        } else if let age = data["age"] as? Int { 
+            print("[UserProfile] Converting legacy age to DOB: \(age)")
+            self.dateOfBirth = Calendar.current.date(byAdding: .year, value: -age, to: Date()) ?? Date()
         }
         if let genderString = data["gender"] as? String, let gender = Gender(rawValue: genderString) { 
             print("[UserProfile] Setting gender: \(gender)")
@@ -393,6 +504,12 @@ class UserProfile: ObservableObject {
             print("[UserProfile] Setting activity: \(activity)")
             self.activityLevel = activity 
         }
+        if let region = data["preferred_region"] as? String, !region.isEmpty {
+            print("[UserProfile] Setting preferred region from Firebase: \(region)")
+            self.preferredRegion = region
+        } else {
+            print("[UserProfile] No valid region in Firebase data, keeping current: \(self.preferredRegion)")
+        }
         if let weeklyChange = data["weekly_weight_goal"] as? Double { 
             print("[UserProfile] Setting weekly change: \(weeklyChange)")
             self.weeklyWeightChangeKg = weeklyChange 
@@ -409,7 +526,17 @@ class UserProfile: ObservableObject {
         if let fatGoal = data["fat_goal_grams"] as? Int { self.fatGoalGrams = fatGoal }
         if let water = data["water_goal_liters"] as? Double { self.waterGoalLiters = water }
         
-        print("✅ Profile updated from Supabase")
+        // Load onboarding completion status
+        if let hasCompletedOnboarding = data["has_completed_onboarding"] as? Bool {
+            print("[UserProfile] Setting onboarding completion status: \(hasCompletedOnboarding)")
+            UserDefaults.standard.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding")
+            // Clear the new user flag if onboarding is complete
+            if hasCompletedOnboarding {
+                UserDefaults.standard.set(false, forKey: "isNewUser")
+            }
+        }
+        
+        print("✅ Profile updated from Firebase")
     }
 
     // Authentication event handlers
@@ -433,32 +560,22 @@ class UserProfile: ObservableObject {
     }
     
     private func handleUserSignIn() {
-        // Switch to authenticated mode (no longer using local UUID system)
-        UserDefaults.standard.set(false, forKey: "guest_mode")
-        UserDefaults.standard.removeObject(forKey: "current_user_id") // Remove local UUID
+        // Remove local UUID when user signs in with Firebase
+        UserDefaults.standard.removeObject(forKey: "current_user_id")
         
-        // Clear current data and load user-specific data
-        clearCurrentUserData()
-        loadFromUserDefaults()
+        print("[UserProfile] User signed in - fetching profile from Firebase first")
         
-        // Fetch profile from Supabase after a delay to ensure authentication is complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            self.fetchFromSupabase()
+        // Fetch profile from Firebase FIRST, before loading any local data
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.fetchFromFirebase()
         }
-        
-        print("[UserProfile] User signed in - switched to authenticated mode")
     }
     
     private func handleUserSignOut() {
-        // Switch to guest mode
-        UserDefaults.standard.set(true, forKey: "guest_mode")
-        UserDefaults.standard.removeObject(forKey: "current_user_id")
-        
-        // Clear current data and load guest data
+        // Clear current data when user signs out
         clearCurrentUserData()
-        loadFromUserDefaults()
         
-        print("User signed out - switched to guest mode")
+        print("[UserProfile] User signed out - data cleared")
     }
     
     private func clearCurrentUserData() {
@@ -467,7 +584,7 @@ class UserProfile: ObservableObject {
             guard let self = self else { return }
             
             // Temporarily disable auto-save during reset
-            self.age = 30
+            self.dateOfBirth = Calendar.current.date(byAdding: .year, value: -30, to: Date()) ?? Date()
             self.gender = .notSpecified
             self.heightCm = 170.0
             self.weightKg = 70.0
@@ -487,8 +604,20 @@ class UserProfile: ObservableObject {
     
     private func loadFromUserDefaults() {
         // Load values from user-specific UserDefaults keys
-        let loadedAge = UserDefaults.standard.integer(forKey: userSpecificKey("userAge"))
-        if loadedAge > 0 { age = loadedAge }
+        if let loadedName = UserDefaults.standard.string(forKey: userSpecificKey("userDisplayName")) {
+            displayName = loadedName
+        }
+        
+        let loadedDOB = UserDefaults.standard.double(forKey: userSpecificKey("userDateOfBirth"))
+        if loadedDOB > 0 { 
+            dateOfBirth = Date(timeIntervalSince1970: loadedDOB) 
+        } else {
+            // Migration: Try to load legacy age and convert to DOB
+            let loadedAge = UserDefaults.standard.integer(forKey: userSpecificKey("userAge"))
+            if loadedAge > 0 {
+                dateOfBirth = Calendar.current.date(byAdding: .year, value: -loadedAge, to: Date()) ?? Date()
+            }
+        }
         
         if let genderString = UserDefaults.standard.string(forKey: userSpecificKey("userGender")),
            let genderEnum = Gender(rawValue: genderString) {
@@ -504,6 +633,18 @@ class UserProfile: ObservableObject {
         if let activityString = UserDefaults.standard.string(forKey: userSpecificKey("userActivityLevel")),
            let activityEnum = ActivityLevel(rawValue: activityString) {
             activityLevel = activityEnum
+        }
+        
+        // Load region: try user-specific key first, then fall back to generic key
+        if let region = UserDefaults.standard.string(forKey: userSpecificKey("preferredRegion")), !region.isEmpty {
+            preferredRegion = region
+            print("🌍 [UserProfile] Loaded region from user-specific key: \(region)")
+        } else if let genericRegion = UserDefaults.standard.string(forKey: "preferredFoodRegion"), !genericRegion.isEmpty {
+            // Fallback to generic key (used by food search services)
+            preferredRegion = genericRegion
+            print("🌍 [UserProfile] Loaded region from generic key (fallback): \(genericRegion)")
+        } else {
+            print("🌍 [UserProfile] No region found in UserDefaults, using default: All Regions")
         }
         
         if let goalTypeString = UserDefaults.standard.string(forKey: userSpecificKey("weightGoalType")),
@@ -543,23 +684,20 @@ class UserProfile: ObservableObject {
     }
     
     private func saveToLocalStorageIfNeeded() {
-        // Debounce saves to avoid too many writes
-        saveTimer?.invalidate()
-        saveTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-            self?.saveToLocalStorage()
-            self?.saveToSupabaseIfAuthenticated()
-        }
+        // Properties auto-save to UserDefaults via their didSet blocks
+        // This method is kept for compatibility but doesn't need to do anything
+        // Firebase saves are now manual-only via saveToFirebase()
     }
     
-    private func saveToLocalStorage() {
-        // All data is already being saved to UserDefaults via the @AppStorage properties
-        // This method exists for consistency and future enhancements
-        print("User profile data saved to local storage")
+    // Public method to manually save profile to Firebase (called from Save buttons)
+    func saveToFirebase() {
+        print("[UserProfile] Manual Firebase save requested")
+        saveToFirebaseIfAuthenticated()
     }
     
     // Method to manually save profile (can be called from UI)
     func saveProfile() {
-        saveToLocalStorage()
+        // Properties auto-save to UserDefaults via their didSet blocks
         print("Profile saved successfully to local storage")
     }
     

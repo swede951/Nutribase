@@ -13,212 +13,378 @@ struct MealStorageView: View {
     @Binding var hiddenMeals: [MealType]
     var onDismiss: () -> Void
     
-    // All possible meal types for the food log
-    private let allMealTypes: [MealType] = [
-        .caloriesSummary,
-        .dailyGoals,
-        .breakfast,
-        .lunch,
-        .dinner,
-        .snacks
-    ]
-    
-    // Grid layout configuration
-    private let columns = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
-    ]
+    // Available cards (not visible) - simple filter like WidgetStorageView
+    private var availableCards: [MealType] {
+        MealType.allCases.filter { !visibleMeals.contains($0) }
+    }
     
     var body: some View {
         NavigationView {
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 20) {
-                    // All cards section
-                    Section {
+            ZStack {
+                // Background color matching dashboard
+                Color(.systemGray6)
+                    .ignoresSafeArea()
+                
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 20) {
+                        // All cards section
                         Text("All Cards")
                             .font(.headline)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal)
                         
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(allMealTypes, id: \.self) { mealType in
-                                if hiddenMeals.contains(mealType) || !visibleMeals.contains(mealType) {
-                                    mealPreviewCard(for: mealType)
-                                        .onTapGesture {
-                                            showMeal(mealType)
-                                        }
-                                }
+                        // Show cards in a vertical stack
+                        VStack(spacing: 16) {
+                            ForEach(availableCards, id: \.self) { mealType in
+                                cardPreviewWithOverlay(for: mealType)
                             }
                         }
-                        .padding(.horizontal)
+                        .padding(.horizontal, 16)
+                        
+                        Spacer()
                     }
-                    
-                    // Visible cards section
-                    if !visibleMeals.isEmpty {
-                        Section {
-                            Text("Visible Cards")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal)
-                            
-                            LazyVGrid(columns: columns, spacing: 16) {
-                                ForEach(visibleMeals.indices, id: \.self) { index in
-                                    let mealType = visibleMeals[index]
-                                    mealPreviewCard(for: mealType)
-                                        .overlay(
-                                            // Only show remove button if there's more than one visible card
-                                            visibleMeals.count > 1 ? 
-                                            Button(action: {
-                                                hideMeal(mealType)
-                                            }) {
-                                                Image(systemName: "minus.circle.fill")
-                                                    .font(.title2)
-                                                    .foregroundColor(.red)
-                                                    .background(Circle().fill(Color.white))
-                                                    .padding(6)
-                                            }
-                                            .position(x: 20, y: 20)
-                                            : nil
-                                        )
-                                        .onDrag {
-                                            // Only enable drag when there's more than one card
-                                            guard visibleMeals.count > 1 else { return NSItemProvider() }
-                                            MealDropDelegate.draggedIndex = index
-                                            return NSItemProvider(object: mealType.rawValue as NSString)
-                                        }
-                                        .onDrop(of: [.text], delegate: MealDropDelegate(item: mealType, items: $visibleMeals, current: index))
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    
-                    Spacer()
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
             }
-            .navigationTitle("Customize Cards")
+            .navigationTitle("Add Cards")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
+                    Button("Cancel") {
                         dismiss()
-                        onDismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Reset") {
-                        resetToDefault()
                     }
                 }
             }
         }
     }
     
-    private func showMeal(_ mealType: MealType) {
-        // Debug print to help diagnose the issue
-        print("Showing meal: \(mealType.rawValue)")
-        print("Before - Visible meals: \(visibleMeals.map { $0.rawValue })")
-        print("Before - Hidden meals: \(hiddenMeals.map { $0.rawValue })")
+    private func addCard(_ mealType: MealType) {
+        // Add to visible meals
+        visibleMeals.append(mealType)
         
-        // Add to visible meals if not already there
-        if !visibleMeals.contains(mealType) {
-            visibleMeals.append(mealType)
-        }
-        
-        // Remove from hidden meals
+        // Remove from hidden meals if present
         if let index = hiddenMeals.firstIndex(of: mealType) {
             hiddenMeals.remove(at: index)
         }
         
-        print("After - Visible meals: \(visibleMeals.map { $0.rawValue })")
-        print("After - Hidden meals: \(hiddenMeals.map { $0.rawValue })")
+        // Dismiss
+        dismiss()
     }
     
-    private func hideMeal(_ mealType: MealType) {
-        // Debug print to help diagnose the issue
-        print("Hiding meal: \(mealType.rawValue)")
-        print("Before - Visible meals: \(visibleMeals.map { $0.rawValue })")
-        print("Before - Hidden meals: \(hiddenMeals.map { $0.rawValue })")
-        
-        // Only allow hiding if there's more than one visible meal
-        if visibleMeals.count > 1 {
-            // Add to hidden meals if not already there
-            if !hiddenMeals.contains(mealType) {
-                hiddenMeals.append(mealType)
-            }
-            
-            // Remove from visible meals
-            if let index = visibleMeals.firstIndex(of: mealType) {
-                visibleMeals.remove(at: index)
-            }
-            
-            print("After - Visible meals: \(visibleMeals.map { $0.rawValue })")
-            print("After - Hidden meals: \(hiddenMeals.map { $0.rawValue })")
-        } else {
-            print("Cannot hide - need at least one visible card")
-        }
-    }
-    
-    private func resetToDefault() {
-        // Reset to default (all meals visible in default order)
-        visibleMeals = [
-            .caloriesSummary,
-            .dailyGoals,
-            .breakfast,
-            .lunch,
-            .dinner,
-            .snacks
-        ]
-        hiddenMeals = []
-    }
-    
+    // Card preview with green plus overlay
     @ViewBuilder
-    private func mealPreviewCard(for mealType: MealType) -> some View {
-        VStack {
-            Image(systemName: mealType.systemImage)
-                .font(.largeTitle)
-                .foregroundColor(mealType.color)
-                .frame(width: 60, height: 60)
-                .padding()
+    private func cardPreviewWithOverlay(for mealType: MealType) -> some View {
+        ZStack {
+            // Actual card preview
+            cardPreview(for: mealType)
+                .allowsHitTesting(false)
             
-            Text(mealType.rawValue)
-                .font(.caption)
-                .multilineTextAlignment(.center)
-            
-            // Only show Add button for cards in the All Cards section
-            if hiddenMeals.contains(mealType) || !visibleMeals.contains(mealType) {
-                Button(action: {
-                    showMeal(mealType)
-                }) {
-                    Text("Add")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+            // Green plus button overlay - positioned outside card bounds
+            VStack {
+                HStack {
+                    Button(action: {
+                        addCard(mealType)
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(Color.green.opacity(0.9))
+                            .background(Circle().fill(Color(.systemBackground)))
+                    }
+                    Spacer()
                 }
-                .padding(.top, 4)
-                .padding(.bottom, 8)
+                Spacer()
             }
+            .offset(x: -10, y: -10)
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1.0, contentMode: .fit)
+    }
+    
+    // Returns static preview for each meal type - no actual components to avoid freezing
+    @ViewBuilder
+    private func cardPreview(for mealType: MealType) -> some View {
+        switch mealType {
+        case .caloriesSummary:
+            CaloriesSummaryPreview()
+            
+        case .dailyGoals:
+            DailyGoalsPreview()
+            
+        case .breakfast, .lunch, .dinner, .snacks:
+            EmptyMealCardPreview(mealType: mealType)
+        }
+    }
+}
+
+// Static preview that looks like CalorieSummaryCard
+struct CaloriesSummaryPreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Calories Remaining")
+                    .font(.system(size: 17, weight: .semibold))
+                Spacer()
+                Image(systemName: "gearshape")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 14))
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+            
+            // Content - Goal - Consumed = Remaining with circle
+            HStack(spacing: 0) {
+                Spacer()
+                
+                VStack(spacing: 4) {
+                    Text("2,000")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Goal")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                Text("-")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                VStack(spacing: 4) {
+                    Text("377")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Consumed")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                Text("=")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                // Circular progress with remaining
+                ZStack {
+                    Circle()
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 6)
+                        .frame(width: 60, height: 60)
+                    
+                    Circle()
+                        .trim(from: 0, to: 0.19)
+                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .frame(width: 60, height: 60)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("1,623")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Remaining")
+                            .font(.system(size: 8))
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+        )
+    }
+}
+
+// Static preview that looks like DailyGoalsCard
+struct DailyGoalsPreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Daily Goals")
+                    .font(.system(size: 17, weight: .semibold))
+                Spacer()
+                Image(systemName: "gearshape")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 14))
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+            
+            // Metrics row - centered like the real card
+            HStack(spacing: 0) {
+                // Protein
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                            .frame(width: 50, height: 50)
+                        Circle()
+                            .trim(from: 0, to: 0.1)
+                            .stroke(Color.green, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .frame(width: 50, height: 50)
+                            .rotationEffect(.degrees(-90))
+                        VStack(spacing: 0) {
+                            Text("12")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("/120g")
+                                .font(.system(size: 8))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    Text("Protein")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                
+                // NOVA 4
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                            .frame(width: 50, height: 50)
+                        Circle()
+                            .trim(from: 0, to: 0)
+                            .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .frame(width: 50, height: 50)
+                            .rotationEffect(.degrees(-90))
+                        VStack(spacing: 0) {
+                            Text("0%")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("/20%")
+                                .font(.system(size: 8))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    Text("NOVA 4")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                
+                // Calories
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                            .frame(width: 50, height: 50)
+                        Circle()
+                            .trim(from: 0, to: 0.19)
+                            .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .frame(width: 50, height: 50)
+                            .rotationEffect(.degrees(-90))
+                        VStack(spacing: 0) {
+                            Text("377")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("/2000")
+                                .font(.system(size: 8))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    Text("Calories")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                
+                // Remaining
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                            .frame(width: 50, height: 50)
+                        Circle()
+                            .trim(from: 0, to: 0.81)
+                            .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .frame(width: 50, height: 50)
+                            .rotationEffect(.degrees(-90))
+                        VStack(spacing: 0) {
+                            Text("1623")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("remaining")
+                                .font(.system(size: 7))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    Text("Calories")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+        )
+    }
+}
+
+// Empty meal card preview that matches the actual MealCardView appearance
+struct EmptyMealCardPreview: View {
+    let mealType: MealType
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Meal header - matching MealCardView
+            HStack {
+                Text(mealType.rawValue)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.primary)
+                    .padding(.vertical, 16)
+                    .padding(.horizontal)
+                
+                Spacer()
+                
+                Text("0 kcal")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                // Chevron indicator
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.trailing)
+            }
+            
+            // Add food buttons - matching MealCardView
+            HStack(spacing: 16) {
+                Image(systemName: "plus")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 18))
+                
+                Image(systemName: "barcode.viewfinder")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 18))
+                
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
 }
 
 #Preview {
     MealStorageView(
-        visibleMeals: .constant(MealType.allCases),
-        hiddenMeals: .constant([]),
+        visibleMeals: .constant([.breakfast, .lunch, .dinner, .snacks]),
+        hiddenMeals: .constant([.caloriesSummary, .dailyGoals]),
         onDismiss: {}
     )
 }

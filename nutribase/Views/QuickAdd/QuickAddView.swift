@@ -49,7 +49,7 @@ struct QuickAddView: View {
             .padding(.horizontal, 20)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white)
+                    .fill(Color(.systemBackground))
                     .shadow(color: Color.black.opacity(0.2), radius: 10)
             )
             .offset(y: offset)
@@ -93,7 +93,7 @@ struct QuickAddCard: View {
             .frame(width: 130, height: 130)
             .background(
                 RoundedRectangle(cornerRadius: 15)
-                    .fill(Color.white)
+                    .fill(Color(.systemBackground))
                     .shadow(color: color.opacity(0.2), radius: 5)
             )
         }

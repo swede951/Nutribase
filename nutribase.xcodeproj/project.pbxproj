@@ -8,6 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		C523C6362E3013D30031FF59 /* Typesense in Frameworks */ = {isa = PBXBuildFile; productRef = C523C6352E3013D30031FF59 /* Typesense */; };
+		C585ECE42ED468E70026F648 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = C585ECE32ED468E70026F648 /* FirebaseFunctions */; };
+		C591D5072E94FB3400A829BA /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5062E94FB3400A829BA /* FirebaseAI */; };
+		C591D5092E94FB3400A829BA /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5082E94FB3400A829BA /* FirebaseAnalytics */; };
+		C591D50B2E94FB3400A829BA /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = C591D50A2E94FB3400A829BA /* FirebaseAnalyticsCore */; };
+		C591D50D2E94FB3400A829BA /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = C591D50C2E94FB3400A829BA /* FirebaseAnalyticsIdentitySupport */; };
+		C591D50F2E94FB3400A829BA /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = C591D50E2E94FB3400A829BA /* FirebaseAppCheck */; };
+		C591D5122E94FDC300A829BA /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5112E94FDC300A829BA /* FirebaseAuth */; };
+		C591D5142E94FDCE00A829BA /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5132E94FDCE00A829BA /* FirebaseFirestore */; };
+		C591D5162E94FDD700A829BA /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5152E94FDD700A829BA /* FirebaseCrashlytics */; };
+		C591D5182E94FDE400A829BA /* FirebasePerformance in Frameworks */ = {isa = PBXBuildFile; productRef = C591D5172E94FDE400A829BA /* FirebasePerformance */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -33,9 +43,22 @@
 		C5BC15F62DEF6DB4000013C8 /* nutribaseUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = nutribaseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C585ECF22ED9D5280026F648 /* Exceptions for "nutribase" folder in "nutribase" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C5BC15DE2DEF6DAC000013C8 /* nutribase */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C5BC15E12DEF6DAC000013C8 /* nutribase */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C585ECF22ED9D5280026F648 /* Exceptions for "nutribase" folder in "nutribase" target */,
+			);
 			path = nutribase;
 			sourceTree = "<group>";
 		};
@@ -57,6 +80,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				C523C6362E3013D30031FF59 /* Typesense in Frameworks */,
+				C591D50D2E94FB3400A829BA /* FirebaseAnalyticsIdentitySupport in Frameworks */,
+				C591D5182E94FDE400A829BA /* FirebasePerformance in Frameworks */,
+				C591D5072E94FB3400A829BA /* FirebaseAI in Frameworks */,
+				C591D5092E94FB3400A829BA /* FirebaseAnalytics in Frameworks */,
+				C591D50F2E94FB3400A829BA /* FirebaseAppCheck in Frameworks */,
+				C591D5142E94FDCE00A829BA /* FirebaseFirestore in Frameworks */,
+				C591D5162E94FDD700A829BA /* FirebaseCrashlytics in Frameworks */,
+				C591D5122E94FDC300A829BA /* FirebaseAuth in Frameworks */,
+				C585ECE42ED468E70026F648 /* FirebaseFunctions in Frameworks */,
+				C591D50B2E94FB3400A829BA /* FirebaseAnalyticsCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,12 +110,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		C591D5102E94FDC300A829BA /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		C5BC15D62DEF6DAC000013C8 = {
 			isa = PBXGroup;
 			children = (
 				C5BC15E12DEF6DAC000013C8 /* nutribase */,
 				C5BC15EF2DEF6DB4000013C8 /* nutribaseTests */,
 				C5BC15F92DEF6DB4000013C8 /* nutribaseUITests */,
+				C591D5102E94FDC300A829BA /* Frameworks */,
 				C5BC15E02DEF6DAC000013C8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -118,6 +159,16 @@
 			name = nutribase;
 			packageProductDependencies = (
 				C523C6352E3013D30031FF59 /* Typesense */,
+				C591D5062E94FB3400A829BA /* FirebaseAI */,
+				C591D5082E94FB3400A829BA /* FirebaseAnalytics */,
+				C591D50A2E94FB3400A829BA /* FirebaseAnalyticsCore */,
+				C591D50C2E94FB3400A829BA /* FirebaseAnalyticsIdentitySupport */,
+				C591D50E2E94FB3400A829BA /* FirebaseAppCheck */,
+				C591D5112E94FDC300A829BA /* FirebaseAuth */,
+				C591D5132E94FDCE00A829BA /* FirebaseFirestore */,
+				C591D5152E94FDD700A829BA /* FirebaseCrashlytics */,
+				C591D5172E94FDE400A829BA /* FirebasePerformance */,
+				C585ECE32ED468E70026F648 /* FirebaseFunctions */,
 			);
 			productName = nutribase;
 			productReference = C5BC15DF2DEF6DAC000013C8 /* nutribase.app */;
@@ -177,7 +228,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1630;
-				LastUpgradeCheck = 1630;
+				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					C5BC15DE2DEF6DAC000013C8 = {
 						CreatedOnToolsVersion = 16.3;
@@ -203,6 +254,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C523C6342E3013D30031FF59 /* XCRemoteSwiftPackageReference "typesense-swift" */,
+				C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C5BC15E02DEF6DAC000013C8 /* Products */;
@@ -337,6 +389,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -394,6 +447,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -410,6 +464,8 @@
 				DEVELOPMENT_TEAM = 37TJL6F9HL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = nutribase/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NutriBase;
 				INFOPLIST_KEY_NSCameraUsageDescription = "NutriBase needs camera access to scan food labels and barcodes";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "NutriBase needs access to your health data to track your steps and activity";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "NutriBase needs permission to update your health data";
@@ -425,9 +481,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Swedeapps.nutribase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -442,6 +502,8 @@
 				DEVELOPMENT_TEAM = 37TJL6F9HL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = nutribase/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NutriBase;
 				INFOPLIST_KEY_NSCameraUsageDescription = "NutriBase needs camera access to scan food labels and barcodes";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "NutriBase needs access to your health data to track your steps and activity";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "NutriBase needs permission to update your health data";
@@ -457,9 +519,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Swedeapps.nutribase;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -585,6 +651,14 @@
 				kind = branch;
 			};
 		};
+		C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.3.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -592,6 +666,56 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C523C6342E3013D30031FF59 /* XCRemoteSwiftPackageReference "typesense-swift" */;
 			productName = Typesense;
+		};
+		C585ECE32ED468E70026F648 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		C591D5062E94FB3400A829BA /* FirebaseAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAI;
+		};
+		C591D5082E94FB3400A829BA /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		C591D50A2E94FB3400A829BA /* FirebaseAnalyticsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsCore;
+		};
+		C591D50C2E94FB3400A829BA /* FirebaseAnalyticsIdentitySupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsIdentitySupport;
+		};
+		C591D50E2E94FB3400A829BA /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		C591D5112E94FDC300A829BA /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		C591D5132E94FDCE00A829BA /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		C591D5152E94FDD700A829BA /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+		C591D5172E94FDE400A829BA /* FirebasePerformance */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C591D5052E94FB3400A829BA /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebasePerformance;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

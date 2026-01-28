@@ -12,6 +12,9 @@ import UIKit
 // CardStyle is now imported from the shared CardStyle.swift file
 
 struct DashboardView: View {
+    // Callback when dashboard is fully loaded
+    var onLoaded: (() -> Void)? = nil
+    
     // Keys for UserDefaults storage
     private let cardOrderKey = "dashboardCardOrder"
     private let hiddenCardsKey = "dashboardHiddenCards"
@@ -19,24 +22,47 @@ struct DashboardView: View {
     // Food log manager for streak calculation
     @ObservedObject private var foodLogManager = FoodLogManager.shared
     
+    // User profile for goals - will trigger updates when goals change
+    @ObservedObject private var userProfile = UserProfile.shared
+    
+    // Metric visibility service
+    @StateObject private var visibilityService = MetricVisibilityService.shared
+    
+    // Track if initial load is complete
+    @State private var hasLoadedInitialData = false
+    
+    // Refresh trigger for when goals are updated
+    @State private var refreshID = UUID()
+    
     // Grid layout configuration
     private let columns = [
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
     
+    // Weight chart size mode from UserDefaults
+    @AppStorage("weightChartSizeMode") private var weightChartSizeMode: WeightChartSizeMode = .compact
+    
+    // Color scheme for adaptive backgrounds
+    @Environment(\.colorScheme) private var colorScheme
+    
+    /// Background color: grey in light mode, black in dark mode (inverted)
+    private var scrollBackground: Color {
+        colorScheme == .dark ? Color(.systemBackground) : Color(.systemGray6)
+    }
+    
     // Default card layout - simplified for LazyVGrid
     private let defaultCards: [DashboardCard] = [
         DashboardCard(cardType: .currentWeight),
         DashboardCard(cardType: .weightChart),
-        DashboardCard(cardType: .bmi),
         DashboardCard(cardType: .calorieTarget),
         DashboardCard(cardType: .protein),
         DashboardCard(cardType: .novaGroups),
         DashboardCard(cardType: .nutriScore),
+        DashboardCard(cardType: .gutHealth),
         DashboardCard(cardType: .carbs),
         DashboardCard(cardType: .fat),
-        DashboardCard(cardType: .water),
+        // DashboardCard(cardType: .water), // TEMPORARILY DISABLED
         DashboardCard(cardType: .activity)
     ]
     
@@ -52,8 +78,14 @@ struct DashboardView: View {
     // State for edit mode
     @State private var isEditing = false
     
+    // Cached grid rows to avoid recalculation on every render
+    @State private var cachedGridRows: [[DashboardCard]] = []
+    @State private var lastCardsHash: Int = 0
+    
     // Initialize with saved layout or default layout
-    init() {
+    init(onLoaded: (() -> Void)? = nil) {
+        self.onLoaded = onLoaded
+        
         // Load saved card order from UserDefaults
         var initialCards = defaultCards
         if let savedCardOrderData = UserDefaults.standard.data(forKey: cardOrderKey),
@@ -97,6 +129,39 @@ struct DashboardView: View {
         }
     }
     
+    // Filter cards based on visibility preferences
+    private var visibleCards: [DashboardCard] {
+        return cards.filter { card in
+            switch card.cardType {
+            case .protein:
+                return visibilityService.showProtein
+            case .calorieTarget:
+                return visibilityService.showCalories
+            case .carbs:
+                return visibilityService.showCarbs
+            case .fat:
+                return visibilityService.showFat
+            case .novaGroups:
+                return visibilityService.showNovaScore
+            case .nutriScore:
+                return visibilityService.showNutriScore
+            case .currentWeight, .weightChart, .activity, .dailyGoals, .gutHealth, .empty:
+                return true // Always show non-nutrition cards
+            }
+        }
+    }
+    
+    // Helper function to check if a card should span 2 columns
+    private func isWideCard(_ cardType: CardType) -> Bool {
+        if cardType == .novaGroups || cardType == .nutriScore || cardType == .dailyGoals || cardType == .gutHealth {
+            return true
+        }
+        if cardType == .weightChart && weightChartSizeMode == .expanded {
+            return true
+        }
+        return false
+    }
+    
     // Helper function to organize cards into proper Grid rows
     private func createGridRows(from cards: [DashboardCard]) -> [[DashboardCard]] {
         var rows: [[DashboardCard]] = []
@@ -104,7 +169,7 @@ struct DashboardView: View {
         var currentRowColumns = 0
         
         for card in cards {
-            let cardColumns = (card.cardType == .novaGroups || card.cardType == .nutriScore) ? 2 : 1
+            let cardColumns = isWideCard(card.cardType) ? 2 : 1
             
             // If adding this card would exceed 2 columns, start a new row
             if currentRowColumns + cardColumns > 2 {
@@ -148,11 +213,35 @@ struct DashboardView: View {
         return cards.count
     }
     
+    // Get cached grid rows or recalculate if needed
+    private func getGridRows() -> [[DashboardCard]] {
+        let currentHash = visibleCards.map { $0.id.hashValue }.reduce(0, ^)
+        if currentHash != lastCardsHash || cachedGridRows.isEmpty {
+            cachedGridRows = createGridRows(from: visibleCards)
+            lastCardsHash = currentHash
+        }
+        return cachedGridRows
+    }
+    
+    // Invalidate cache when cards change
+    private func invalidateGridCache() {
+        lastCardsHash = 0
+        cachedGridRows = []
+    }
+    
     var body: some View {
         ZStack {
-            // Background color for the entire view excluding bottom tab bar
-            Color(hex: "#F0F1F4")
-                .ignoresSafeArea(edges: [.top, .horizontal])
+            // Subtle gradient background with brand color - extended lower
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "#35b8ff").opacity(0.85),
+                    scrollBackground
+                ]),
+                startPoint: .top,
+                endPoint: UnitPoint(x: 0.5, y: 0.5)
+            )
+            .ignoresSafeArea()
+            .background(scrollBackground)
                 
             // Main content with header inside ScrollView
             ScrollView {
@@ -161,66 +250,36 @@ struct DashboardView: View {
                     ZStack {
                         // Center - title (positioned absolutely in the center)
                         Text("NUTRIBASE")
-                            .font(.custom("Montserrat ExtraBold", size: 22))
-                            .foregroundColor(Color(hex: "#b6e2ff"))
+                            .font(.system(size: 26, weight: .heavy))
+                            .foregroundColor(.white)
+                            .shadow(color: Color(hex: "#35b8ff").opacity(0.5), radius: 4, x: 0, y: 0)
                             .frame(maxWidth: .infinity)
-                            .onAppear {
-                                // Check available fonts
-                                let montserratFonts = UIFont.familyNames.filter { $0.contains("Montserrat") }
-                                print("Available Montserrat fonts:")
-                                for family in montserratFonts {
-                                    let names = UIFont.fontNames(forFamilyName: family)
-                                    print("Family: \(family)")
-                                    for name in names {
-                                        print("  - \(name)")
-                                    }
-                                }
-                                
-                                // Also check if our specific fonts exist
-                                let testFont1 = UIFont(name: "Montserrat ExtraBold", size: 20)
-                                let testFont2 = UIFont(name: "Montserrat-ExtraBold", size: 20)
-                                let testFont3 = UIFont(name: "MontserratExtraBold", size: 20)
-                                print("Font test results:")
-                                print("Montserrat ExtraBold: \(testFont1 != nil ? "Found" : "Not found")")
-                                print("Montserrat-ExtraBold: \(testFont2 != nil ? "Found" : "Not found")")
-                                print("MontserratExtraBold: \(testFont3 != nil ? "Found" : "Not found")")
-                            }
                         
                         // Left and right elements in an HStack
                         HStack {
-                            // Left side - flame icon with dynamic streak
-                            HStack {
+                            // Left side - streak
+                            HStack(spacing: 6) {
                                 Image(systemName: "flame.fill")
                                     .foregroundColor(.orange)
+                                    .font(.system(size: 16))
                                 Text("\(foodLogManager.currentStreak)")
+                                    .font(.system(size: 16, weight: .bold))
                                     .foregroundColor(.orange)
-                                    .fontWeight(.bold)
                             }
                             
                             Spacer()
                         
-                            // Right side - edit button and reset button
+                            // Right side - edit button
                             HStack(spacing: 12) {
-                                // Reset button to restore NOVA Groups card - only show in edit mode
-                                if isEditing {
-                                    Button(action: {
-                                        HapticManager.shared.lightFeedback()
-                                        resetDashboard()
-                                    }) {
-                                        Image(systemName: "arrow.clockwise")
-                                            .foregroundColor(.primary)
-                                    }
-                                    .withHapticFeedback()
-                                }
-                                
-                                // Edit button
+                                // Edit button with icon
                                 Button(action: {
                                     HapticManager.shared.lightFeedback()
-                                    withAnimation {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
                                         isEditing.toggle()
                                     }
                                 }) {
-                                    Text(isEditing ? "Done" : "Edit")
+                                    Image(systemName: isEditing ? "checkmark" : "slider.horizontal.3")
+                                        .font(.system(size: 16, weight: .medium))
                                         .foregroundColor(.primary)
                                 }
                                 .withHapticFeedback()
@@ -230,34 +289,54 @@ struct DashboardView: View {
                     .padding(.horizontal)
                     .padding(.bottom, 8)
                     .padding(.top, 1) // Reduced top padding
-                    .background(Color(hex: "#F0F1F4"))
                     
                     // Content container
                     ZStack {
                     
                     Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-                        let cardRows = createGridRows(from: cards)
-                        ForEach(Array(cardRows.enumerated()), id: \.offset) { rowIndex, row in
+                        ForEach(Array(createGridRows(from: visibleCards).enumerated()), id: \.offset) { rowIndex, row in
                             GridRow {
                                 ForEach(row, id: \.id) { card in
-                                    if card.cardType == .novaGroups || card.cardType == .nutriScore {
+                                    if isWideCard(card.cardType) {
                                         // Wide cards span 2 columns
                                         cardView(for: card)
-                                            .padding(.top, 8) // Additional top padding for dashboard cards only
-                                            .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
-                                            .cardStyle() // Apply consistent card styling
                                             .gridCellColumns(2)
+                                            .onLongPressGesture(minimumDuration: 1) {
+                                                if !isEditing {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        isEditing = true
+                                                    }
+                                                }
+                                            }
                                             .onDrag {
+                                                if !isEditing {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        isEditing = true
+                                                    }
+                                                }
                                                 return NSItemProvider(object: card.id.uuidString as NSString)
                                             }
                                             .onDrop(of: [.text], delegate: GridCardDropDelegate(card: card, cards: $cards, insertionIndex: getCardIndex(for: card)))
                                     } else {
                                         // Regular 1-column cards
                                         cardView(for: card)
-                                            .padding(.top, 8) // Additional top padding for dashboard cards only
-                                            .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
-                                            .cardStyle() // Apply consistent card styling
+                                            .onLongPressGesture(minimumDuration: 1) {
+                                                if !isEditing {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        isEditing = true
+                                                    }
+                                                }
+                                            }
                                             .onDrag {
+                                                if !isEditing {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        isEditing = true
+                                                    }
+                                                }
                                                 return NSItemProvider(object: card.id.uuidString as NSString)
                                             }
                                             .onDrop(of: [.text], delegate: GridCardDropDelegate(card: card, cards: $cards, insertionIndex: getCardIndex(for: card)))
@@ -266,7 +345,7 @@ struct DashboardView: View {
                                 
                                 // Add empty drop zones to fill the row to 2 columns
                                 let currentRowColumns = row.reduce(0) { total, card in
-                                    total + (card.cardType == .novaGroups || card.cardType == .nutriScore ? 2 : 1)
+                                    total + (isWideCard(card.cardType) ? 2 : 1)
                                 }
                                 if currentRowColumns < 2 {
                                     // Add nearly invisible drop zone with card styling
@@ -311,7 +390,39 @@ struct DashboardView: View {
                 }
                 }
             }
-            .animation(.default, value: cards)
+            .onAppear {
+                // Track page view
+                AnalyticsService.shared.trackDashboardView()
+                
+                // Pre-warm caches for faster card rendering
+                DailyNutritionCache.shared.prewarmCommonDates()
+                
+                // Signal that dashboard has loaded after a short delay to ensure all cards are rendered
+                if !hasLoadedInitialData {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        hasLoadedInitialData = true
+                        onLoaded?()
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UserProfileDidUpdate"))) { _ in
+                // Force refresh dashboard when user profile is updated
+                print("📊 Dashboard received UserProfileDidUpdate notification - refreshing cards")
+                refreshID = UUID()
+                invalidateGridCache()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .exitEditMode)) { _ in
+                // Exit edit mode when switching tabs
+                if isEditing {
+                    isEditing = false
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WeightChartSizeModeChanged"))) { _ in
+                // Refresh grid when weight chart size mode changes
+                invalidateGridCache()
+                refreshID = UUID()
+            }
+            .id(refreshID) // Force view refresh when refreshID changes
         }
         .navigationBarHidden(true) // Hide the default navigation bar since we have a custom header
         .sheet(isPresented: $showingWidgetStorage) {
@@ -362,6 +473,8 @@ struct DashboardView: View {
                 novaGroupsCardView()
             case .nutriScore:
                 nutriScoreCardView()
+            case .gutHealth:
+                gutHealthCardView()
             default:
                 regularCardView(for: card.cardType)
             }
@@ -375,14 +488,15 @@ struct DashboardView: View {
                         }) {
                             Image(systemName: "minus.circle.fill")
                                 .font(.title2)
-                                .foregroundColor(.red)
-                                .background(Circle().fill(Color.white))
+                                .foregroundColor(Color.red.opacity(0.9))
+                                .background(Circle().fill(Color(.systemBackground)))
                         }
-                        .padding(6)
+                        .opacity(0.7)
                         Spacer()
                     }
                     Spacer()
                 }
+                .offset(x: -10, y: -10)  // Position button outside card bounds
             }
         }
     }
@@ -406,8 +520,10 @@ struct DashboardView: View {
             saveHiddenCards()
         }
         
-        // Remove the card from the array
-        cards.remove(at: cardIndex)
+        // Remove the card from the array with animation
+        _ = withAnimation(.easeInOut(duration: 0.25)) {
+            cards.remove(at: cardIndex)
+        }
         
         // Save the updated card order
         saveCardOrder()
@@ -430,6 +546,11 @@ struct DashboardView: View {
         NutriScoreCardView()
     }
     
+    // Helper function for Gut Health card
+    private func gutHealthCardView() -> some View {
+        GutHealthCardView()
+    }
+    
     // Function to return the appropriate card view based on card type
     @ViewBuilder
     private func cardView(for cardType: CardType) -> some View {
@@ -438,8 +559,6 @@ struct DashboardView: View {
             CurrentWeightCardView()
         case .weightChart:
             WeightChartCardView()
-        case .bmi:
-            BMICardView()
         case .calorieTarget:
             CalorieTargetCardView()
         case .protein:
@@ -448,11 +567,13 @@ struct DashboardView: View {
             CarbsCardView()
         case .fat:
             FatCardView()
-        case .water:
-            WaterCardView()
+        // case .water: // TEMPORARILY DISABLED
+        //     WaterCardView()
         case .activity:
             StepsCardView()
-        case .nutriScore, .novaGroups, .empty:
+        case .dailyGoals:
+            DailyGoalsCardView()
+        case .nutriScore, .novaGroups, .gutHealth, .empty:
             // These are handled by the main cardView(for: DashboardCard) function
             EmptyView()
         }
@@ -505,7 +626,7 @@ struct DashboardCardView<Content: View>: View {
                         Button(action: onDelete) {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.red)
-                                .background(Color.white)
+                                .background(Color(.systemBackground))
                                 .clipShape(Circle())
                         }
                         .padding(8)

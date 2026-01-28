@@ -110,18 +110,46 @@ class SearchRankingService {
     // This evaluates how much nutritional information is available for the food
     func calculateNutritionalCompletenessScore(for food: FoodItem) -> Double {
         var score: Double = 0
+        var micronutrientCount = 0
         
         // Base nutritional data (always required)
         // These are required fields so we don't need to check if they exist
         
-        // Additional nutritional data (optional)
+        // Quality scores (high value)
         if food.nutriScoreGrade != nil { score += 1.0 }
         if food.novaScore > 0 { score += 1.0 }
+        
+        // Micronutrients (high value) - NEW! Increased weight for better impact
+        if let fiber = food.fiber, fiber > 0 { 
+            score += 1.2
+            micronutrientCount += 1
+        }
+        if let sugar = food.sugar, sugar > 0 { 
+            score += 1.2
+            micronutrientCount += 1
+        }
+        if let sodium = food.sodium, sodium > 0 { 
+            score += 1.2
+            micronutrientCount += 1
+        }
+        if let saturatedFat = food.saturatedFat, saturatedFat > 0 { 
+            score += 1.2
+            micronutrientCount += 1
+        }
+        
+        // Serving information (medium value)
         if food.servingSize != nil { score += 0.5 }
         if food.servingsPerPackage != nil { score += 0.5 }
         if food.servingType != nil { score += 0.5 }
+        
+        // Product information (lower value)
         if food.brandName != nil { score += 0.3 }
         if food.barcode != nil { score += 0.2 }
+        
+        // Debug logging for foods with micronutrients
+        if micronutrientCount > 0 {
+            print("🏆 \(food.name): completeness score \(String(format: "%.1f", score)) (includes \(micronutrientCount) micronutrients)")
+        }
         
         return score
     }

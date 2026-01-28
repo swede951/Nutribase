@@ -2,6 +2,21 @@ import Foundation
 
 // Global utility for consistent nutrition calculations across the app
 struct NutritionCalculator {
+    // Helper to ensure Double values are valid (not NaN, Infinity, or negative)
+    private static func validateDouble(_ value: Double, defaultValue: Double = 0.0) -> Double {
+        if value.isNaN || value.isInfinite || value < 0 {
+            return defaultValue
+        }
+        return min(value, 99999.0) // Cap at reasonable max
+    }
+    
+    // Helper to ensure Int values are valid (not negative or too large)
+    private static func validateInt(_ value: Int, defaultValue: Int = 0) -> Int {
+        if value < 0 {
+            return defaultValue
+        }
+        return min(value, 999999) // Cap at reasonable max
+    }
     // Calculate calories based on food item, serving size, and number of servings
     static func calculateCalories(
         foodCalories: Int,
@@ -35,17 +50,17 @@ struct NutritionCalculator {
                         if let servingWeight = Double(valueStr) {
                             // Calculate calories based on the serving weight (assuming foodCalories is per 100g)
                             let caloriesPerGram = Double(foodCalories) / 100.0
-                            let result = Int(round(caloriesPerGram * servingWeight * numberOfServings))
-
-                            return result
+                            let rawResult = caloriesPerGram * servingWeight * numberOfServings
+                            if rawResult.isNaN || rawResult.isInfinite { return 0 }
+                            return validateInt(Int(round(rawResult)))
                         }
                     }
                 }
                 
                 // If no weight found in parentheses, return the base calories (likely per 100g)
-                let result = Int(Double(foodCalories) * numberOfServings)
-
-                return result
+                let rawResult = Double(foodCalories) * numberOfServings
+                if rawResult.isNaN || rawResult.isInfinite { return 0 }
+                return validateInt(Int(round(rawResult)))
             }
             
             // Try to parse standard formats like "100g" or "250ml"
@@ -65,16 +80,16 @@ struct NutritionCalculator {
                         // For grams, calculate based on the serving size
                         if unitStr == "g" {
                             let caloriesPerGram = Double(foodCalories) / 100.0
-                            let result = Int(round(caloriesPerGram * servingSize * numberOfServings))
-
-                            return result
+                            let rawResult = caloriesPerGram * servingSize * numberOfServings
+                            if rawResult.isNaN || rawResult.isInfinite { return 0 }
+                            return validateInt(Int(round(rawResult)))
                         }
                         // For ml, assume similar density to water (1ml ≈ 1g for most liquids)
                         else if unitStr == "ml" {
                             let caloriesPerGram = Double(foodCalories) / 100.0
-                            let result = Int(round(caloriesPerGram * servingSize * numberOfServings))
-
-                            return result
+                            let rawResult = caloriesPerGram * servingSize * numberOfServings
+                            if rawResult.isNaN || rawResult.isInfinite { return 0 }
+                            return validateInt(Int(round(rawResult)))
                         }
                     }
                 }
@@ -104,10 +119,13 @@ struct NutritionCalculator {
         
         // Calculate calories based on the serving size in grams
         let caloriesPerGram = Double(foodCalories) / 100.0
-        let result = Int(round(caloriesPerGram * servingSizeInGrams * numberOfServings))
-
-
-        return result
+        let rawResult = caloriesPerGram * servingSizeInGrams * numberOfServings
+        
+        // Validate and return
+        if rawResult.isNaN || rawResult.isInfinite {
+            return 0
+        }
+        return validateInt(Int(round(rawResult)))
     }
     
     // Calculate macros (protein, carbs, fat) based on food item, serving size, and number of servings
@@ -144,16 +162,14 @@ struct NutritionCalculator {
                             // Calculate macro based on the serving weight (assuming macroValue is per 100g)
                             let macroPerGram = macroValue / 100.0
                             let result = macroPerGram * servingWeight * numberOfServings
-
-                            return result
+                            return validateDouble(result)
                         }
                     }
                 }
                 
                 // If no weight found in parentheses, return the base macro (likely per 100g)
                 let result = macroValue * numberOfServings
-
-                return result
+                return validateDouble(result)
             }
             
             // Try to parse standard formats like "100g" or "250ml"
@@ -174,15 +190,13 @@ struct NutritionCalculator {
                         if unitStr == "g" {
                             let macroPerGram = macroValue / 100.0
                             let result = macroPerGram * servingSize * numberOfServings
-
-                            return result
+                            return validateDouble(result)
                         }
                         // For ml, assume similar density to water (1ml ≈ 1g for most liquids)
                         else if unitStr == "ml" {
                             let macroPerGram = macroValue / 100.0
                             let result = macroPerGram * servingSize * numberOfServings
-
-                            return result
+                            return validateDouble(result)
                         }
                     }
                 }
@@ -213,8 +227,9 @@ struct NutritionCalculator {
         // Calculate macro based on the serving size in grams
         let macroPerGram = macroValue / 100.0
         let result = macroPerGram * servingSizeInGrams * numberOfServings
-
-        return result
+        
+        // Validate and return
+        return validateDouble(result)
     }
     
     // Convert serving size to grams for calculations

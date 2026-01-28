@@ -26,7 +26,12 @@ public struct FoodEntryEditView: View {
     
     // Environment
     @Environment(\.presentationMode) var presentationMode
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showDeleteConfirmation = false
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
     
     // Initialize for creating a new entry
     public init(food: FoodItem, mealType: String) {
@@ -44,44 +49,82 @@ public struct FoodEntryEditView: View {
         self.isEditing = true
         self._servingSize = State(initialValue: entry.servingSize)
         self._numberOfServings = State(initialValue: entry.numberOfServings)
-        self._servingUnit = State(initialValue: entry.servingUnit)
         
-        // Set the initial selected serving size option based on the entry values
-        self._selectedServingSizeOption = State(initialValue: self.determineSelectedOption(servingSize: entry.servingSize, servingUnit: entry.servingUnit, foodItem: entry.foodItem))
+        let unitLower = entry.servingUnit.lowercased()
+        let standardGramSizes: [Double] = [100, 200, 50, 1]
+        
+        // For non-ml units with standard gram sizes - convert to grams
+        if unitLower != "ml" && unitLower != "g" && standardGramSizes.contains(where: { abs($0 - entry.servingSize) < 0.01 }) {
+            self._servingUnit = State(initialValue: "g")
+            self._selectedServingSizeOption = State(initialValue: "\(Int(entry.servingSize))g")
+        } else {
+            self._servingUnit = State(initialValue: entry.servingUnit)
+            self._selectedServingSizeOption = State(initialValue: FoodEntryEditView.determineSelectedOptionStatic(servingSize: entry.servingSize, servingUnit: entry.servingUnit, foodItem: entry.foodItem))
+        }
+    }
+    
+    // Static version of determineSelectedOption for use in init
+    private static func determineSelectedOptionStatic(servingSize: Double, servingUnit: String, foodItem: FoodItem) -> String {
+        let unitLower = servingUnit.lowercased()
+        let standardGramSizes: [Double] = [100, 200, 50, 1]
+        
+        // For ml units - handle liquid measurements
+        if unitLower == "ml" {
+            if abs(servingSize - 240) < 0.01 { return "1 cup" }
+            if abs(servingSize - 15) < 0.01 { return "1 tbsp" }
+            let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
+                "\(Int(servingSize))" : String(format: "%.1f", servingSize)
+            return "\(sizeStr)ml"
+        }
+        
+        // For non-ml units with standard gram sizes - always show as grams
+        if unitLower != "ml" && standardGramSizes.contains(where: { abs($0 - servingSize) < 0.01 }) {
+            return "\(Int(servingSize))g"
+        }
+        
+        // For known weight/volume units, show with unit
+        if unitLower == "g" || unitLower == "onz" || unitLower == "oz" || unitLower == "l" {
+            let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
+                "\(Int(servingSize))" : String(format: "%.1f", servingSize)
+            return "\(sizeStr)\(servingUnit)"
+        }
+        
+        // For other units (bar, piece, etc.) - show size and unit
+        let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
+            "\(Int(servingSize))" : String(format: "%.1f", servingSize)
+        return "\(sizeStr)g"
     }
     
     // Helper function to determine the selected option text
     private func determineSelectedOption(servingSize: Double, servingUnit: String, foodItem: FoodItem) -> String {
-        // First check if it matches standard options
-        if servingSize == 100 && servingUnit == "g" {
-            return "100g"
-        } else if servingSize == 200 && servingUnit == "g" {
-            return "200g"
-        } else if servingSize == 50 && servingUnit == "g" {
-            return "50g"
-        } else if servingSize == 240 && servingUnit == "ml" {
-            return "1 cup"
-        } else if servingSize == 15 && servingUnit == "ml" {
-            return "1 tbsp"
+        let unitLower = servingUnit.lowercased()
+        let standardGramSizes: [Double] = [100, 200, 50, 1]
+        
+        // For ml units - handle liquid measurements
+        if unitLower == "ml" {
+            if abs(servingSize - 240) < 0.01 { return "1 cup" }
+            if abs(servingSize - 15) < 0.01 { return "1 tbsp" }
+            let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
+                "\(Int(servingSize))" : String(format: "%.1f", servingSize)
+            return "\(sizeStr)ml"
         }
         
-        // Check if it matches the original serving size
-        if let originalServingSize = foodItem.servingSize,
-           !originalServingSize.isEmpty,
-           isOriginalServingSize(servingSize: servingSize, servingUnit: servingUnit, originalServingSize: originalServingSize) {
-            return "\(originalServingSize) (original)"
+        // For non-ml units with standard gram sizes - always show as grams
+        if unitLower != "ml" && standardGramSizes.contains(where: { abs($0 - servingSize) < 0.01 }) {
+            return "\(Int(servingSize))g"
         }
         
-        // Default to showing the current values - use exact values from the entry
-        if servingUnit == "g" || servingUnit == "ml" || servingUnit == "onz" || servingUnit == "oz" || servingUnit == "L" {
-            // Format without decimal if it's a whole number
+        // For known weight/volume units, show with unit
+        if unitLower == "g" || unitLower == "onz" || unitLower == "oz" || unitLower == "l" {
             let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
                 "\(Int(servingSize))" : String(format: "%.1f", servingSize)
             return "\(sizeStr)\(servingUnit)"
-        } else {
-            // For other units like "bar" or "piece"
-            return "\(servingSize) \(servingUnit)"
         }
+        
+        // For other units (bar, piece, etc.) - show size and unit
+        let sizeStr = servingSize.truncatingRemainder(dividingBy: 1) == 0 ? 
+            "\(Int(servingSize))" : String(format: "%.1f", servingSize)
+        return "\(sizeStr)g"
     }
     
     // Helper function to check if the current serving size and unit match the original serving size
@@ -143,14 +186,19 @@ public struct FoodEntryEditView: View {
     
     // Check if we're using the original serving size from database
     private var isUsingOriginalServingSize: Bool {
-        // Check if the selected option contains "(original)"
+        // Check if the selected option contains "(original)" OR if using "serving" unit type
+        // "serving" unit means the user selected the original serving size format
+        let unitLower = servingUnit.lowercased()
+        if unitLower == "serving" || unitLower == "servings" || unitLower == "meal" {
+            return true
+        }
         return selectedServingSizeOption?.contains("(original)") == true
     }
     
     // Functions to calculate nutrition values that explicitly depend on refreshID
     private func calculateCalories(_ refreshID: UUID) -> Int {
         print("FoodEntryEditView: calculateCalories - servingSize=\(servingSize), servingUnit=\(servingUnit), isOriginal=\(isUsingOriginalServingSize), selectedOption=\(selectedServingSizeOption ?? "nil"), refreshID=\(refreshID)")
-        return NutritionCalculator.calculateCalories(
+        let result = NutritionCalculator.calculateCalories(
             foodCalories: food.calories,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -159,10 +207,12 @@ public struct FoodEntryEditView: View {
             servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
             servingQuantity: food.servingsPerPackage
         )
+        // Validate result to prevent crashes (Int can't be NaN/Infinity)
+        return result < 0 ? 0 : min(result, 999999)
     }
     
     private func calculateProtein(_ refreshID: UUID) -> Double {
-        return NutritionCalculator.calculateMacro(
+        let result = NutritionCalculator.calculateMacro(
             macroValue: food.protein,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -171,10 +221,12 @@ public struct FoodEntryEditView: View {
             servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
             servingQuantity: food.servingsPerPackage
         )
+        // Validate result to prevent crashes
+        return (result.isNaN || result.isInfinite || result < 0) ? 0 : min(result, 99999)
     }
     
     private func calculateCarbs(_ refreshID: UUID) -> Double {
-        return NutritionCalculator.calculateMacro(
+        let result = NutritionCalculator.calculateMacro(
             macroValue: food.carbs,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -183,10 +235,12 @@ public struct FoodEntryEditView: View {
             servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
             servingQuantity: food.servingsPerPackage
         )
+        // Validate result to prevent crashes
+        return (result.isNaN || result.isInfinite || result < 0) ? 0 : min(result, 99999)
     }
     
     private func calculateFat(_ refreshID: UUID) -> Double {
-        return NutritionCalculator.calculateMacro(
+        let result = NutritionCalculator.calculateMacro(
             macroValue: food.fat,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -195,6 +249,8 @@ public struct FoodEntryEditView: View {
             servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
             servingQuantity: food.servingsPerPackage
         )
+        // Validate result to prevent crashes
+        return (result.isNaN || result.isInfinite || result < 0) ? 0 : min(result, 99999)
     }
     
     // Get the NOVA score (either actual or predicted)
@@ -262,9 +318,6 @@ public struct FoodEntryEditView: View {
     }
     
     public var body: some View {
-        // Debug: Print the Nutri-Score grade
-        let _ = print("Nutri-Score Grade in FoodEntryEditView: \(food.nutriScoreGrade ?? "nil")")
-        
         Form {
             // Food title
             Text(food.name)
@@ -284,35 +337,61 @@ public struct FoodEntryEditView: View {
                         // Add original serving size as first option if available
                         if let originalServingSize = food.servingSize, !originalServingSize.isEmpty {
                             Button("\(originalServingSize) (original)") {
-                                // Parse the original serving size with better unit detection
-                                let cleanedSize = originalServingSize
-                                    .replacingOccurrences(of: "onz", with: "")
-                                    .replacingOccurrences(of: "oz", with: "")
-                                    .replacingOccurrences(of: "g", with: "")
-                                    .replacingOccurrences(of: "ml", with: "")
-                                    .replacingOccurrences(of: "L", with: "")
-                                    .replacingOccurrences(of: "bar", with: "")
-                                    .replacingOccurrences(of: "piece", with: "")
-                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                // Try to extract gram value from parentheses first (e.g., "1 serving (100 g)" -> 100)
+                                var parsedSize: Double? = nil
+                                var detectedUnit = "g"
                                 
-                                if let parsedSize = Double(cleanedSize) {
-                                    servingSize = parsedSize
+                                // Check for value in parentheses like "(100 g)" or "(100g)" or "(240 ml)"
+                                if let parenRange = originalServingSize.range(of: "\\(\\s*([0-9.]+)\\s*(g|ml|oz|onz)?\\s*\\)", options: .regularExpression) {
+                                    let parenContent = String(originalServingSize[parenRange])
+                                    let numbers = parenContent.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                                    if let numValue = Double(numbers), numValue > 0 {
+                                        parsedSize = numValue
+                                        if parenContent.contains("ml") {
+                                            detectedUnit = "ml"
+                                        } else if parenContent.contains("oz") || parenContent.contains("onz") {
+                                            detectedUnit = "onz"
+                                        } else {
+                                            detectedUnit = "g"
+                                        }
+                                    }
+                                }
+                                
+                                // Fallback: parse leading number if no parentheses value found
+                                if parsedSize == nil {
+                                    let cleanedSize = originalServingSize
+                                        .replacingOccurrences(of: "onz", with: "")
+                                        .replacingOccurrences(of: "oz", with: "")
+                                        .replacingOccurrences(of: "g", with: "")
+                                        .replacingOccurrences(of: "ml", with: "")
+                                        .replacingOccurrences(of: "L", with: "")
+                                        .replacingOccurrences(of: "bar", with: "")
+                                        .replacingOccurrences(of: "piece", with: "")
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    
+                                    // Extract first number from the string
+                                    let numbers = cleanedSize.components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted).first { !$0.isEmpty }
+                                    if let numStr = numbers, let numValue = Double(numStr) {
+                                        parsedSize = numValue
+                                    }
                                     
                                     // Determine unit from original serving size
                                     if originalServingSize.contains("onz") || originalServingSize.contains("oz") {
-                                        servingUnit = "onz"
+                                        detectedUnit = "onz"
                                     } else if originalServingSize.contains("ml") {
-                                        servingUnit = "ml"
+                                        detectedUnit = "ml"
                                     } else if originalServingSize.contains("L") {
-                                        servingUnit = "L"
+                                        detectedUnit = "L"
                                     } else if originalServingSize.contains("bar") {
-                                        servingUnit = "bar"
+                                        detectedUnit = "bar"
                                     } else if originalServingSize.contains("piece") {
-                                        servingUnit = "piece"
-                                    } else {
-                                        servingUnit = "g"
+                                        detectedUnit = "piece"
                                     }
-                                    
+                                }
+                                
+                                if let size = parsedSize {
+                                    servingSize = size
+                                    servingUnit = detectedUnit
                                     selectedServingSizeOption = "\(originalServingSize) (original)"
                                     refreshID = UUID() // Force view refresh
                                     print("Selected original: servingSize=\(servingSize), servingUnit=\(servingUnit), isOriginal=\(isUsingOriginalServingSize)")
@@ -402,9 +481,11 @@ public struct FoodEntryEditView: View {
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
                         .onChange(of: numberOfServings) { oldValue, newValue in
-                            // Ensure value is greater than 0
+                            // Ensure value is greater than 0 and not too large
                             if newValue <= 0 {
                                 numberOfServings = 0.1
+                            } else if newValue > 9999 {
+                                numberOfServings = 9999
                             }
                             // Force refresh of nutrition values
                             refreshID = UUID()
@@ -418,7 +499,7 @@ public struct FoodEntryEditView: View {
             Section(header: 
                 Text("Nutrition")
                     .font(.headline)
-                    .foregroundColor(.black)
+                    .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
                     .padding(.top, 0)
@@ -426,113 +507,12 @@ public struct FoodEntryEditView: View {
                     .textCase(nil)
             ) {
                 VStack(alignment: .leading, spacing: 8) {
-                    // Calculate nutrition values using the current refreshID to ensure updates
-                    let calories = calculateCalories(refreshID)
-                    let protein = calculateProtein(refreshID)
-                    let carbs = calculateCarbs(refreshID)
-                    let fat = calculateFat(refreshID)
-                    
-                    HStack {
-                        // Protein
-                        VStack {
-                            ZStack {
-                                Circle()
-                                    .stroke(lineWidth: 6)
-                                    .opacity(0.2)
-                                    .foregroundColor(Color.gray)
-                                
-                                Circle()
-                                    .trim(from: 0.0, to: 0.75) // Sample progress
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                                    .foregroundColor(Color(red: 0.2, green: 0.8, blue: 0.2)) // Green for protein
-                                    .rotationEffect(Angle(degrees: 270.0))
-                                
-                                Text(String(format: "%.0fg", protein))
-                                    .font(.custom("Montserrat-SemiBold", size: 14))
-                            }
-                            .frame(width: 60, height: 60)
-                            
-                            Text("Protein")
-                                .font(.custom("Montserrat-SemiBold", size: 12))
-                                .foregroundColor(Color.black)
-                        }
-                        .frame(maxWidth: .infinity)
-                        
-                        // Carbs
-                        VStack {
-                            ZStack {
-                                Circle()
-                                    .stroke(lineWidth: 6)
-                                    .opacity(0.2)
-                                    .foregroundColor(Color.black)
-                                
-                                Circle()
-                                    .trim(from: 0.0, to: 0.6) // Sample progress
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                                    .foregroundColor(Color(red: 0.0, green: 0.5, blue: 1.0)) // Blue for carbs
-                                    .rotationEffect(Angle(degrees: 270.0))
-                                
-                                Text(String(format: "%.0fg", carbs))
-                                    .font(.custom("Montserrat-SemiBold", size: 14))
-                            }
-                            .frame(width: 60, height: 60)
-                            
-                            Text("Carbs")
-                                .font(.custom("Montserrat-SemiBold", size: 12))
-                                .foregroundColor(Color.black)
-                        }
-                        .frame(maxWidth: .infinity)
-                        
-                        // Fat
-                        VStack {
-                            ZStack {
-                                Circle()
-                                    .stroke(lineWidth: 6)
-                                    .opacity(0.2)
-                                    .foregroundColor(Color.gray)
-                                
-                                Circle()
-                                    .trim(from: 0.0, to: 0.45) // Sample progress
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                                    .foregroundColor(Color(red: 1.0, green: 0.6, blue: 0.0)) // Orange for fat
-                                    .rotationEffect(Angle(degrees: 270.0))
-                                
-                                Text(String(format: "%.0fg", fat))
-                                    .font(.custom("Montserrat-SemiBold", size: 14))
-                            }
-                            .frame(width: 60, height: 60)
-                            
-                            Text("Fat")
-                                .font(.custom("Montserrat-SemiBold", size: 12))
-                                .foregroundColor(Color.black)
-                        }
-                        .frame(maxWidth: .infinity)
-                        
-                        // Calories
-                        VStack {
-                            ZStack {
-                                Circle()
-                                    .stroke(lineWidth: 6)
-                                    .opacity(0.2)
-                                    .foregroundColor(Color.gray)
-                                
-                                Circle()
-                                    .trim(from: 0.0, to: 0.8) // Sample progress
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                                    .foregroundColor(Color(red: 1.0, green: 0.3, blue: 0.3)) // Red for calories
-                                    .rotationEffect(Angle(degrees: 270.0))
-                                
-                                Text("\(calories)")
-                                    .font(.custom("Montserrat-SemiBold", size: 14))
-                            }
-                            .frame(width: 60, height: 60)
-                            
-                            Text("Calories")
-                                .font(.custom("Montserrat-SemiBold", size: 12))
-                                .foregroundColor(Color.black)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
+                    NutritionCirclesView(
+                        calories: calculateCalories(refreshID),
+                        protein: calculateProtein(refreshID),
+                        carbs: calculateCarbs(refreshID),
+                        fat: calculateFat(refreshID)
+                    )
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -546,7 +526,7 @@ public struct FoodEntryEditView: View {
                 Section(header: 
                     Text("Food Score")
                         .font(.headline)
-                        .foregroundColor(.black)
+                        .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 12)
                         .padding(.top, 0)
@@ -560,7 +540,7 @@ public struct FoodEntryEditView: View {
                             VStack {
                                 Text("\(novaScore)")
                                     .font(.system(size: 32, weight: .bold))
-                                    .foregroundColor(.black)
+                                    .foregroundColor(.primary)
                             }
                             .frame(width: 80, height: 80)
                             .background(
@@ -570,7 +550,7 @@ public struct FoodEntryEditView: View {
                             
                             Text("Nova Score")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.black)
+                                .foregroundColor(.primary)
                             
                             Text(novaScoreDescription)
                                 .font(.caption)
@@ -590,7 +570,7 @@ public struct FoodEntryEditView: View {
                             VStack {
                                 Text(nutriScoreGrade)
                                     .font(.system(size: 32, weight: .bold))
-                                    .foregroundColor(.black)
+                                    .foregroundColor(.primary)
                             }
                             .frame(width: 80, height: 80)
                             .background(
@@ -600,7 +580,7 @@ public struct FoodEntryEditView: View {
                             
                             Text("Nutri-Score")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.black)
+                                .foregroundColor(.primary)
                             
                             Text(nutriScoreDescription)
                                 .font(.caption)
@@ -697,14 +677,19 @@ public struct FoodEntryEditView: View {
                         saveChanges()
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 } else {
                     Button("Add") {
                         addEntry()
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(viewBackground)
+        .scrollDismissesKeyboard(.interactively)
         .onAppear {
             // Set initial selected serving size option if not already set (for new entries)
             if selectedServingSizeOption == nil {
@@ -729,9 +714,34 @@ public struct FoodEntryEditView: View {
     }
     
     private func addEntry() {
+        // Calculate calories from macros if food has 0 calories but has macro data
+        let effectiveCalories: Int
+        if food.calories == 0 && (food.protein > 0 || food.carbs > 0 || food.fat > 0) {
+            let calculatedCalories = (food.protein * 4.0) + (food.carbs * 4.0) + (food.fat * 9.0)
+            effectiveCalories = Int(round(calculatedCalories))
+        } else {
+            effectiveCalories = food.calories
+        }
+        
+        // Create food item with corrected calories
+        let foodForLog = FoodItem(
+            name: food.name,
+            brandName: food.brandName,
+            barcode: food.barcode,
+            calories: effectiveCalories,
+            protein: food.protein,
+            carbs: food.carbs,
+            fat: food.fat,
+            novaScore: food.novaScore,
+            nutriScoreGrade: food.nutriScoreGrade,
+            servingSize: food.servingSize,
+            servingsPerPackage: food.servingsPerPackage,
+            servingType: food.servingType
+        )
+        
         // Add new entry
         FoodLogManager.shared.addEntry(
-            foodItem: food,
+            foodItem: foodForLog,
             mealType: mealType,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -775,5 +785,124 @@ struct MacronutrientView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
+    }
+}
+
+// Nutrition circles display - extracted for performance
+struct NutritionCirclesView: View {
+    let calories: Int
+    let protein: Double
+    let carbs: Double
+    let fat: Double
+    
+    var body: some View {
+        HStack {
+            // Protein
+            VStack {
+                ZStack {
+                    Circle()
+                        .stroke(lineWidth: 6)
+                        .opacity(0.2)
+                        .foregroundColor(Color.gray)
+                    
+                    Circle()
+                        .trim(from: 0.0, to: 0.75)
+                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .foregroundColor(Color(red: 0.2, green: 0.8, blue: 0.2))
+                        .rotationEffect(Angle(degrees: 270.0))
+                    
+                    Text(formatMacro(protein))
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .frame(width: 60, height: 60)
+                
+                Text("Protein")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.black)
+            }
+            .frame(maxWidth: .infinity)
+            
+            // Carbs
+            VStack {
+                ZStack {
+                    Circle()
+                        .stroke(lineWidth: 6)
+                        .opacity(0.2)
+                        .foregroundColor(Color.black)
+                    
+                    Circle()
+                        .trim(from: 0.0, to: 0.6)
+                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .foregroundColor(Color(red: 0.0, green: 0.5, blue: 1.0))
+                        .rotationEffect(Angle(degrees: 270.0))
+                    
+                    Text(formatMacro(carbs))
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .frame(width: 60, height: 60)
+                
+                Text("Carbs")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.black)
+            }
+            .frame(maxWidth: .infinity)
+            
+            // Fat
+            VStack {
+                ZStack {
+                    Circle()
+                        .stroke(lineWidth: 6)
+                        .opacity(0.2)
+                        .foregroundColor(Color.gray)
+                    
+                    Circle()
+                        .trim(from: 0.0, to: 0.45)
+                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .foregroundColor(Color(red: 1.0, green: 0.6, blue: 0.0))
+                        .rotationEffect(Angle(degrees: 270.0))
+                    
+                    Text(formatMacro(fat))
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .frame(width: 60, height: 60)
+                
+                Text("Fat")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.black)
+            }
+            .frame(maxWidth: .infinity)
+            
+            // Calories
+            VStack {
+                ZStack {
+                    Circle()
+                        .stroke(lineWidth: 6)
+                        .opacity(0.2)
+                        .foregroundColor(Color.gray)
+                    
+                    Circle()
+                        .trim(from: 0.0, to: 0.8)
+                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .foregroundColor(Color(red: 1.0, green: 0.3, blue: 0.3))
+                        .rotationEffect(Angle(degrees: 270.0))
+                    
+                    Text("\(calories)")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .frame(width: 60, height: 60)
+                
+                Text("Calories")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.black)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    private func formatMacro(_ value: Double) -> String {
+        if value.isNaN || value.isInfinite {
+            return "0g"
+        }
+        return String(format: "%.0fg", value)
     }
 }

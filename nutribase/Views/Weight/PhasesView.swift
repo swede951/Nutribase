@@ -9,17 +9,26 @@ import SwiftUI
 import Charts
 
 struct PhasesView: View {
-    @StateObject private var phaseManager = WeightPhaseManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var phaseManager = WeightPhaseManager.shared
     @StateObject private var weightManager = WeightLogManager.shared
     @State private var showingAddPhase = false
     @State private var selectedDate = Date()
     @State private var selectedPhaseForDetail: WeightPhase? = nil
     @State private var showingYearView = false
     
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
     var body: some View {
         ZStack {
             // Background color to match dashboard
-            Color(hex: "#F0F1F4")
+            viewBackground
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
@@ -30,6 +39,12 @@ struct PhasesView: View {
                         CalendarCarouselView(selectedDate: $selectedDate, weightEntries: weightManager.weightEntries, phases: phaseManager.phases)
                             .padding(.top, -20)
                             .padding(.bottom, -28)
+                        
+                        // Year Overview with Weight Chart
+                        EmbeddedYearCalendarView(
+                            selectedDate: $selectedDate
+                        )
+                        .padding(.horizontal, UIScreen.main.bounds.width * 0.075)
                         
                         LazyVStack(spacing: 16) {
                             ForEach(phaseManager.phases.sorted { $0.startDate > $1.startDate }) { phase in
@@ -100,14 +115,15 @@ struct PhasesView: View {
                 }
                 .padding(.horizontal)
                 .padding(.top, 1) // Reduced top padding
-                .background(Color(hex: "#F0F1F4"))
+                .frame(maxWidth: .infinity)
+                .background(viewBackground)
             }
 
         .sheet(isPresented: $showingAddPhase) {
-            AddPhaseView()
+            AddPhaseFlowView()
         }
         .sheet(item: $selectedPhaseForDetail) { phase in
-            PhaseDetailView(phase: phase)
+            EditPhaseView(phase: phase)
         }
         .sheet(isPresented: $showingYearView) {
             YearCalendarView(selectedDate: $selectedDate)
@@ -121,31 +137,38 @@ struct PhasesView: View {
 
 // Calendar carousel component for phases view
 struct CalendarCarouselView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var selectedDate: Date
     let weightEntries: [WeightLogEntry]
     let phases: [WeightPhase]
     
+    // Performance: Use cached formatters and calendar
+    private let performanceCache = PerformanceCache.shared
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
     @State private var currentMonthOffset: Int = 0
     
-    private var calendar: Calendar = {
-        var cal = Calendar.current
-        cal.firstWeekday = 2 // Monday = 2, Sunday = 1
-        return cal
-    }()
+    // Find the month offset for the current active phase
+    private var activePhaseMonthOffset: Int {
+        guard let activePhase = phases.first(where: { $0.isActive }) else {
+            return 0 // Default to current month if no active phase
+        }
+        
+        let currentDate = Date()
+        let phaseStartDate = activePhase.startDate
+        
+        // Calculate month difference between current date and phase start
+        let components = performanceCache.calendar.dateComponents([.month], from: phaseStartDate, to: currentDate)
+        return components.month ?? 0
+    }
     
-    // Month formatter
-    private let monthFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter
-    }()
-    
-    // Day formatter
-    private let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d"
-        return formatter
-    }()
+    // Performance: Use cached calendar
+    private var calendar: Calendar {
+        performanceCache.calendar
+    }
     
     init(selectedDate: Binding<Date>, weightEntries: [WeightLogEntry], phases: [WeightPhase]) {
         self._selectedDate = selectedDate
@@ -179,6 +202,12 @@ struct CalendarCarouselView: View {
                 }
             }
             .frame(height: 420)
+            .onAppear {
+                // Scroll to active phase month immediately without animation
+                let targetOffset = activePhaseMonthOffset
+                proxy.scrollTo(targetOffset, anchor: .center)
+                currentMonthOffset = targetOffset
+            }
         }
     }
     
@@ -187,9 +216,9 @@ struct CalendarCarouselView: View {
         let currentMonth = calendar.date(byAdding: .month, value: offset, to: Date()) ?? Date()
         
         return VStack(spacing: 16) {
-            // Month header
+            // Month header - use cached formatter
             HStack {
-                Text(monthFormatter.string(from: currentMonth))
+                Text(performanceCache.formatMonthYear(currentMonth))
                     .font(.custom("Montserrat-SemiBold", size: 17))
                     .foregroundColor(.primary)
                 
@@ -296,7 +325,8 @@ struct CalendarCarouselView: View {
                                                     .frame(width: 32, height: 32)
                                             }
                                             
-                                            Text(dayFormatter.string(from: date))
+                                            // Performance: Use cached formatter
+                                            Text(performanceCache.formatShortDate(date))
                                                 .font(.system(size: 14, weight: .medium))
                                                 .foregroundColor(isSelected ? .white : (isCurrentMonth ? .primary : .secondary))
                                         }
@@ -317,7 +347,7 @@ struct CalendarCarouselView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -366,8 +396,12 @@ struct CalendarCarouselView: View {
     }
     
     private func getPhase(for date: Date) -> WeightPhase? {
+        let calendar = Calendar.current
         return phases.first { phase in
-            date >= phase.startDate && date <= phase.endDate
+            let dateStart = calendar.startOfDay(for: date)
+            let phaseStart = calendar.startOfDay(for: phase.startDate)
+            let phaseEnd = calendar.startOfDay(for: phase.endDate)
+            return dateStart >= phaseStart && dateStart <= phaseEnd
         }
     }
     
@@ -379,36 +413,23 @@ struct CalendarCarouselView: View {
     }
     
     private func getWeekRows(for month: Date) -> [[Date?]] {
-        let days = getDaysInMonth(for: month)
-        var weeks: [[Date?]] = []
-        
-        for i in stride(from: 0, to: days.count, by: 7) {
-            let weekEnd = min(i + 7, days.count)
-            let week = Array(days[i..<weekEnd])
-            
-            // Pad week to 7 days if needed
-            var paddedWeek = week
-            while paddedWeek.count < 7 {
-                paddedWeek.append(nil)
-            }
-            
-            weeks.append(paddedWeek)
-        }
-        
-        return weeks
+        // Performance: Use cached month grid
+        return performanceCache.getMonthGrid(for: month)
     }
 }
 
 struct PhaseCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
     let onTap: () -> Void
     @StateObject private var weightManager = WeightLogManager.shared
     
-    private let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter
-    }()
+    // Performance: Use cached formatters
+    private let performanceCache = PerformanceCache.shared
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     // Get weight entries for this phase period
     private var phaseWeightEntries: [WeightLogEntry] {
@@ -431,9 +452,10 @@ struct PhaseCardView: View {
            let lastWeight = phaseWeightEntries.last?.weight {
             
             let totalDays = Calendar.current.dateComponents([.day], from: firstDate, to: lastDate).day ?? 0
-            let totalWeeks = Double(totalDays) / 7.0
             
-            if totalWeeks > 0 {
+            // Only calculate weekly rate if we have at least 7 days of data
+            if totalDays >= 7 {
+                let totalWeeks = Double(totalDays) / 7.0
                 let totalChange = lastWeight - firstWeight
                 return totalChange / totalWeeks
             }
@@ -448,8 +470,8 @@ struct PhaseCardView: View {
             let sign = rate >= 0 ? "+" : ""
             return "\(sign)\(String(format: "%.2f", rate)) kg/week"
         } else {
-            // If phase hasn't started or has no data, show target rate or 0
-            return phase.formattedTargetRate
+            // If phase hasn't started or has insufficient data (< 7 days), show placeholder
+            return "-- kg/week"
         }
     }
     
@@ -492,15 +514,15 @@ struct PhaseCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 
-                // Date range
+                // Date range - use cached formatter
                 HStack {
                     Text("Duration:")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                     
                     Spacer()
                     
-                    Text("\(dateFormatter.string(from: phase.startDate)) - \(dateFormatter.string(from: phase.endDate))")
+                    Text("\(performanceCache.formatDate(phase.startDate)) - \(performanceCache.formatDate(phase.endDate))")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
@@ -510,7 +532,7 @@ struct PhaseCardView: View {
                 HStack {
                     Text("Weekly rate:")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                     
                     Spacer()
                     
@@ -524,7 +546,7 @@ struct PhaseCardView: View {
                 HStack {
                     Text("Length:")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                     
                     Spacer()
                     
@@ -539,7 +561,7 @@ struct PhaseCardView: View {
                     HStack {
                         Text("Notes:")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.primary)
                         
                         Spacer()
                     }
@@ -549,6 +571,17 @@ struct PhaseCardView: View {
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.leading)
                 }
+            }
+            
+            // Phase Calendar Card
+            VStack(alignment: .leading, spacing: 8) {
+                Divider()
+                
+                Text("Phase Calendar")
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                
+                PhaseCalendarView(phase: phase)
             }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -564,451 +597,17 @@ struct PhaseCardView: View {
     }
 }
 
-// MARK: - Phase Detail View
-struct PhaseDetailView: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var phaseManager = WeightPhaseManager.shared
-    @StateObject private var weightManager = WeightLogManager.shared
-    let phase: WeightPhase
-    
-    @State private var showingDeleteAlert = false
-    @State private var showingEditView = false
-    @State private var refreshChart = false
-    
-    // Get weight entries for this phase period
-    private var phaseWeightEntries: [WeightLogEntry] {
-        // Get the current phase from the manager to ensure we have the latest data
-        guard let currentPhase = phaseManager.phases.first(where: { $0.id == phase.id }) else {
-            return weightManager.allEntries.filter { entry in
-                entry.date >= phase.startDate && entry.date <= phase.endDate
-            }.sorted { $0.date < $1.date }
-        }
-        
-        return weightManager.allEntries.filter { entry in
-            entry.date >= currentPhase.startDate && entry.date <= currentPhase.endDate
-        }.sorted { $0.date < $1.date }
-    }
-    
-    // Calculate phase statistics
-    private var phaseStats: (highest: Double?, lowest: Double?, averageChange: Double?, totalChange: Double?) {
-        guard !phaseWeightEntries.isEmpty else {
-            return (nil, nil, nil, nil)
-        }
-        
-        let weights = phaseWeightEntries.map { $0.weight }
-        let highest = weights.max()
-        let lowest = weights.min()
-        
-        // Calculate average change per week
-        let averageChange: Double?
-        if phaseWeightEntries.count > 1,
-           let firstDate = phaseWeightEntries.first?.date,
-           let lastDate = phaseWeightEntries.last?.date,
-           let firstWeight = phaseWeightEntries.first?.weight,
-           let lastWeight = phaseWeightEntries.last?.weight {
-            
-            let totalDays = Calendar.current.dateComponents([.day], from: firstDate, to: lastDate).day ?? 0
-            let totalWeeks = Double(totalDays) / 7.0
-            
-            if totalWeeks > 0 {
-                let totalChange = lastWeight - firstWeight
-                averageChange = totalChange / totalWeeks
-            } else {
-                averageChange = nil
-            }
-        } else {
-            averageChange = nil
-        }
-        
-        let totalChange: Double?
-        if let firstWeight = phaseWeightEntries.first?.weight,
-           let lastWeight = phaseWeightEntries.last?.weight {
-            totalChange = lastWeight - firstWeight
-        } else {
-            totalChange = nil
-        }
-        
-        return (highest, lowest, averageChange, totalChange)
-    }
-    
-    // Calculate goal weight based on phase target
-    private var goalWeight: Double? {
-        // Get the current phase from the manager to ensure we have the latest data
-        guard let currentPhase = phaseManager.phases.first(where: { $0.id == phase.id }) else { return nil }
-        
-        // Use stored goal weight if available, otherwise calculate from weekly rate
-        if let storedGoalWeight = currentPhase.goalWeight {
-            return storedGoalWeight
-        }
-        
-        guard let firstEntry = phaseWeightEntries.first else { return nil }
-        let startWeight = firstEntry.weight
-        let phaseDurationWeeks = Double(currentPhase.durationInWeeks)
-        let totalTargetChange = currentPhase.targetWeeklyRate * phaseDurationWeeks
-        return startWeight + totalTargetChange
-    }
-    
-    // Calculate Y-axis range for the chart (including goal weight)
-    private var yAxisRange: ClosedRange<Double> {
-        guard !phaseWeightEntries.isEmpty else { return 0...100 }
-        
-        let weights = phaseWeightEntries.map { $0.weight }
-        var minWeight = weights.min() ?? 0
-        var maxWeight = weights.max() ?? 100
-        
-        // Include goal weight in range calculation
-        if let goal = goalWeight {
-            minWeight = min(minWeight, goal)
-            maxWeight = max(maxWeight, goal)
-        }
-        
-        // Add padding above and below
-        let range = maxWeight - minWeight
-        let padding = max(range * 0.1, 1.0) // At least 1kg padding
-        
-        return (minWeight - padding)...(maxWeight + padding)
-    }
-    
-    private let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter
-    }()
-    
-    private let shortDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter
-    }()
-    
-    var body: some View {
-        NavigationView {
-            ZStack {
-                // Background color to match dashboard
-                Color(hex: "#F0F1F4")
-                    .ignoresSafeArea()
-                
-                ScrollView {
-                VStack(spacing: 24) {
-                    // Header with phase name and status
-                    VStack(spacing: 16) {
-                        VStack(spacing: 8) {
-                            HStack(spacing: 8) {
-                                Text(phaseManager.phases.first(where: { $0.id == phase.id })?.name ?? phase.name)
-                                    .font(.custom("Montserrat-Bold", size: 24))
-                                    .foregroundColor(.primary)
-                                    .multilineTextAlignment(.center)
-                                
-                                // Phase color indicator after the title
-                                Circle()
-                                    .fill(phaseManager.phases.first(where: { $0.id == phase.id })?.swiftUIColor ?? phase.swiftUIColor)
-                                    .frame(width: 20, height: 20)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: 2)
-                                    )
-                                    .shadow(color: (phaseManager.phases.first(where: { $0.id == phase.id })?.swiftUIColor ?? phase.swiftUIColor).opacity(0.3), radius: 4, x: 0, y: 2)
-                            }
-                            
-                            if phase.isActive {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(Color.green)
-                                        .frame(width: 8, height: 8)
-                                    Text("Currently Active")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.green)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.green.opacity(0.1))
-                                )
-                            }
-                        }
-                    }
-                    .padding(.top)
-                    
-                    // Duration Information
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Duration")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        .padding(.horizontal)
-                        
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack {
-                                Text("Start Date:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text(dateFormatter.string(from: phaseManager.phases.first(where: { $0.id == phase.id })?.startDate ?? phase.startDate))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            HStack {
-                                Text("End Date:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text(dateFormatter.string(from: phaseManager.phases.first(where: { $0.id == phase.id })?.endDate ?? phase.endDate))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            HStack {
-                                Text("Total Length:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                let currentPhase = phaseManager.phases.first(where: { $0.id == phase.id }) ?? phase
-                                let totalWeeks = Calendar.current.dateComponents([.weekOfYear], from: currentPhase.startDate, to: currentPhase.endDate).weekOfYear ?? 0
-                                Text("\(totalWeeks) weeks")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                    
-                    // Weight Chart Section
-                    if !phaseWeightEntries.isEmpty {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("Weight Progress")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal)
-                            
-                            // Weight Chart
-                            Chart {
-                                ForEach(phaseWeightEntries, id: \.id) { entry in
-                                    LineMark(
-                                        x: .value("Date", entry.date),
-                                        y: .value("Weight", entry.weight)
-                                    )
-                                    .foregroundStyle(.blue)
-                                    .lineStyle(StrokeStyle(lineWidth: 3))
-                                    .interpolationMethod(.catmullRom)
-                                }
-                                
-                                // Goal weight line (horizontal dashed line)
-                                if let goal = goalWeight {
-                                    RuleMark(
-                                        y: .value("Goal Weight", goal)
-                                    )
-                                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 5]))
-                                    .foregroundStyle((phaseManager.phases.first(where: { $0.id == phase.id })?.swiftUIColor ?? phase.swiftUIColor).opacity(0.7))
-                                    .annotation(position: .overlay, alignment: .center) {
-                                        Text("Goal Weight")
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(phaseManager.phases.first(where: { $0.id == phase.id })?.swiftUIColor ?? phase.swiftUIColor)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 1)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 3)
-                                                    .fill(Color(.systemBackground))
-                                            )
-                                    }
-                                }
-                            }
-                            .frame(height: 200)
-                            .chartYScale(domain: yAxisRange)
-                            .chartXScale(domain: (phaseManager.phases.first(where: { $0.id == phase.id })?.startDate ?? phase.startDate)...(phaseManager.phases.first(where: { $0.id == phase.id })?.endDate ?? phase.endDate))
-                            .id(refreshChart)
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 5)) { value in
-                                    AxisGridLine()
-                                    AxisTick()
-                                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                                }
-                            }
-                            .chartYAxis {
-                                AxisMarks(position: .leading, values: .stride(by: 1.0)) { value in
-                                    AxisGridLine()
-                                    AxisTick()
-                                    AxisValueLabel()
-                                }
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
-                            )
-                            .padding(.horizontal)
-                        }
-                        
-                        // Weight Statistics
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("Statistics")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal)
-                            
-                            LazyVGrid(columns: [
-                                GridItem(.flexible()),
-                                GridItem(.flexible())
-                            ], spacing: 16) {
-                                // Highest Weight
-                                if let highest = phaseStats.highest {
-                                    StatCard(
-                                        title: "Highest Weight",
-                                        value: String(format: "%.1f kg", highest),
-                                        color: .red
-                                    )
-                                }
-                                
-                                // Lowest Weight
-                                if let lowest = phaseStats.lowest {
-                                    StatCard(
-                                        title: "Lowest Weight",
-                                        value: String(format: "%.1f kg", lowest),
-                                        color: .green
-                                    )
-                                }
-                                
-                                // Weekly Rate (always show, default to 0.0 if no data)
-                                let averageChange = phaseStats.averageChange ?? 0.0
-                                let changeText = averageChange >= 0 ? "+" + String(format: "%.2f kg/week", averageChange) : String(format: "%.2f kg/week", averageChange)
-                                let changeColor: Color = averageChange >= 0 ? .red : .green
-                                StatCard(
-                                    title: "Weekly Rate",
-                                    value: changeText,
-                                    color: changeColor
-                                )
-                                
-                                // Total Change
-                                if let totalChange = phaseStats.totalChange {
-                                    let changeText = totalChange >= 0 ? "+" + String(format: "%.1f kg", totalChange) : String(format: "%.1f kg", totalChange)
-                                    let changeColor: Color = totalChange >= 0 ? .red : .green
-                                    StatCard(
-                                        title: "Total Change",
-                                        value: changeText,
-                                        color: changeColor
-                                    )
-                                }
-                            }
-                            .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color(.systemBackground))
-                                    .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
-                            )
-                            .padding(.horizontal)
-                        }
-                    }
-                    
-                    // Phase Details Cards
-                    VStack(spacing: 16) {
-                        
-                        
-                        // Progress Card (if active)
-                        if phase.isActive {
-                            DetailCard(title: "Progress", icon: "chart.line.uptrend.xyaxis") {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    let daysElapsed = Calendar.current.dateComponents([.day], from: phase.startDate, to: Date()).day ?? 0
-                                    let totalDays = Calendar.current.dateComponents([.day], from: phase.startDate, to: phase.endDate).day ?? 1
-                                    let progress = min(Double(daysElapsed) / Double(totalDays), 1.0)
-                                    
-                                    HStack {
-                                        Text("Days Completed:")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        Text("\(daysElapsed) / \(totalDays)")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                    }
-                                    
-                                    ProgressView(value: progress)
-                                        .progressViewStyle(LinearProgressViewStyle(tint: phase.swiftUIColor))
-                                    
-                                    HStack {
-                                        Text("Progress:")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        Text(String(format: "%.1f%%", progress * 100))
-                                            .font(.subheadline)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(phase.swiftUIColor)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Notes Card (if available)
-                        if let notes = phase.notes, !notes.isEmpty {
-                            DetailCard(title: "Notes", icon: "note.text") {
-                                Text(notes)
-                                    .font(.body)
-                                    .foregroundColor(.primary)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    Spacer(minLength: 20)
-                }
-            }
-            }
-            .navigationTitle("Phase Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Back") {
-                        dismiss()
-                    }
-                    .foregroundColor(.blue)
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Edit") {
-                        showingEditView = true
-                    }
-                    .foregroundColor(.blue)
-                }
-            }
-            .sheet(isPresented: $showingEditView) {
-                EditPhaseView(phase: phase)
-            }
-            .onReceive(phaseManager.$phases) { _ in
-                refreshChart.toggle()
-            }
-        }
-    }
-    
-    private func deletePhase() {
-        phaseManager.deletePhase(phase)
-        dismiss()
-    }
-    
-    private var phaseTypeDescription: String {
-        if phase.targetWeeklyRate < 0 {
-            return "This is a cutting phase focused on fat loss. Maintain a caloric deficit while preserving muscle mass through resistance training."
-        } else if phase.targetWeeklyRate > 0 {
-            return "This is a bulking phase focused on muscle gain. Maintain a caloric surplus with adequate protein intake for optimal muscle growth."
-        } else {
-            return "This is a maintenance phase focused on maintaining current weight and body composition while building strength and habits."
-        }
-    }
-}
 
 // MARK: - Detail Card Component
 struct DetailCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let icon: String
     let content: Content
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     init(title: String, icon: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -1035,9 +634,217 @@ struct DetailCard<Content: View>: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         )
+    }
+}
+
+// MARK: - Phase Calendar View
+struct PhaseCalendarView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let phase: WeightPhase
+    @StateObject private var weightManager = WeightLogManager.shared
+    
+    // Performance: Use cached formatters and calendar
+    private let performanceCache = PerformanceCache.shared
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    // Performance: Use cached calendar
+    private var calendar: Calendar {
+        performanceCache.calendar
+    }
+    
+    private let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    
+    // Get all months covered by this phase
+    private var phaseMonths: [Date] {
+        var months: [Date] = []
+        let startDate = phase.startDate
+        let endDate = phase.endDate
+        
+        var currentDate = calendar.dateInterval(of: .month, for: startDate)?.start ?? startDate
+        
+        while currentDate <= endDate {
+            months.append(currentDate)
+            guard let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) else { break }
+            currentDate = nextMonth
+        }
+        
+        return months
+    }
+    
+    var body: some View {
+        let months = phaseMonths
+        let rows = (months.count + 2) / 3 // Calculate rows needed for max 3 months per row
+        
+        VStack(spacing: 12) {
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: 12) {
+                    ForEach(0..<3, id: \.self) { col in
+                        let monthIndex = row * 3 + col
+                        if monthIndex < months.count {
+                            compactMonthView(for: months[monthIndex])
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Spacer()
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(cardBackground)
+                .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 1)
+        )
+    }
+    
+    private func compactMonthView(for monthDate: Date) -> some View {
+        let monthIndex = calendar.component(.month, from: monthDate) - 1
+        let _ = calendar.component(.year, from: monthDate)
+        let daysInMonth = calendar.range(of: .day, in: .month, for: monthDate)?.count ?? 30
+        let firstWeekday = calendar.component(.weekday, from: monthDate)
+        let startingSpaces = (firstWeekday == 1) ? 6 : firstWeekday - 2 // Monday = 0, Sunday = 6
+        let totalCells = startingSpaces + daysInMonth
+        let rows = (totalCells + 6) / 7 // Calculate number of rows needed
+        
+        let monthTitle = Text(monthNames[monthIndex])
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
+            .frame(height: 16, alignment: .bottom)
+        
+        let calendarGrid = VStack(spacing: 2) {
+            ForEach(Array(0..<rows), id: \.self) { row in
+                HStack(spacing: 1) {
+                    ForEach(Array(0..<7), id: \.self) { col in
+                        dayCell(row: row, col: col, monthDate: monthDate, startingSpaces: startingSpaces, daysInMonth: daysInMonth)
+                    }
+                }
+                .background(
+                    phaseRowBackground(row: row, monthDate: monthDate, startingSpaces: startingSpaces, daysInMonth: daysInMonth)
+                )
+            }
+        }
+        .frame(height: CGFloat(rows * 12)) // Adjust height based on number of rows
+        
+        return VStack(spacing: 3) {
+            monthTitle
+            calendarGrid
+        }
+    }
+    
+    private func dayCell(row: Int, col: Int, monthDate: Date, startingSpaces: Int, daysInMonth: Int) -> some View {
+        let cellIndex = row * 7 + col
+        let dayNumber = cellIndex - startingSpaces + 1
+        let year = calendar.component(.year, from: monthDate)
+        let month = calendar.component(.month, from: monthDate)
+        
+        if cellIndex < startingSpaces || dayNumber > daysInMonth {
+            return AnyView(
+                Text("")
+                    .frame(width: 12, height: 10)
+            )
+        } else {
+            let dayDate = calendar.date(from: DateComponents(year: year, month: month, day: dayNumber)) ?? Date()
+            let isToday = calendar.isDateInToday(dayDate)
+            let hasWeightEntry = weightManager.allEntries.contains { entry in
+                calendar.isDate(entry.date, inSameDayAs: dayDate)
+            }
+            
+            let textColor: Color = isToday ? .white : .primary
+            
+            return AnyView(
+                ZStack {
+                    // Weight entry indicator (tiny dot)
+                    if hasWeightEntry {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 2, height: 2)
+                            .offset(x: 3, y: -3)
+                    }
+                    
+                    Text("\(dayNumber)")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundColor(textColor)
+                }
+                .frame(width: 12, height: 10)
+            )
+        }
+    }
+    
+    private func phaseRowBackground(row: Int, monthDate: Date, startingSpaces: Int, daysInMonth: Int) -> some View {
+        let year = calendar.component(.year, from: monthDate)
+        let month = calendar.component(.month, from: monthDate)
+        
+        return HStack(spacing: 0) {
+            ForEach(Array(0..<7), id: \.self) { col in
+                let cellIndex = row * 7 + col
+                let dayNumber = cellIndex - startingSpaces + 1
+                
+                if cellIndex >= startingSpaces && dayNumber <= daysInMonth {
+                    let dayDate = calendar.date(from: DateComponents(year: year, month: month, day: dayNumber)) ?? Date()
+                    
+                    // Compare using date components to avoid timezone issues
+                    let phaseStartComponents = calendar.dateComponents([.year, .month, .day], from: phase.startDate)
+                    let phaseEndComponents = calendar.dateComponents([.year, .month, .day], from: phase.endDate)
+                    
+                    let dayValue = year * 10000 + month * 100 + dayNumber
+                    let startValue = (phaseStartComponents.year ?? 0) * 10000 + (phaseStartComponents.month ?? 0) * 100 + (phaseStartComponents.day ?? 0)
+                    let endValue = (phaseEndComponents.year ?? 0) * 10000 + (phaseEndComponents.month ?? 0) * 100 + (phaseEndComponents.day ?? 0)
+                    
+                    let isInPhase = dayValue >= startValue && dayValue <= endValue
+                    let isToday = calendar.isDateInToday(dayDate)
+                    
+                    // Get adjacent day info for connected backgrounds
+                    let leftInPhase = col > 0 ? isDayInPhase(row: row, col: col - 1, monthDate: monthDate, startingSpaces: startingSpaces, daysInMonth: daysInMonth) : false
+                    let rightInPhase = col < 6 ? isDayInPhase(row: row, col: col + 1, monthDate: monthDate, startingSpaces: startingSpaces, daysInMonth: daysInMonth) : false
+                    
+                    let baseColor = isToday ? Color.blue : (isInPhase ? phase.swiftUIColor.opacity(0.3) : Color.clear)
+                    
+                    Rectangle()
+                        .fill(baseColor)
+                        .frame(width: 14.5, height: 10)
+                        .clipShape(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: (leftInPhase && isInPhase) ? 0 : 2,
+                                bottomLeadingRadius: (leftInPhase && isInPhase) ? 0 : 2,
+                                bottomTrailingRadius: (rightInPhase && isInPhase) ? 0 : 2,
+                                topTrailingRadius: (rightInPhase && isInPhase) ? 0 : 2
+                            )
+                        )
+                } else {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 14.5, height: 10)
+                }
+            }
+        }
+    }
+    
+    private func isDayInPhase(row: Int, col: Int, monthDate: Date, startingSpaces: Int, daysInMonth: Int) -> Bool {
+        let cellIndex = row * 7 + col
+        let dayNumber = cellIndex - startingSpaces + 1
+        let year = calendar.component(.year, from: monthDate)
+        let month = calendar.component(.month, from: monthDate)
+        
+        guard cellIndex >= startingSpaces && dayNumber <= daysInMonth else { return false }
+        
+        // Compare using date components to avoid timezone issues
+        let phaseStartComponents = calendar.dateComponents([.year, .month, .day], from: phase.startDate)
+        let phaseEndComponents = calendar.dateComponents([.year, .month, .day], from: phase.endDate)
+        
+        let dayValue = year * 10000 + month * 100 + dayNumber
+        let startValue = (phaseStartComponents.year ?? 0) * 10000 + (phaseStartComponents.month ?? 0) * 100 + (phaseStartComponents.day ?? 0)
+        let endValue = (phaseEndComponents.year ?? 0) * 10000 + (phaseEndComponents.month ?? 0) * 100 + (phaseEndComponents.day ?? 0)
+        
+        return dayValue >= startValue && dayValue <= endValue
     }
 }
 

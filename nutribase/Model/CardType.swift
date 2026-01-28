@@ -16,15 +16,16 @@ enum CardSize {
 enum CardType: String, CaseIterable, Identifiable, Codable {
     case currentWeight = "Current Weight"
     case weightChart = "Weight Chart"
-    case bmi = "BMI"
     case calorieTarget = "Calorie Target"
     case protein = "Protein"
     case carbs = "Carbs"
     case fat = "Fat"
-    case water = "Water"
+    // case water = "Water" // TEMPORARILY DISABLED
     case activity = "Activity"
+    case dailyGoals = "Daily Goals"
     case novaGroups = "NOVA Groups"
     case nutriScore = "Nutri-Score"
+    case gutHealth = "Gut Health"
     case empty = "Empty Slot"
     
 
@@ -37,8 +38,6 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
             return "scalemass.fill"
         case .weightChart:
             return "chart.line.uptrend.xyaxis"
-        case .bmi:
-            return "figure.stand"
         case .calorieTarget:
             return "flame.fill"
         case .protein:
@@ -47,14 +46,18 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
             return "leaf.fill"
         case .fat:
             return "drop.fill"
-        case .water:
-            return "drop.fill"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "drop.fill"
         case .activity:
             return "figure.walk"
+        case .dailyGoals:
+            return "target"
         case .novaGroups:
             return "circle.grid.2x2.fill"
         case .nutriScore:
             return "a.circle.fill"
+        case .gutHealth:
+            return "leaf.arrow.triangle.circlepath"
         case .empty:
             return "plus"
         }
@@ -62,7 +65,7 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
     
     var color: Color {
         switch self {
-        case .currentWeight, .bmi, .weightChart:
+        case .currentWeight, .weightChart:
             return .blue
         case .calorieTarget:
             return Color(red: 0.6, green: 0.2, blue: 0.8) // Vibrant purple to match daily goals
@@ -72,14 +75,18 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
             return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow to match daily goals
         case .fat:
             return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink to match daily goals
-        case .water:
-            return .blue
+        // case .water: // TEMPORARILY DISABLED
+        //     return .blue
         case .activity:
             return .pink
+        case .dailyGoals:
+            return Color(red: 0.0, green: 0.5, blue: 1.0) // Bright blue
         case .novaGroups:
             return .indigo
         case .nutriScore:
             return .green
+        case .gutHealth:
+            return Color(red: 0.2, green: 0.7, blue: 0.5) // Teal green for gut health
         case .empty:
             return .gray
         }
@@ -87,7 +94,7 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
     
     var size: CardSize {
         switch self {
-        case .novaGroups, .nutriScore:
+        case .dailyGoals, .novaGroups, .nutriScore, .gutHealth:
             return .twoByOne
         default:
             return .oneByOne

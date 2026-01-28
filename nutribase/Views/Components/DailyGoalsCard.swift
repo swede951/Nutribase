@@ -18,31 +18,49 @@ struct GoalMetric: Identifiable, Equatable {
     let type: MetricType
     var isSelected: Bool
     var goal: Int = 100 // Default goal value
-    
     enum MetricType: String, CaseIterable, Hashable {
         case protein = "Protein"
         case steps = "Steps"
+        case activityCalories = "Activity"
         case nova4 = "NOVA 4"
         case calories = "Calories"
         case caloriesRemaining = "Cal Remaining"
         case carbs = "Carbs"
         case fat = "Fat"
-        case water = "Water"
-        case sleep = "Sleep"
+        // case water = "Water" // TEMPORARILY DISABLED
+        // case sleep = "Sleep" // TEMPORARILY DISABLED
     }
 }
 
 struct DailyGoalsCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    // Preview mode flag
+    var isPreview: Bool = false
+    
     // Protein goal
     var proteinConsumed: Int = 0
     var proteinGoal: Int = 150
+    
+    // Date for which to show data
+    var selectedDate: Date = Date()
     
     // Activity manager for step count
     @ObservedObject private var activityManager = ActivityManager.shared
     @ObservedObject private var healthKitManager = HealthKitManager.shared
     
+    // Metric visibility service
+    @StateObject private var visibilityService = MetricVisibilityService.shared
+    
     // Dynamic goals from UserDefaults
     @State private var stepsGoal: Int = 10000
+    @State private var stepsForSelectedDate: Int = 0
+    @State private var activityCaloriesGoal: Int = 500
+    @State private var activityCaloriesForSelectedDate: Int = 0
     
     // NOVA 4 goal (percentage of calories from ultra-processed foods)
     var nova4Percentage: Double = 0
@@ -69,9 +87,26 @@ struct DailyGoalsCard: View {
     // State for drag operation
     @State private var draggedItem: GoalMetric.MetricType?
     
-    // Computed property to get selected metrics
+    // Computed property to get selected metrics filtered by visibility preferences
     private var selectedMetrics: [GoalMetric] {
-        return metricsManager.selectedMetrics
+        return metricsManager.selectedMetrics.filter { metric in
+            switch metric.type {
+            case .protein:
+                return visibilityService.showProtein
+            case .calories, .caloriesRemaining:
+                return visibilityService.showCalories
+            case .carbs:
+                return visibilityService.showCarbs
+            case .fat:
+                return visibilityService.showFat
+            case .nova4:
+                return visibilityService.showNovaScore
+            case .steps, .activityCalories:
+                return true // Always show non-nutrition metrics
+            // case .sleep:
+            //     return true // Always show non-nutrition metrics
+            }
+        }
     }
     
     private var proteinProgress: Double {
@@ -81,10 +116,15 @@ struct DailyGoalsCard: View {
     
     private var stepsProgress: Double {
         if stepsGoal == 0 { return 0 }
-        // Use the steps from ActivityManager if available
-        let currentSteps = activityManager.currentActivity.steps > 0 ? 
-            activityManager.currentActivity.steps : healthKitManager.todaySteps
+        // Use steps for the selected date
+        let currentSteps = stepsForSelectedDate
         return Double(currentSteps) / Double(stepsGoal)
+    }
+    
+    private var activityCaloriesProgress: Double {
+        if activityCaloriesGoal == 0 { return 0 }
+        let currentCalories = activityCaloriesForSelectedDate
+        return Double(currentCalories) / Double(activityCaloriesGoal)
     }
     
     private var nova4Progress: Double {
@@ -93,31 +133,15 @@ struct DailyGoalsCard: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Daily Goals")
-                    .font(.custom("Montserrat-SemiBold", size: 17))
-                
-                Spacer()
-                
-                // Settings gear icon
-                Button(action: {
-                    showingSettings = true
-                }) {
-                    Image(systemName: "gear")
-                        .foregroundColor(.gray)
-                }
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-            .onAppear {
-                loadGoals()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .metricGoalsUpdated)) { _ in
-                loadGoals()
-            }
+        FixedSizeCard(
+            title: "Daily Goals",
+            customHeight: 150,
+            titleAction: isPreview ? nil : { showingSettings = true },
+            titleActionIcon: isPreview ? nil : "gear"
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
             
-            HStack(spacing: selectedMetrics.count > 3 ? -5 : 0) {
+            HStack(spacing: 0) {
                 Spacer()
                 
                 // Dynamically show selected metrics (up to 4) with drag-and-drop support
@@ -166,11 +190,11 @@ struct DailyGoalsCard: View {
                             // Value and goal text
                             VStack(spacing: 0) {
                                 Text(valueText)
-                                    .font(.custom("Montserrat-SemiBold", size: useSmallSize ? 14 : 16))
+                                    .font(.system(size: useSmallSize ? 14 : 16, weight: .bold))
                                     .minimumScaleFactor(0.5)
                                     .lineLimit(1)
                                 Text(goalText)
-                                    .font(.custom("Montserrat-SemiBold", size: useSmallSize ? 10 : 12))
+                                    .font(.system(size: useSmallSize ? 10 : 12, weight: .medium))
                                     .foregroundColor(.gray)
                                     .minimumScaleFactor(0.5)
                                     .lineLimit(1)
@@ -199,15 +223,20 @@ struct DailyGoalsCard: View {
                 
                 Spacer()
             }
-            .padding(.bottom, 8)
+            .padding(.top, 12)
+            .padding(.bottom, 12)
+            .padding(.horizontal, 4)
+            }
         }
         .onAppear {
             // Refresh step count data when the view appears
-            healthKitManager.refreshHealthData()
-            activityManager.refreshActivityData()
             loadGoals()
+            fetchStepsForDate()
         }
-        .cardStyle()
+        .onChange(of: selectedDate) {
+            // Fetch steps whenever the date changes
+            fetchStepsForDate()
+        }
         .sheet(isPresented: $showingSettings) {
             DailyGoalsSettingsView()
         }
@@ -222,23 +251,111 @@ struct DailyGoalsCard: View {
     private func loadGoals() {
         stepsGoal = UserDefaults.standard.integer(forKey: "stepsGoal")
         if stepsGoal == 0 { stepsGoal = 10000 }
+        
+        activityCaloriesGoal = UserDefaults.standard.integer(forKey: "activityCaloriesGoal")
+        if activityCaloriesGoal == 0 { activityCaloriesGoal = 500 }
+    }
+    
+    private func fetchStepsForDate() {
+        // Use preview data if in preview mode
+        if isPreview {
+            stepsForSelectedDate = 7850
+            activityCaloriesForSelectedDate = 250
+            return
+        }
+        
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: selectedDate)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? selectedDate
+        
+        // If selected date is today, use real-time data
+        if calendar.isDateInToday(selectedDate) {
+            let currentSteps = activityManager.currentActivity.steps > 0 ? 
+                activityManager.currentActivity.steps : healthKitManager.todaySteps
+            stepsForSelectedDate = currentSteps
+            activityCaloriesForSelectedDate = healthKitManager.todayActiveCalories
+            // Also refresh to get latest
+            healthKitManager.refreshHealthData()
+            activityManager.refreshActivityData()
+        } else {
+            // For past dates, fetch from HealthKit
+            healthKitManager.fetchStepsForDateRange(start: startOfDay, end: endOfDay) { steps, error in
+                DispatchQueue.main.async {
+                    self.stepsForSelectedDate = steps
+                }
+            }
+            healthKitManager.fetchActiveCaloriesForDateRange(start: startOfDay, end: endOfDay) { calories, error in
+                DispatchQueue.main.async {
+                    self.activityCaloriesForSelectedDate = calories
+                }
+            }
+        }
     }
 }
 
 // Settings view for selecting which metrics to display
 struct DailyGoalsSettingsView: View {
     @Environment(\.presentationMode) var presentationMode
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var metricsManager = GoalMetricsManager.shared
     @StateObject private var healthKitManager = HealthKitManager.shared
     @StateObject private var activityManager = ActivityManager.shared
+    @StateObject private var visibilityService = MetricVisibilityService.shared
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     // State for drag operation
     @State private var draggedItem: GoalMetric.MetricType?
     
-    // Track which metrics are in the daily goals card
+    // Track which metrics are in the daily goals card (filtered by visibility)
     private var selectedMetrics: [GoalMetric.MetricType] {
         let filtered = metricsManager.metrics.filter { $0.isSelected }
-        return filtered.map { $0.type }
+        return filtered.map { $0.type }.filter { metricType in
+            switch metricType {
+            case .protein:
+                return visibilityService.showProtein
+            case .calories, .caloriesRemaining:
+                return visibilityService.showCalories
+            case .carbs:
+                return visibilityService.showCarbs
+            case .fat:
+                return visibilityService.showFat
+            case .nova4:
+                return visibilityService.showNovaScore
+            case .steps, .activityCalories:
+                return true // Always show non-nutrition metrics
+            // case .sleep:
+            //     return true // Always show non-nutrition metrics
+            }
+        }
+    }
+    
+    // Filter available metrics in library by visibility
+    private var availableMetrics: [GoalMetric] {
+        return metricsManager.metrics.filter { metric in
+            switch metric.type {
+            case .protein:
+                return visibilityService.showProtein
+            case .calories, .caloriesRemaining:
+                return visibilityService.showCalories
+            case .carbs:
+                return visibilityService.showCarbs
+            case .fat:
+                return visibilityService.showFat
+            case .nova4:
+                return visibilityService.showNovaScore
+            case .steps, .activityCalories:
+                return true // Always show non-nutrition metrics
+            // case .sleep:
+            //     return true // Always show non-nutrition metrics
+            }
+        }
     }
     
     var body: some View {
@@ -257,80 +374,11 @@ struct DailyGoalsSettingsView: View {
                         .padding(.top, 8)
                         
                         // Preview of selected metrics (up to 4)
-                        HStack(spacing: selectedMetrics.count > 3 ? -5 : 0) {
+                        HStack(spacing: 0) {
                             Spacer()
                             
                             ForEach(selectedMetrics.prefix(4), id: \.self) { metricType in
-                                let isDragging = draggedItem == metricType
-                                
-                                if let metric = metricsManager.metrics.first(where: { $0.type == metricType }) {
-                                    let progress = calculateProgress(for: metric)
-                                    let metricColor = getMetricColor(for: metric)
-                                    let valueText = getMetricValue(for: metric)
-                                    let goalText = getMetricGoal(for: metric)
-                                
-                                VStack {
-                                    ZStack {
-                                        // Background circle
-                                        Circle()
-                                            .stroke(lineWidth: 6)
-                                            .opacity(0.2)
-                                            .foregroundColor(Color.gray)
-                                        
-                                        // Progress circle
-                                        Circle()
-                                            .trim(from: 0.0, to: CGFloat(min(progress, 1.0)))
-                                            .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
-                                            .foregroundColor(metricColor)
-                                            .rotationEffect(Angle(degrees: 270.0))
-                                        
-                                        // Value and goal text
-                                        VStack(spacing: 0) {
-                                            Text(valueText)
-                                                .font(.custom("Montserrat-SemiBold", size: 14))
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                            Text(goalText)
-                                                .font(.custom("Montserrat-SemiBold", size: 10))
-                                                .foregroundColor(.gray)
-                                                .minimumScaleFactor(0.5)
-                                                .lineLimit(1)
-                                        }
-                                    }
-                                    .frame(width: 65, height: 65)
-                                    
-                                    Text(metricType == .caloriesRemaining ? "Calories" : metricType.rawValue)
-                                        .font(.custom("Montserrat-SemiBold", size: 14))
-                                        .padding(.top, 4)
-                                    }
-                                    .opacity(isDragging ? 0.4 : 1.0)
-                                    .overlay(
-                                        Circle()
-                                            .fill(Color.red)
-                                            .frame(width: 20, height: 20)
-                                            .overlay(
-                                                Image(systemName: "minus")
-                                                    .font(.system(size: 12, weight: .bold))
-                                                    .foregroundColor(.white)
-                                            )
-                                            .offset(x: -25, y: -25)
-                                    )
-                                    .onDrag {
-                                        self.draggedItem = metricType
-                                        return NSItemProvider(object: metricType.rawValue as NSString)
-                                    }
-                                    .onDrop(of: [.text], isTargeted: nil) { providers in
-                                        handleSettingsDrop(providers: providers, targetType: metricType)
-                                        return true
-                                    }
-                                    .onTapGesture {
-                                        withAnimation(.spring()) {
-                                            if let index = metricsManager.metrics.firstIndex(where: { $0.type == metricType }) {
-                                                metricsManager.metrics[index].isSelected = false
-                                            }
-                                        }
-                                    }
-                                }
+                                settingsMetricPreview(for: metricType)
                                 
                                 if metricType != selectedMetrics.prefix(4).last {
                                     Spacer()
@@ -343,7 +391,7 @@ struct DailyGoalsSettingsView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemBackground))
+                            .fill(cardBackground)
                             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                     )
                     .padding(.horizontal)
@@ -373,8 +421,8 @@ struct DailyGoalsSettingsView: View {
                     // Available metrics to drag from
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 15) {
-                            // Use a simpler approach to avoid complex expressions
-                            ForEach(metricsManager.metrics) { metric in
+                            // Use filtered metrics based on visibility preferences
+                            ForEach(availableMetrics) { metric in
                                 let metricType = metric.type
                                 let isSelected = selectedMetrics.contains(metricType)
                                 let isDragging = draggedItem == metricType
@@ -411,15 +459,10 @@ struct DailyGoalsSettingsView: View {
                         }
                         .padding()
                     }
-                    .background(Color(.systemGray6))
-                    
-                    // Goals Settings Card
-                    GoalsSettingsCard()
-                        .padding(.horizontal)
-                        .padding(.top, 20)
+                    .background(viewBackground)
                 }
             }
-            .background(Color(.systemGray6))
+            .background(viewBackground)
             .navigationTitle("Daily Goals Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -437,9 +480,14 @@ struct DailyGoalsSettingsView: View {
 
 // Card for displaying a metric in the grid
 struct MetricCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let metricType: GoalMetric.MetricType
     let isSelected: Bool
     @State private var isDragging = false
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         VStack {
@@ -468,7 +516,7 @@ struct MetricCard: View {
                 .lineLimit(2)
         }
         .frame(minWidth: 100, minHeight: 100)
-        .background(Color(.systemBackground))
+        .background(cardBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 1)
         .scaleEffect(isDragging ? 1.05 : 1.0)
@@ -490,6 +538,8 @@ struct MetricPreviewCard: View {
             return "75"
         case .steps:
             return "8,234"
+        case .activityCalories:
+            return "340"
         case .nova4:
             return "15%"
         case .calories:
@@ -500,10 +550,10 @@ struct MetricPreviewCard: View {
             return "120g"
         case .fat:
             return "45g"
-        case .water:
-            return "1.2L"
-        case .sleep:
-            return "7.5h"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "1.2L"
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "7.5h"
         }
     }
     
@@ -513,6 +563,8 @@ struct MetricPreviewCard: View {
             return "/150g"
         case .steps:
             return "/10,000"
+        case .activityCalories:
+            return "/500"
         case .nova4:
             return "/20%"
         case .calories:
@@ -523,10 +575,10 @@ struct MetricPreviewCard: View {
             return "/250g"
         case .fat:
             return "/65g"
-        case .water:
-            return "/2L"
-        case .sleep:
-            return "/8h"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "/2L"
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "/8h"
         }
     }
     
@@ -600,6 +652,8 @@ extension DailyGoalsCard {
             return proteinProgress
         case .steps:
             return stepsProgress
+        case .activityCalories:
+            return activityCaloriesProgress
         case .nova4:
             return nova4Progress
         case .calories:
@@ -610,10 +664,10 @@ extension DailyGoalsCard {
             return carbsGoal > 0 ? Double(carbsConsumed) / Double(carbsGoal) : 0
         case .fat:
             return fatGoal > 0 ? Double(fatConsumed) / Double(fatGoal) : 0
-        case .water:
-            return 0.6 // Placeholder
-        case .sleep:
-            return 0.8 // Placeholder
+        // case .water: // TEMPORARILY DISABLED
+        //     return 0.6 // Placeholder
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return 0.8 // Placeholder
         }
     }
     
@@ -624,6 +678,8 @@ extension DailyGoalsCard {
             return Color(red: 0.2, green: 0.8, blue: 0.2) // Brighter green
         case .steps:
             return Color(red: 0.0, green: 0.5, blue: 1.0) // Bright blue
+        case .activityCalories:
+            return Color(red: 1.0, green: 0.3, blue: 0.0) // Bright orange-red
         case .nova4:
             return Color(red: 1.0, green: 0.6, blue: 0.0) // Bright orange
         case .calories:
@@ -634,10 +690,10 @@ extension DailyGoalsCard {
             return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow
         case .fat:
             return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink
-        case .water:
-            return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
-        case .sleep:
-            return Color(red: 0.4, green: 0.2, blue: 0.8) // Bright indigo
+        // case .water: // TEMPORARILY DISABLED
+        //     return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return Color(red: 0.4, green: 0.2, blue: 0.8) // Bright indigo
         }
     }
     
@@ -647,23 +703,24 @@ extension DailyGoalsCard {
         case .protein:
             return "\(proteinConsumed)"
         case .steps:
-            let currentSteps = activityManager.currentActivity.steps > 0 ? 
-                activityManager.currentActivity.steps : healthKitManager.todaySteps
-            return currentSteps.formattedWithCommas
+            return stepsForSelectedDate.formattedWithCommas
+        case .activityCalories:
+            return "\(activityCaloriesForSelectedDate)"
         case .nova4:
             return "\(Int(nova4Percentage))%"
         case .calories:
             return "\(caloriesConsumed)"
         case .caloriesRemaining:
-            return "\(max(0, caloriesGoal - caloriesConsumed))"
+            let remaining = caloriesGoal - caloriesConsumed
+            return remaining >= 0 ? "\(remaining)" : "-\(abs(remaining))"
         case .carbs:
             return "\(carbsConsumed)g"
         case .fat:
             return "\(fatConsumed)g"
-        case .water:
-            return "1.2L" // Placeholder
-        case .sleep:
-            return "7.5h" // Placeholder
+        // case .water: // TEMPORARILY DISABLED
+        //     return "1.2L" // Placeholder
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "7.5h" // Placeholder
         }
     }
     
@@ -674,6 +731,8 @@ extension DailyGoalsCard {
             return "/\(proteinGoal)g"
         case .steps:
             return "/\(stepsGoal.formattedWithCommas)"
+        case .activityCalories:
+            return "/\(activityCaloriesGoal)"
         case .nova4:
             return "/\(Int(nova4Goal))%"
         case .calories:
@@ -684,10 +743,10 @@ extension DailyGoalsCard {
             return "/\(carbsGoal)g"
         case .fat:
             return "/\(fatGoal)g"
-        case .water:
-            return "/2L"
-        case .sleep:
-            return "/8h"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "/2L"
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "/8h"
         }
     }
 }
@@ -699,6 +758,8 @@ func colorForMetricType(_ type: GoalMetric.MetricType) -> Color {
         return Color(red: 0.2, green: 0.8, blue: 0.2) // Brighter green
     case .steps:
         return Color(red: 0.0, green: 0.5, blue: 1.0) // Bright blue
+    case .activityCalories:
+        return Color(red: 1.0, green: 0.3, blue: 0.0) // Bright orange-red
     case .nova4:
         return Color(red: 1.0, green: 0.6, blue: 0.0) // Bright orange
     case .calories:
@@ -709,10 +770,10 @@ func colorForMetricType(_ type: GoalMetric.MetricType) -> Color {
         return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow
     case .fat:
         return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink
-    case .water:
-        return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
-    case .sleep:
-        return Color(red: 0.4, green: 0.2, blue: 0.8) // Bright indigo
+    // case .water: // TEMPORARILY DISABLED
+    //     return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
+    // case .sleep: // TEMPORARILY DISABLED
+    //     return Color(red: 0.4, green: 0.2, blue: 0.8) // Bright indigo
     }
 }
 
@@ -722,6 +783,8 @@ func iconForMetricType(_ type: GoalMetric.MetricType) -> String {
         return "figure.strengthtraining.traditional"
     case .steps:
         return "figure.walk"
+    case .activityCalories:
+        return "bolt.fill"
     case .nova4:
         return "chart.pie"
     case .calories:
@@ -732,10 +795,10 @@ func iconForMetricType(_ type: GoalMetric.MetricType) -> String {
         return "c.circle"
     case .fat:
         return "f.circle"
-    case .water:
-        return "drop"
-    case .sleep:
-        return "bed.double"
+    // case .water: // TEMPORARILY DISABLED
+    //     return "drop"
+    // case .sleep: // TEMPORARILY DISABLED
+    //     return "bed.double"
     }
 }
 
@@ -748,6 +811,8 @@ extension DailyGoalsSettingsView {
             return 0.15 // Sample 15%
         case .steps:
             return 0.32 // Sample 32%
+        case .activityCalories:
+            return 0.68 // Sample 68%
         case .protein:
             return 0.75 // Sample 75%
         case .calories:
@@ -758,10 +823,10 @@ extension DailyGoalsSettingsView {
             return 0.45 // Sample 45%
         case .carbs:
             return 0.55 // Sample 55%
-        case .water:
-            return 0.25 // Sample 25%
-        case .sleep:
-            return 0.85 // Sample 85%
+        // case .water: // TEMPORARILY DISABLED
+        //     return 0.25 // Sample 25%
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return 0.85 // Sample 85%
         }
     }
     
@@ -771,6 +836,8 @@ extension DailyGoalsSettingsView {
             return Color.orange
         case .steps:
             return Color.blue
+        case .activityCalories:
+            return Color(red: 1.0, green: 0.3, blue: 0.0)
         case .protein:
             return Color.green
         case .calories:
@@ -781,10 +848,10 @@ extension DailyGoalsSettingsView {
             return Color.pink
         case .carbs:
             return Color.yellow
-        case .water:
-            return Color.cyan
-        case .sleep:
-            return Color.indigo
+        // case .water: // TEMPORARILY DISABLED
+        //     return Color.cyan
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return Color.indigo
         }
     }
     
@@ -794,6 +861,8 @@ extension DailyGoalsSettingsView {
             return "15%"
         case .steps:
             return "3,234"
+        case .activityCalories:
+            return "340"
         case .protein:
             return "75"
         case .calories:
@@ -804,10 +873,10 @@ extension DailyGoalsSettingsView {
             return "45"
         case .carbs:
             return "120"
-        case .water:
-            return "500"
-        case .sleep:
-            return "7"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "500"
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "7"
         }
     }
     
@@ -817,20 +886,22 @@ extension DailyGoalsSettingsView {
             return "/20%"
         case .steps:
             return "/\(metric.goal)"
+        case .activityCalories:
+            return "/\(metric.goal)"
         case .protein:
             return "/\(metric.goal)g"
         case .calories:
-            return "remaining"
+            return "/\(metric.goal)"
         case .caloriesRemaining:
             return "remaining"
         case .fat:
             return "/\(metric.goal)g"
         case .carbs:
             return "/\(metric.goal)g"
-        case .water:
-            return "/\(metric.goal)ml"
-        case .sleep:
-            return "/\(metric.goal)h"
+        // case .water: // TEMPORARILY DISABLED
+        //     return "/\(metric.goal)ml"
+        // case .sleep: // TEMPORARILY DISABLED
+        //     return "/\(metric.goal)h"
         }
     }
     
@@ -869,15 +940,94 @@ extension DailyGoalsSettingsView {
         
         self.draggedItem = nil
     }
+    
+    // Extracted view builder to fix type-check timeout
+    @ViewBuilder
+    private func settingsMetricPreview(for metricType: GoalMetric.MetricType) -> some View {
+        let isDragging = draggedItem == metricType
+        
+        if let metric = metricsManager.metrics.first(where: { $0.type == metricType }) {
+            let progress = calculateProgress(for: metric)
+            let metricColor = getMetricColor(for: metric)
+            let valueText = getMetricValue(for: metric)
+            let goalText = getMetricGoal(for: metric)
+            
+            VStack {
+                ZStack {
+                    Circle()
+                        .stroke(lineWidth: 6)
+                        .opacity(0.2)
+                        .foregroundColor(Color.gray)
+                    
+                    Circle()
+                        .trim(from: 0.0, to: CGFloat(min(progress, 1.0)))
+                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                        .foregroundColor(metricColor)
+                        .rotationEffect(Angle(degrees: 270.0))
+                    
+                    VStack(spacing: 0) {
+                        Text(valueText)
+                            .font(.custom("Montserrat-SemiBold", size: 14))
+                            .minimumScaleFactor(0.5)
+                            .lineLimit(1)
+                        Text(goalText)
+                            .font(.custom("Montserrat-SemiBold", size: 10))
+                            .foregroundColor(.gray)
+                            .minimumScaleFactor(0.5)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(width: 65, height: 65)
+                
+                Text(metricType == .caloriesRemaining ? "Calories" : metricType.rawValue)
+                    .font(.custom("Montserrat-SemiBold", size: 14))
+                    .padding(.top, 4)
+            }
+            .frame(width: 80) // Fixed width to ensure consistent sizing across all metrics
+            .opacity(isDragging ? 0.4 : 1.0)
+            .overlay(
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Image(systemName: "minus")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white)
+                    )
+                    .offset(x: -25, y: -25)
+            )
+            .onDrag {
+                self.draggedItem = metricType
+                return NSItemProvider(object: metricType.rawValue as NSString)
+            }
+            .onDrop(of: [.text], isTargeted: nil) { providers in
+                handleSettingsDrop(providers: providers, targetType: metricType)
+                return true
+            }
+            .onTapGesture {
+                withAnimation(.spring()) {
+                    if let index = metricsManager.metrics.firstIndex(where: { $0.type == metricType }) {
+                        metricsManager.metrics[index].isSelected = false
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Goals Settings Card Component
 struct GoalsSettingsCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     @State private var sleepGoalHours: Double = 8.0
     @State private var novaGoalPercentage: Double = 20.0
     @State private var stepsGoal: Int = 10000
+    @State private var activityCaloriesGoal: Int = 500
     @State private var waterGoalLiters: Double = 2.5
     @ObservedObject private var userProfile = UserProfile.shared
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -951,6 +1101,28 @@ struct GoalsSettingsCard: View {
                     .accentColor(.blue)
                 }
                 
+                // Activity Calories Goal
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "bolt.fill")
+                            .foregroundColor(Color(red: 1.0, green: 0.3, blue: 0.0))
+                            .frame(width: 24)
+                        Text("Activity Calories Goal")
+                            .font(.body)
+                        Spacer()
+                        Text("\(activityCaloriesGoal) cal")
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Slider(value: Binding(
+                        get: { Double(activityCaloriesGoal) },
+                        set: { activityCaloriesGoal = Int($0) }
+                    ), in: 200...1000, step: 50) {
+                        Text("Activity Calories Goal")
+                    }
+                    .accentColor(Color(red: 1.0, green: 0.3, blue: 0.0))
+                }
+                
                 // Water Goal
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -975,16 +1147,16 @@ struct GoalsSettingsCard: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
         .onAppear {
             loadGoals()
         }
-        .onChange(of: sleepGoalHours) { _ in saveGoals() }
-        .onChange(of: novaGoalPercentage) { _ in saveGoals() }
-        .onChange(of: stepsGoal) { _ in saveGoals() }
-        .onChange(of: waterGoalLiters) { _ in saveGoals() }
+        .onChange(of: sleepGoalHours) { saveGoals() }
+        .onChange(of: novaGoalPercentage) { saveGoals() }
+        .onChange(of: stepsGoal) { saveGoals() }
+        .onChange(of: waterGoalLiters) { saveGoals() }
     }
     
     private func loadGoals() {
@@ -998,7 +1170,10 @@ struct GoalsSettingsCard: View {
         stepsGoal = UserDefaults.standard.integer(forKey: "stepsGoal")
         if stepsGoal == 0 { stepsGoal = 10000 }
         
-        waterGoalLiters = userProfile.waterGoalLiters
+        activityCaloriesGoal = UserDefaults.standard.integer(forKey: "activityCaloriesGoal")
+        if activityCaloriesGoal == 0 { activityCaloriesGoal = 500 }
+        
+        // waterGoalLiters = userProfile.waterGoalLiters // TEMPORARILY DISABLED
     }
     
     private func saveGoals() {
@@ -1006,9 +1181,10 @@ struct GoalsSettingsCard: View {
         UserDefaults.standard.set(sleepGoalHours, forKey: "sleepGoalHours")
         UserDefaults.standard.set(novaGoalPercentage, forKey: "novaGoalPercentage")
         UserDefaults.standard.set(stepsGoal, forKey: "stepsGoal")
+        UserDefaults.standard.set(activityCaloriesGoal, forKey: "activityCaloriesGoal")
         
         // Update water goal in user profile
-        userProfile.waterGoalLiters = waterGoalLiters
+        // userProfile.userProfile.waterGoalLiters = waterGoalLiters // TEMPORARILY DISABLED
         
         // Post notification that goals have been updated
         NotificationCenter.default.post(name: .metricGoalsUpdated, object: nil)

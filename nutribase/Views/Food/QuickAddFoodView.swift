@@ -21,7 +21,6 @@ struct QuickAddFoodView: View {
     
     // Computed property to check if form is valid
     private var isFormValid: Bool {
-        !foodName.isEmpty && 
         !calories.isEmpty && Double(calories) != nil
     }
     
@@ -29,9 +28,6 @@ struct QuickAddFoodView: View {
         NavigationView {
             Form {
                 Section(header: Text("Food Details")) {
-                    TextField("Food Name", text: $foodName)
-                        .autocapitalization(.words)
-                    
                     HStack {
                         Text("Calories")
                         Spacer()
@@ -78,7 +74,7 @@ struct QuickAddFoodView: View {
                         if isFormValid {
                             addFoodItem()
                         } else {
-                            errorMessage = "Please enter a food name and calories"
+                            errorMessage = "Please enter calories"
                             showingError = true
                         }
                     } label: {
@@ -123,21 +119,22 @@ struct QuickAddFoodView: View {
         print("addFoodItem called - Form valid: \(isFormValid)")
         guard isFormValid else {
             print("Form validation failed")
-            errorMessage = "Please enter a food name and calories"
+            errorMessage = "Please enter calories"
             showingError = true
             return
         }
-        print("Creating food item with name: \(foodName), calories: \(calories)")
+        print("Creating food item: Quick Add, calories: \(calories)")
         
         // Create a custom food item with cached serving information
         let customFood = FoodItem(
-            name: foodName,
+            name: "Quick Add",
             barcode: nil,
             calories: Int(Double(calories) ?? 0),
             protein: Double(protein) ?? 0,
             carbs: Double(carbs) ?? 0,
             fat: Double(fat) ?? 0,
-            novaScore: 0, // Set to 0 to exclude from NOVA analytics
+            novaScore: 0, // No NOVA score for quick add
+            nutriScoreGrade: nil, // No NutriScore for quick add
             servingSize: "1 serving",
             cachedServingSize: 100.0,
             cachedServingUnit: "g",

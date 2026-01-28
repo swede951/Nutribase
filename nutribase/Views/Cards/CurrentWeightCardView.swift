@@ -8,12 +8,25 @@
 import SwiftUI
 
 struct CurrentWeightCardView: View {
+    var isPreview: Bool = false
+    var customPreviewWeight: Double? = nil  // Optional custom weight for onboarding
+    
     // Use WeightLogManager to access weight data
     @ObservedObject private var weightLogManager = WeightLogManager.shared
     
-    // Computed property to get the most recent weight entry
+    // Preview data - use custom weight if provided, otherwise default
+    private var previewWeight: Double { customPreviewWeight ?? 85.0 }
+    private var previewWeeklyRate: Double { 0.0 }  // No rate yet for new users
+    
+    // Computed property to get the most recent weight entry by date
     private var mostRecentEntry: WeightLogEntry? {
-        return weightLogManager.weightEntries.first
+        if isPreview { return nil }
+        return weightLogManager.weightEntries.max(by: { $0.date < $1.date })
+    }
+    
+    // Get the latest moving average value
+    private var latestMovingAverage: Double? {
+        return mostRecentEntry?.movingAverage
     }
     
     // Computed property to get the previous week's weight entry
@@ -29,49 +42,62 @@ struct CurrentWeightCardView: View {
         }
     }
     
-    // Calculate weight difference between current and previous week
+    // Calculate weight difference between current and previous week moving averages
     private var weightDifference: Double {
-        guard let current = mostRecentEntry?.weight,
-              let previous = previousWeekEntry?.weight else {
+        guard let current = mostRecentEntry?.movingAverage,
+              let previous = previousWeekEntry?.movingAverage else {
             return 0.0
         }
         return current - previous
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header with standardized top spacing
-            HStack {
-                Text("Weight")
-                    .font(.custom("Montserrat-SemiBold", size: 17))
-                Spacer()
-            }
-            .padding(.bottom, 4)
+        FixedSizeCard(title: "Weight") {
             VStack(alignment: .leading, spacing: 8) {
-                // Weight information
-                if let currentEntry = mostRecentEntry {
-                    // Display current weight
-                    Text("\(String(format: "%.1f", currentEntry.weight)) kg")
-                        .font(.custom("Montserrat-Bold", size: 28))
+                if isPreview {
+                    // Preview mode with static data
+                    Text("\(String(format: "%.1f", previewWeight)) kg")
+                        .font(.system(size: 28, weight: .bold))
                     
-                    // Display weight change if we have a previous entry
-                    if let _ = previousWeekEntry, weightDifference != 0 {
+                    if previewWeeklyRate != 0 {
                         HStack(spacing: 4) {
-                            Image(systemName: weightDifference < 0 ? "arrow.down" : "arrow.up")
-                                .foregroundColor(weightDifference < 0 ? .green : .red)
-                            
-                            Text("\(String(format: "%.1f", abs(weightDifference))) kg")
-                                .foregroundColor(weightDifference < 0 ? .green : .red)
+                            Image(systemName: "arrow.up")
+                                .foregroundColor(Color(hex: "#5ec5ff"))
                                 .font(.caption)
                             
-                            Text("from last week")
+                            Text("\(String(format: "%.1f", previewWeeklyRate)) kg")
+                                .foregroundColor(Color(hex: "#5ec5ff"))
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                            
+                            Text("Weekly Rate")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.accessibleSecondary)
                         }
                     } else {
-                        Text("No previous data")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("Your starting weight")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.accessibleSecondary)
+                    }
+                } else if let currentEntry = mostRecentEntry, let movingAvg = latestMovingAverage {
+                    // Display moving average weight with consistent typography
+                    Text("\(String(format: "%.1f", movingAvg)) kg")
+                        .font(.system(size: 28, weight: .bold))
+                    
+                    // Display weekly rate if available
+                    if let weeklyRate = currentEntry.weeklyRate {
+                        HStack(spacing: 4) {
+                            Image(systemName: weeklyRate < 0 ? "arrow.down" : "arrow.up")
+                                .foregroundColor(Color(hex: "#5ec5ff"))
+                                .font(.caption)
+                            
+                            Text("\(String(format: "%.1f", abs(weeklyRate))) kg")
+                                .foregroundColor(Color(hex: "#5ec5ff"))
+                                .font(.caption)
+                            
+                            Text("Weekly Rate")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.accessibleSecondary)
+                        }
                     }
                 } else {
                     // No weight entries yet
@@ -84,12 +110,7 @@ struct CurrentWeightCardView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
-            Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 6)
-        .frame(height: 120)
     }
 }
 

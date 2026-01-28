@@ -5,50 +5,31 @@ struct NovaCardWrapper<Content: View>: View {
     let content: Content
     @Binding var showingDetailView: Bool
     @Binding var showingInfo: Bool
+    let isPreview: Bool
     
-    init(showingDetailView: Binding<Bool>, showingInfo: Binding<Bool>, @ViewBuilder content: () -> Content) {
+    init(showingDetailView: Binding<Bool>, showingInfo: Binding<Bool>, isPreview: Bool = false, @ViewBuilder content: () -> Content) {
         self._showingDetailView = showingDetailView
         self._showingInfo = showingInfo
+        self.isPreview = isPreview
         self.content = content()
     }
     
     var body: some View {
-        Button(action: {
-            showingDetailView = true
-        }) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("NOVA Groups")
-                        .font(.custom("Montserrat-SemiBold", size: 17))
-                    Spacer()
-                    Button(action: {
-                        showingInfo = true
-                    }) {
-                        Image(systemName: "info.circle")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.bottom, 4)
-                
-                content
-                
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .frame(height: 120)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
-            )
-            .contentShape(Rectangle())
+        // Don't pass tap actions in preview mode to allow drag gestures to work
+        FixedSizeCard(
+            title: "NOVA Groups",
+            showInfoButton: !isPreview,
+            onInfoTap: isPreview ? nil : { showingInfo = true },
+            onCardTap: isPreview ? nil : { showingDetailView = true }
+        ) {
+            content
         }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
 struct NovaGroupsCardView: View {
+    var isPreview: Bool = false
+    
     @ObservedObject private var foodLogManager = FoodLogManager.shared
     
     // State for showing the detailed view
@@ -60,50 +41,81 @@ struct NovaGroupsCardView: View {
     // State to track the selected week (0 = current week, -1 = last week, etc.)
     @State private var weekOffset = 0
     
+    // Cached weekday data to avoid recalculating on every render
+    @State private var cachedWeekdayData: [(day: String, score: Double, distribution: [Int: Double])] = []
+    @State private var lastEntriesCount: Int = 0
+    
+    // Preview data
+    private var previewWeekdayData: [(day: String, score: Double, distribution: [Int: Double])] {
+        [
+            (day: "S", score: 0.8, distribution: [1: 0.6, 2: 0.1, 3: 0.2, 4: 0.1]),
+            (day: "S", score: 0.7, distribution: [1: 0.5, 2: 0.15, 3: 0.2, 4: 0.15]),
+            (day: "M", score: 0.85, distribution: [1: 0.7, 2: 0.1, 3: 0.1, 4: 0.1]),
+            (day: "T", score: 0.6, distribution: [1: 0.4, 2: 0.2, 3: 0.25, 4: 0.15]),
+            (day: "W", score: 0.75, distribution: [1: 0.55, 2: 0.15, 3: 0.2, 4: 0.1]),
+            (day: "T", score: 0.9, distribution: [1: 0.75, 2: 0.1, 3: 0.1, 4: 0.05]),
+            (day: "F", score: 0.65, distribution: [1: 0.45, 2: 0.15, 3: 0.25, 4: 0.15])
+        ]
+    }
+    
     // NOVA group colors
     private let novaColors: [Int: Color] = [
         1: Color(hex: "#3f993f"),      // Unprocessed - darker green
         2: Color(hex: "#b7ce0d"),      // Processed culinary ingredients - lime green
         3: Color(hex: "#f28e16"),      // Processed foods - orange
-        4: Color(hex: "#e4032f")       // Ultra-processed foods - bright red
+        4: Color(hex: "#d4455a")       // Ultra-processed foods - desaturated red
     ]
     
-    // Calculate NOVA scores and distribution for each day
-    private var weekdayData: [String: (score: Double, distribution: [Int: Double])] {
-        let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
-        var data: [String: (score: Double, distribution: [Int: Double])] = [:]
+    // Use cached weekday data
+    private var weekdayData: [(day: String, score: Double, distribution: [Int: Double])] {
+        if isPreview { return previewWeekdayData }
+        return cachedWeekdayData
+    }
+    
+    // Calculate NOVA scores and distribution for each day (last 7 days)
+    private func calculateWeekdayData() -> [(day: String, score: Double, distribution: [Int: Double])] {
+        var data: [(day: String, score: Double, distribution: [Int: Double])] = []
         
-        for day in days {
-            // Get the date for this day
-            let date = getDateForDay(day)
+        for daysAgo in (0..<7).reversed() {
+            // Get the date for this day (last 7 days)
+            let date = getDateForLastDays(daysAgo: daysAgo)
+            
+            // Get day letter
+            let calendar = Calendar.current
+            let weekday = calendar.component(.weekday, from: date)
+            let dayLetters = ["S", "M", "T", "W", "T", "F", "S"] // Sunday = 1, Monday = 2, etc.
+            let dayLetter = dayLetters[weekday - 1]
             
             // Get entries for this date (all meal types)
             let entries = getAllEntriesForDate(date)
             
             if entries.isEmpty {
-                data[day] = (score: 0.0, distribution: [:])
+                data.append((day: dayLetter, score: 0.0, distribution: [:]))
             } else {
-                // Calculate total calories
-                let totalCalories = entries.reduce(0) { $0 + $1.totalCalories }
+                // Expand meals into component foods for accurate NOVA scoring
+                let expandedFoods = foodLogManager.expandedFoodItems(for: entries)
+                
+                // Calculate total calories from expanded foods
+                let totalCalories = expandedFoods.reduce(0) { $0 + $1.calories }
                 
                 // Initialize distribution counters for each NOVA group
                 var groupCalories: [Int: Double] = [1: 0, 2: 0, 3: 0, 4: 0]
                 
-                // Calculate weighted score and group distribution
+                // Calculate weighted score and group distribution using expanded foods
                 var weightedScore = 0.0
-                for entry in entries {
-                    let novaScore = entry.foodItem.novaScore > 0 ? 
-                        entry.foodItem.novaScore : 
-                        NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
+                for food in expandedFoods {
+                    let novaScore = food.novaScore > 0 ? 
+                        food.novaScore : 
+                        NovaScoreService.shared.predictNovaScoreByName(food.name)
                     
                     // Add calories to the appropriate NOVA group
-                    groupCalories[novaScore, default: 0] += Double(entry.totalCalories)
+                    groupCalories[novaScore, default: 0] += Double(food.calories)
                     
                     // Invert the NOVA score (1 is best, 4 is worst)
                     let invertedScore = 5.0 - Double(novaScore)
                     
                     // Weight by calories
-                    let entryWeight = Double(entry.totalCalories) / Double(totalCalories)
+                    let entryWeight = Double(food.calories) / Double(totalCalories)
                     weightedScore += entryWeight * invertedScore / 4.0 // Normalize to 0-1
                 }
                 
@@ -113,7 +125,7 @@ struct NovaGroupsCardView: View {
                     distribution[group] = calories / Double(totalCalories)
                 }
                 
-                data[day] = (score: weightedScore, distribution: distribution)
+                data.append((day: dayLetter, score: weightedScore, distribution: distribution))
             }
         }
         
@@ -121,30 +133,26 @@ struct NovaGroupsCardView: View {
     }
     
     var body: some View {
-        NovaCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo) {
-            // Main content with bars on left, percentages on right
-            HStack(alignment: .center, spacing: 16) {
-                // Weekday bars on the left
-                HStack(alignment: .bottom, spacing: 8) {
-                    // Break up the complex expression into simpler parts
-                    let sortedDays = weekdayData.keys.sorted(by: { weekdayOrder($0) < weekdayOrder($1) })
-                    ForEach(sortedDays, id: \.self) { day in
-                        if let dayData = weekdayData[day] {
-                            WeekdayBar(day: day, score: dayData.score, novaDistribution: dayData.distribution, novaColors: novaColors)
-                                .frame(height: 35) // Height for bars
-                        }
-                    }
-                }
-                .frame(width: 180) // Fixed width for the bars section
-                
-                // Weekly average percentages stacked vertically on the right
-                VStack(spacing: 2) {
+        NovaCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
+            // Main content with better space utilization
+            HStack(alignment: .center, spacing: 12) {
+                // Weekly average percentages stacked vertically on the left
+                VStack(spacing: 3) {
                     percentageView(value: calculateWeeklyPercentage(for: 1), label: "Unprocessed", color: novaColors[1] ?? .gray)
                     percentageView(value: calculateWeeklyPercentage(for: 2), label: "Ingredients", color: novaColors[2] ?? .gray)
                     percentageView(value: calculateWeeklyPercentage(for: 3), label: "Processed", color: novaColors[3] ?? .gray)
                     percentageView(value: calculateWeeklyPercentage(for: 4), label: "Ultra", color: novaColors[4] ?? .gray)
                 }
-                .frame(width: 110) // Fixed width for the percentage column
+                .frame(minWidth: 100) // Minimum width but flexible
+                
+                // Weekday bars on the right - more compact spacing
+                HStack(alignment: .bottom, spacing: 6) {
+                    // Show all 7 days in order (oldest to newest, left to right)
+                    ForEach(Array(weekdayData.enumerated()), id: \.offset) { index, dayData in
+                        WeekdayBar(day: dayData.day, score: dayData.score, novaDistribution: dayData.distribution, novaColors: novaColors)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 50) // Use available space flexibly with increased height
             }
         }
         .sheet(isPresented: $showingDetailView) {
@@ -153,51 +161,147 @@ struct NovaGroupsCardView: View {
         .sheet(isPresented: $showingInfo) {
             NovaInfoView()
         }
+        .allowsHitTesting(!isPreview)
+        .onAppear {
+            updateCacheIfNeeded()
+            // Pre-warm the global cache for faster detail view opening
+            prewarmGlobalCache()
+        }
+        .onChange(of: foodLogManager.entries.count) { _, _ in
+            updateCacheIfNeeded()
+            // Re-warm cache when data changes
+            prewarmGlobalCache()
+        }
     }
     
-    // Helper function to determine weekday order
-    private func weekdayOrder(_ day: String) -> Int {
-        let order = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
-        return order.firstIndex(of: day) ?? 0
+    // Update cache only when entries change
+    private func updateCacheIfNeeded() {
+        guard !isPreview else { return }
+        let currentCount = foodLogManager.entries.count
+        if currentCount != lastEntriesCount || cachedWeekdayData.isEmpty {
+            cachedWeekdayData = calculateWeekdayData()
+            lastEntriesCount = currentCount
+        }
     }
     
-    // Helper function to create a percentage view
+    // Pre-warm the global ChartDataCacheManager for faster detail view opening
+    private func prewarmGlobalCache() {
+        guard !isPreview else { return }
+        
+        // Pre-compute NOVA data in background so detail view opens instantly
+        Task.detached(priority: .background) {
+            let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
+            var dailyData: [String: [Int: Int]] = [:]
+            var hasEntries: [String: Bool] = [:]
+            var weeklyAverage: [Int: Double] = [1: 0, 2: 0, 3: 0, 4: 0]
+            var totalCalories = 0
+            var groupCalories: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0]
+            
+            for day in days {
+                let date = await MainActor.run { self.getDateForDay(day) }
+                let entries = await MainActor.run { self.getAllEntriesForDate(date) }
+                hasEntries[day] = !entries.isEmpty
+                
+                if !entries.isEmpty {
+                    let expandedFoods = await MainActor.run { self.foodLogManager.expandedFoodItems(for: entries) }
+                    var dayData: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0]
+                    
+                    for food in expandedFoods {
+                        let novaScore = food.novaScore > 0 ? 
+                            food.novaScore : 
+                            NovaScoreService.shared.predictNovaScoreByName(food.name)
+                        dayData[novaScore, default: 0] += food.calories
+                        groupCalories[novaScore, default: 0] += food.calories
+                        totalCalories += food.calories
+                    }
+                    dailyData[day] = dayData
+                } else {
+                    dailyData[day] = [1: 0, 2: 0, 3: 0, 4: 0]
+                }
+            }
+            
+            // Calculate weekly averages
+            if totalCalories > 0 {
+                for group in 1...4 {
+                    weeklyAverage[group] = Double(groupCalories[group, default: 0]) / Double(totalCalories) * 100.0
+                }
+            }
+            
+            // Store in global cache
+            let cache = ChartDataCacheManager.WeeklyNovaCache(
+                weekOffset: 0,
+                dailyData: dailyData,
+                hasEntries: hasEntries,
+                weeklyAverage: weeklyAverage,
+                timestamp: Date(),
+                dataHash: totalCalories
+            )
+            
+            await MainActor.run {
+                ChartDataCacheManager.shared.setWeeklyNovaCache(cache)
+            }
+        }
+    }
+    
+    // Get date for X days ago
+    private func getDateForLastDays(daysAgo: Int) -> Date {
+        let calendar = Calendar.current
+        return calendar.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+    }
+    
+    // Helper function to create a percentage view with inactive state handling
     private func percentageView(value: Double, label: String, color: Color) -> some View {
-        HStack(alignment: .center, spacing: 4) {
+        let isInactive = value == 0.0
+        
+        return HStack(alignment: .center, spacing: 4) {
             Text("\(Int(value))%")
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundColor(color)
+                .foregroundColor(isInactive ? color.opacity(0.3) : color)
             
             Text(label)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(isInactive ? .secondary.opacity(0.5) : .secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .opacity(isInactive ? 0.6 : 1.0)
+        .animation(.easeInOut(duration: 0.3), value: isInactive)
     }
     
-    // Calculate the weekly percentage for a specific NOVA group
+    // Calculate the percentage for a specific NOVA group over last 7 days
     private func calculateWeeklyPercentage(for novaGroup: Int) -> Double {
-        let days = ["M", "Tu", "W", "Th", "F", "Sa", "Su"]
+        if isPreview {
+            switch novaGroup {
+            case 1: return 55.0
+            case 2: return 15.0
+            case 3: return 20.0
+            case 4: return 10.0
+            default: return 0.0
+            }
+        }
+        
         var totalGroupCalories = 0
         var totalCalories = 0
         
-        // Sum up calories for each day
-        for day in days {
-            let date = getDateForDay(day)
+        // Sum up calories for last 7 days
+        for daysAgo in 0..<7 {
+            let date = getDateForLastDays(daysAgo: daysAgo)
             let entries = getAllEntriesForDate(date)
             
+            // Expand meals into component foods for accurate NOVA scoring
+            let expandedFoods = foodLogManager.expandedFoodItems(for: entries)
+            
             // Add to total calories
-            let dayTotalCalories = entries.reduce(0) { $0 + $1.totalCalories }
+            let dayTotalCalories = expandedFoods.reduce(0) { $0 + $1.calories }
             totalCalories += dayTotalCalories
             
-            // Add to group calories
-            let dayGroupCalories = entries.reduce(0) { result, entry in
-                let entryNovaScore = entry.foodItem.novaScore > 0 ? 
-                    entry.foodItem.novaScore : 
-                    NovaScoreService.shared.predictNovaScore(for: entry.foodItem)
+            // Add to group calories using expanded foods
+            let dayGroupCalories = expandedFoods.reduce(0) { result, food in
+                let foodNovaScore = food.novaScore > 0 ? 
+                    food.novaScore : 
+                    NovaScoreService.shared.predictNovaScoreByName(food.name)
                 
-                return result + (entryNovaScore == novaGroup ? entry.totalCalories : 0)
+                return result + (foodNovaScore == novaGroup ? food.calories : 0)
             }
             totalGroupCalories += dayGroupCalories
         }
@@ -321,14 +425,10 @@ struct WeekdayBar: View {
     
     var body: some View {
         VStack(spacing: 4) {
-            Text(day)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            
             // Background bar
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: 3)
                 .fill(Color(.systemGray5))
-                .frame(width: 8, height: 35)
+                .frame(width: 12, height: 50)
                 .overlay(
                     // Stacked bars for each NOVA group
                     GeometryReader { geometry in
@@ -345,21 +445,25 @@ struct WeekdayBar: View {
                                             if let percentage = novaDistribution[group], percentage > 0 {
                                                 Rectangle()
                                                     .fill(novaColors[group] ?? .gray)
-                                                    .frame(width: 8, height: geometry.size.height * percentage)
+                                                    .frame(width: 12, height: geometry.size.height * percentage)
                                             }
                                         }
                                     }
                                 }
-                                .clipShape(RoundedRectangle(cornerRadius: 2))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
                             } else {
                                 // Fallback to simple score representation
-                                RoundedRectangle(cornerRadius: 2)
+                                RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.green.opacity(score))
-                                    .frame(width: 8, height: max(3, geometry.size.height * score))
+                                    .frame(width: 12, height: max(4, geometry.size.height * score))
                             }
                         }
                     }
                 )
+            
+            Text(day)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 }

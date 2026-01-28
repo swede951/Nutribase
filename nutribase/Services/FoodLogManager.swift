@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 // Food entry model
-struct FoodEntry: Identifiable, Codable {
+struct FoodEntry: Identifiable, Codable, Equatable {
     let id: UUID
     let foodItem: FoodItem
     let mealType: String
@@ -14,40 +14,25 @@ struct FoodEntry: Identifiable, Codable {
     
     // Check if using original serving size from database
     private var isUsingOriginalServingSize: Bool {
+        // "serving", "servings", or "meal" unit types mean original serving size was selected
+        let unitLower = servingUnit.lowercased()
+        if unitLower == "serving" || unitLower == "servings" || unitLower == "meal" {
+            return true
+        }
+        
         guard let originalServingSize = foodItem.servingSize else { 
-            print("🔍 isUsingOriginalServingSize: No original serving size, returning false")
             return false 
         }
         
-        // Check if the original serving size contains our current serving size and unit
         let originalLower = originalServingSize.lowercased()
-        let currentSize = String(format: "%.1f", servingSize).replacingOccurrences(of: ".0", with: "")
+        let currentSize = String(format: "%.0f", servingSize)
         let currentUnit = servingUnit.lowercased()
         
-        let result = originalLower.contains(currentSize) && originalLower.contains(currentUnit)
-        
-        print("🔍 isUsingOriginalServingSize for \(foodItem.name):")
-        print("   - originalServingSize: '\(originalServingSize)' -> '\(originalLower)'")
-        print("   - currentSize: \(servingSize) -> '\(currentSize)'")
-        print("   - currentUnit: '\(servingUnit)' -> '\(currentUnit)'")
-        print("   - contains size: \(originalLower.contains(currentSize))")
-        print("   - contains unit: \(originalLower.contains(currentUnit))")
-        print("   - result: \(result)")
-        
-        return result
+        return originalLower.contains(currentSize) && originalLower.contains(currentUnit)
     }
     
     var totalCalories: Int {
-        print("🍿 totalCalories for \(foodItem.name):")
-        print("   - foodCalories: \(foodItem.calories)")
-        print("   - servingSize: \(servingSize)")
-        print("   - servingUnit: \(servingUnit)")
-        print("   - numberOfServings: \(numberOfServings)")
-        print("   - isOriginalServingSize: \(isUsingOriginalServingSize)")
-        print("   - servingDescription: \(foodItem.servingSize ?? "nil")")
-        print("   - servingQuantity: \(foodItem.servingsPerPackage ?? 0)")
-        
-        let result = NutritionCalculator.calculateCalories(
+        return NutritionCalculator.calculateCalories(
             foodCalories: foodItem.calories,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -56,21 +41,10 @@ struct FoodEntry: Identifiable, Codable {
             servingDescription: foodItem.servingSize,
             servingQuantity: foodItem.servingsPerPackage
         )
-        
-        print("   - calculated result: \(result) calories")
-        return result
     }
     
     var totalProtein: Double {
-        print("🔍 FoodEntry.totalProtein called for \(foodItem.name)")
-        print("   - foodItem.protein: \(foodItem.protein)")
-        print("   - servingSize: \(servingSize)")
-        print("   - servingUnit: \(servingUnit)")
-        print("   - numberOfServings: \(numberOfServings)")
-        print("   - isUsingOriginalServingSize: \(isUsingOriginalServingSize)")
-        print("   - servingDescription: \(foodItem.servingSize ?? "nil")")
-        
-        let result = NutritionCalculator.calculateMacro(
+        return NutritionCalculator.calculateMacro(
             macroValue: foodItem.protein,
             servingSize: servingSize,
             servingUnit: servingUnit,
@@ -79,8 +53,6 @@ struct FoodEntry: Identifiable, Codable {
             servingDescription: foodItem.servingSize,
             servingQuantity: foodItem.servingsPerPackage
         )
-        print("FoodEntry.totalProtein: \(foodItem.name) - protein=\(foodItem.protein), result=\(result)")
-        return result
     }
     
     var totalCarbs: Double {
@@ -93,7 +65,6 @@ struct FoodEntry: Identifiable, Codable {
             servingDescription: foodItem.servingSize,
             servingQuantity: foodItem.servingsPerPackage
         )
-        print("FoodEntry.totalCarbs: \(foodItem.name) - carbs=\(foodItem.carbs), result=\(result)")
         return result
     }
     
@@ -107,7 +78,6 @@ struct FoodEntry: Identifiable, Codable {
             servingDescription: foodItem.servingSize,
             servingQuantity: foodItem.servingsPerPackage
         )
-        print("FoodEntry.totalFat: \(foodItem.name) - fat=\(foodItem.fat), result=\(result)")
         return result
     }
 }
@@ -116,42 +86,86 @@ struct FoodEntry: Identifiable, Codable {
 class FoodLogManager: ObservableObject {
     static let shared = FoodLogManager()
     
-    @Published var entries: [FoodEntry] = []
+    @Published var entries: [FoodEntry] = [] {
+        didSet {
+            // Invalidate caches when entries change
+            dailyTotalsCache.removeAll()
+            GutHealthScoreService.shared.invalidateCache()
+        }
+    }
     
-    // Persistent streak data
+    // Cache for daily totals to avoid repeated calculations
+    private var dailyTotalsCache: [String: DailyTotals] = [:]
+    
+    private struct DailyTotals {
+        let calories: Int
+        let protein: Int
+        let carbs: Int
+        let fat: Int
+    }
+    
     @Published private var persistentStreak: Int = 0
     @Published private var lastLoggedDate: Date? = nil
     
-    // Keys for UserDefaults storage
+    // Keys for UserDefaults storage (user-specific)
     private var streakKey: String {
-        // Simplified - use local storage only
-        print("[FoodLogManager] Using local storage for food logs")
-        return "foodLogStreak_default"
+        if let authenticatedUser = FirebaseAuthService.shared.currentUser {
+            return "foodLogStreak_\(authenticatedUser.id)"
+        } else {
+            // Fallback to local UUID for offline usage
+            if let localUserId = UserDefaults.standard.string(forKey: "current_user_id") {
+                return "foodLogStreak_\(localUserId)"
+            }
+            return "foodLogStreak_default"
+        }
     }
     
     private var lastLoggedDateKey: String {
-        return "lastLoggedDate_default"
+        if let authenticatedUser = FirebaseAuthService.shared.currentUser {
+            return "lastLoggedDate_\(authenticatedUser.id)"
+        } else {
+            // Fallback to local UUID for offline usage
+            if let localUserId = UserDefaults.standard.string(forKey: "current_user_id") {
+                return "lastLoggedDate_\(localUserId)"
+            }
+            return "lastLoggedDate_default"
+        }
     }
-    
-    // Reference to the Supabase service for user authentication
-    private let supabaseService = SupabaseService.shared
     
     // Cancellables for managing subscriptions
     private var cancellables = Set<AnyCancellable>()
     
     // Key for UserDefaults storage (user-specific)
     private var foodEntriesKey: String {
-        return "foodEntries_default"
+        if let authenticatedUser = FirebaseAuthService.shared.currentUser {
+            return "foodEntries_\(authenticatedUser.id)"
+        } else {
+            // Fallback to local UUID for offline usage
+            if let localUserId = UserDefaults.standard.string(forKey: "current_user_id") {
+                return "foodEntries_\(localUserId)"
+            }
+            return "foodEntries_default"
+        }
     }
     
     private init() {
         loadEntries()
         loadStreakData()
         
-        // Subscribe to authentication changes to sync streak data
+        // Subscribe to authentication changes to reload user-specific data
         NotificationCenter.default.publisher(for: .userDidSignIn)
             .sink { [weak self] _ in
-                self?.loadStreakFromSupabase()
+                // Reload entries for the new user
+                self?.loadEntries()
+                self?.loadStreakData()
+            }
+            .store(in: &cancellables)
+            
+        NotificationCenter.default.publisher(for: .userDidSignOut)
+            .sink { [weak self] _ in
+                // Reload entries for guest mode
+                self?.loadEntries()
+                self?.loadStreakData()
             }
             .store(in: &cancellables)
             
@@ -189,22 +203,65 @@ class FoodLogManager: ObservableObject {
     }
     
     // Add a new food entry
-    func addEntry(foodItem: FoodItem, mealType: String, servingSize: Double, servingUnit: String, numberOfServings: Double, date: Date = Date()) {
-        let newEntry = FoodEntry(
-            id: UUID(),
-            foodItem: foodItem,
-            mealType: mealType,
+    func addEntry(foodItem: FoodItem, mealType: String, servingSize: Double, servingUnit: String, numberOfServings: Double, date: Date = Date(), selectedServingSizeOption: String? = nil) {
+        // Quick Add entries should never be stacked - each is a separate entry
+        let isQuickAdd = foodItem.name == "Quick Add"
+        
+        // Check if there's already an entry for the same food, meal type, and date
+        let calendar = Calendar.current
+        if !isQuickAdd, let existingEntryIndex = entries.firstIndex(where: { entry in
+            // Compare food items by name and brand (since UUIDs might be different)
+            let sameFood = entry.foodItem.name == foodItem.name && 
+                          entry.foodItem.brandName == foodItem.brandName
+            let sameMeal = entry.mealType == mealType
+            let sameDate = calendar.isDate(entry.dateAdded, inSameDayAs: date)
+            let sameServingUnit = entry.servingUnit == servingUnit
+            
+            return sameFood && sameMeal && sameDate && sameServingUnit
+        }) {
+            // Update existing entry by adding the new serving quantity
+            let existingEntry = entries[existingEntryIndex]
+            let updatedEntry = FoodEntry(
+                id: existingEntry.id, // Keep the same ID
+                foodItem: existingEntry.foodItem,
+                mealType: existingEntry.mealType,
+                servingSize: existingEntry.servingSize,
+                servingUnit: existingEntry.servingUnit,
+                numberOfServings: existingEntry.numberOfServings + numberOfServings,
+                dateAdded: existingEntry.dateAdded
+            )
+            
+            entries[existingEntryIndex] = updatedEntry
+            print("🔄 Updated existing entry: \(foodItem.name) - New total servings: \(updatedEntry.numberOfServings)")
+        } else {
+            // Create new entry if no existing one found
+            let newEntry = FoodEntry(
+                id: UUID(),
+                foodItem: foodItem,
+                mealType: mealType,
+                servingSize: servingSize,
+                servingUnit: servingUnit,
+                numberOfServings: numberOfServings,
+                dateAdded: date
+            )
+            
+            entries.append(newEntry)
+            print("➕ Added new entry: \(foodItem.name) - Servings: \(numberOfServings)")
+        }
+        
+        saveEntries()
+        
+        // Cache the serving information for future use
+        FoodServingCacheService.shared.cacheServingInfo(
+            for: foodItem,
             servingSize: servingSize,
             servingUnit: servingUnit,
             numberOfServings: numberOfServings,
-            dateAdded: date
+            selectedServingSizeOption: selectedServingSizeOption
         )
         
-        entries.append(newEntry)
-        saveEntries()
-        
         // Update streak when adding an entry
-        updateStreakOnEntryAdded(newEntry.dateAdded)
+        updateStreakOnEntryAdded(date)
         
         // Post notification for views to update
         NotificationCenter.default.post(name: .foodLogUpdated, object: nil)
@@ -293,17 +350,38 @@ class FoodLogManager: ObservableObject {
     
     // Calculate total calories for an entire day across all meal types
     func totalCaloriesForDay(date: Date) -> Int {
-        let calendar = Calendar.current
-        let dayEntries = entries.filter { calendar.isDate($0.dateAdded, inSameDayAs: date) }
-        return dayEntries.reduce(0) { $0 + $1.totalCalories }
+        return getDailyTotals(for: date).calories
     }
     
     func totalProteinForDay(date: Date) -> Int {
+        return getDailyTotals(for: date).protein
+    }
+    
+    // Get cached daily totals or calculate and cache them
+    private func getDailyTotals(for date: Date) -> DailyTotals {
         let calendar = Calendar.current
+        let dateKey = calendar.startOfDay(for: date).timeIntervalSince1970.description
+        
+        // Return cached value if available
+        if let cached = dailyTotalsCache[dateKey] {
+            return cached
+        }
+        
+        // Get entries for the date and expand meals into component foods
         let dayEntries = entries.filter { calendar.isDate($0.dateAdded, inSameDayAs: date) }
-        let total = dayEntries.reduce(0.0) { $0 + $1.totalProtein }
-        print("FoodLogManager.totalProteinForDay: \(dayEntries.count) entries, total=\(total)")
-        return Int(total)
+        let expandedItems = expandedFoodItems(for: dayEntries)
+        
+        // Calculate all totals from expanded food items
+        let totals = DailyTotals(
+            calories: expandedItems.reduce(0) { $0 + $1.calories },
+            protein: Int(expandedItems.reduce(0.0) { $0 + $1.protein }),
+            carbs: Int(expandedItems.reduce(0.0) { $0 + $1.carbs }),
+            fat: Int(expandedItems.reduce(0.0) { $0 + $1.fat })
+        )
+        
+        // Cache the result
+        dailyTotalsCache[dateKey] = totals
+        return totals
     }
     
     // Calculate current logging streak (consecutive days with food entries)
@@ -340,19 +418,11 @@ class FoodLogManager: ObservableObject {
     }
     
     func totalFatForDay(date: Date) -> Int {
-        let calendar = Calendar.current
-        let dayEntries = entries.filter { calendar.isDate($0.dateAdded, inSameDayAs: date) }
-        let total = dayEntries.reduce(0.0) { $0 + $1.totalFat }
-        print("FoodLogManager.totalFatForDay: \(dayEntries.count) entries, total=\(total)")
-        return Int(total)
+        return getDailyTotals(for: date).fat
     }
     
     func totalCarbsForDay(date: Date) -> Int {
-        let calendar = Calendar.current
-        let dayEntries = entries.filter { calendar.isDate($0.dateAdded, inSameDayAs: date) }
-        let total = dayEntries.reduce(0.0) { $0 + $1.totalCarbs }
-        print("FoodLogManager.totalCarbsForDay: \(dayEntries.count) entries, total=\(total)")
-        return Int(total)
+        return getDailyTotals(for: date).carbs
     }
     
     // Get the current logging streak as a computed property
@@ -417,6 +487,66 @@ class FoodLogManager: ObservableObject {
         return entries.contains { calendar.isDate($0.dateAdded, inSameDayAs: date) }
     }
     
+    /// Represents a food item with its nutrition and scores for dashboard calculations
+    struct ExpandedFoodItem {
+        let name: String
+        let calories: Int
+        let protein: Double
+        let carbs: Double
+        let fat: Double
+        let novaScore: Int
+        let novaScoreIsEstimated: Bool
+        let nutriScoreGrade: String?
+        let nutriScoreIsEstimated: Bool
+    }
+    
+    /// Expands food entries into individual food items, expanding meals into their component foods
+    /// This should be used for dashboard calculations (NOVA, Nutri-Score, Gut Health) to get accurate per-food data
+    func expandedFoodItems(for entries: [FoodEntry]) -> [ExpandedFoodItem] {
+        var expandedItems: [ExpandedFoodItem] = []
+        
+        for entry in entries {
+            // Check if this entry is a meal (using the isMeal flag on FoodItem)
+            if entry.foodItem.isMeal, let savedMeal = SavedMealsManager.shared.meals.first(where: { $0.name == entry.foodItem.name }) {
+                // Expand meal into component foods
+                for mealFood in savedMeal.foods {
+                    // Scale nutrition by number of servings
+                    let scaledCalories = Int(Double(mealFood.calories) * entry.numberOfServings)
+                    let scaledProtein = mealFood.protein * entry.numberOfServings
+                    let scaledCarbs = mealFood.carbs * entry.numberOfServings
+                    let scaledFat = mealFood.fat * entry.numberOfServings
+                    
+                    expandedItems.append(ExpandedFoodItem(
+                        name: mealFood.foodName,
+                        calories: scaledCalories,
+                        protein: scaledProtein,
+                        carbs: scaledCarbs,
+                        fat: scaledFat,
+                        novaScore: mealFood.novaScore,
+                        novaScoreIsEstimated: mealFood.novaScoreIsEstimated,
+                        nutriScoreGrade: mealFood.nutriScoreGrade,
+                        nutriScoreIsEstimated: mealFood.nutriScoreIsEstimated
+                    ))
+                }
+            } else {
+                // Regular food item - add directly
+                expandedItems.append(ExpandedFoodItem(
+                    name: entry.foodItem.name,
+                    calories: entry.totalCalories,
+                    protein: entry.totalProtein,
+                    carbs: entry.totalCarbs,
+                    fat: entry.totalFat,
+                    novaScore: entry.foodItem.novaScore,
+                    novaScoreIsEstimated: entry.foodItem.novaScoreIsEstimated,
+                    nutriScoreGrade: entry.foodItem.nutriScoreGrade,
+                    nutriScoreIsEstimated: entry.foodItem.nutriScoreIsEstimated
+                ))
+            }
+        }
+        
+        return expandedItems
+    }
+    
     // Load streak data from UserDefaults
     private func loadStreakData() {
         persistentStreak = UserDefaults.standard.integer(forKey: streakKey)
@@ -435,12 +565,6 @@ class FoodLogManager: ObservableObject {
         } else {
             UserDefaults.standard.removeObject(forKey: lastLoggedDateKey)
         }
-    }
-    
-    // Load streak data from Supabase on sign-in
-    private func loadStreakFromSupabase() {
-        // Streak sync disabled - use local values
-        print("[FoodLogManager] Using local streak values")
     }
     
     // Clear all food data for the current user
@@ -472,4 +596,5 @@ class FoodLogManager: ObservableObject {
 extension Notification.Name {
     static let foodLogUpdated = Notification.Name("foodLogUpdated")
     static let navigateToFoodLog = Notification.Name("navigateToFoodLog")
+    static let exitEditMode = Notification.Name("exitEditMode")
 }

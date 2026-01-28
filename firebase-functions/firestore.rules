@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Food Flags Collection - READ ONLY for users, WRITE via Cloud Functions only
+    match /food_flags/{flagId} {
+      // Users can only read their own flags
+      allow read: if request.auth != null && 
+                     request.auth.uid == resource.data.userId;
+      
+      // NO direct writes - all writes must go through Cloud Functions
+      allow write: if false;
+    }
+    
+    // Admin-only access (optional - for admin dashboard)
+    match /food_flags/{flagId} {
+      // Admins can read all flags
+      allow read: if request.auth != null && 
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      
+      // Admins can update flag status
+      allow update: if request.auth != null && 
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+                       request.resource.data.keys().hasOnly(['status', 'reviewedAt', 'reviewedBy', 'resolutionNotes']);
+    }
+    
+    // User profiles (if you have them)
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

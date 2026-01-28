@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "source": ".",
+    "predeploy": []
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

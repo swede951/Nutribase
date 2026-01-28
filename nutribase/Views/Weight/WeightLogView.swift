@@ -5,8 +5,17 @@ import Combine // For potential ObservableObject usage
 import HealthKit
 
 struct WeightLogView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var weightManager = WeightLogManager.shared
     @State private var showingFilePicker = false
+    
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     @State private var showingUploadOptions = false
     @State private var showingImportAlert = false
     @State private var importAlertMessage = ""
@@ -18,20 +27,77 @@ struct WeightLogView: View {
     @State private var isAutoSyncSuccessful = false
     @State private var showingAutoSyncAlert = false
     @State private var refreshID = UUID()
+    
+    // Display settings from UserDefaults
+    @AppStorage("showMovingAverage") private var showMovingAverage = true
+    @AppStorage("showWeeklyRate") private var showWeeklyRate = true
+    @AppStorage("showNotes") private var showNotes = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Custom header with centered title and light peach/orange background
+        ZStack {
+            // Background color layer
+            viewBackground
+                .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                if !weightManager.hasLoadedAllEntries {
+                    // Show loading indicator while entries are being loaded
+                    VStack {
+                        Spacer()
+                        ProgressView("Loading weight data...")
+                            .progressViewStyle(CircularProgressViewStyle())
+                        Spacer()
+                    }
+                    .onAppear {
+                        print("[WeightLogView] Showing loading screen - hasLoadedAllEntries: \(weightManager.hasLoadedAllEntries), entries count: \(weightManager.weightEntries.count)")
+                    }
+                } else if weightManager.weightEntries.isEmpty {
+                    // Show empty state view with import options
+                    WeightEmptyStateView(showingFilePicker: $showingFilePicker, weightManager: weightManager)
+                } else {
+                    // Show weight entries
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(spacing: 16) {
+                            ForEach(Array(weightManager.groupedEntries.keys.sorted(by: >)), id: \.self) { monthKey in
+                                if let entries = weightManager.groupedEntries[monthKey] {
+                                    MonthCardView(
+                                        monthName: weightManager.weightEntries.monthDisplayName(for: monthKey),
+                                        entries: entries,
+                                        showMovingAverage: showMovingAverage,
+                                        showWeeklyRate: showWeeklyRate,
+                                        showNotes: showNotes
+                                    )
+                                    .id(monthKey)
+                                }
+                            }
+                            
+                            // Load more indicator at the bottom
+                            if !weightManager.hasLoadedAllEntries {
+                                ProgressView("Loading more entries...")
+                                    .padding()
+                                    .onAppear {
+                                        weightManager.loadMoreEntries()
+                                    }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 16)
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            // Custom header with centered title
             ZStack {
-                // Center - title (positioned absolutely in the center)
+                // Center - title
                 Text("Logbook")
-                    .font(.custom("Montserrat-Bold", size: 17))
-                    .foregroundColor(.black)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.primary)
                     .frame(maxWidth: .infinity)
                 
-                // Left side - add weight button (only show if there's data)
+                // Left side - add weight button
                 HStack {
-                    // Add weight button (only show if there's data)
                     if !weightManager.weightEntries.isEmpty {
                         Button(action: {
                             showingAddWeight = true
@@ -39,27 +105,20 @@ struct WeightLogView: View {
                             Image(systemName: "plus")
                                 .foregroundColor(.primary)
                         }
-                        .help("Add Weight Entry")
                     }
-                    
                     Spacer()
                 }
                 
-                // Right side - buttons (only show if there's data)
+                // Right side - buttons
                 HStack {
                     Spacer()
-                    
                     if !weightManager.weightEntries.isEmpty {
-                        // Import button
                         Button(action: {
                             showingUploadOptions = true
                         }) {
                             Image(systemName: "square.and.arrow.down")
                                 .foregroundColor(.primary)
                         }
-                        .help("Import CSV")
-                        
-                        // Settings button
                         Button(action: {
                             showingSettings = true
                         }) {
@@ -70,63 +129,10 @@ struct WeightLogView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.bottom, 8)
-            .padding(.top, 1) // Reduced top padding
-            .background(Color(hex: "#F0F1F4"))
-            
-            if !weightManager.hasLoadedAllEntries {
-                // Show loading indicator while entries are being loaded
-                VStack {
-                    Spacer()
-                    ProgressView("Loading weight data...")
-                        .progressViewStyle(CircularProgressViewStyle())
-                    Spacer()
-                }
-                .onAppear {
-                    print("[WeightLogView] Showing loading screen - hasLoadedAllEntries: \(weightManager.hasLoadedAllEntries), entries count: \(weightManager.weightEntries.count)")
-                }
-            } else if weightManager.weightEntries.isEmpty {
-                // Show empty state view with import options
-                WeightEmptyStateView(showingFilePicker: $showingFilePicker, weightManager: weightManager)
-            } else {
-                // Show weight entries
-                ScrollView(.vertical, showsIndicators: true) {
-                    // Apply background color to the entire ScrollView
-                    ZStack {
-                        // Background color layer - using light gray background to match Phases view
-                        Color(hex: "#F0F1F4")
-                            .ignoresSafeArea(.all)
-                        
-                        LazyVStack(spacing: 16) {
-                            ForEach(Array(weightManager.groupedEntries.keys.sorted(by: >)), id: \.self) { monthKey in
-                                if let entries = weightManager.groupedEntries[monthKey] {
-                                    MonthCardView(
-                                        monthName: weightManager.weightEntries.monthDisplayName(for: monthKey),
-                                        entries: entries
-                                    )
-                                    .id(monthKey) // Add id for scroll position tracking
-                                }
-                            }
-                            
-                            // Load more indicator at the bottom
-                            if !weightManager.hasLoadedAllEntries {
-                                ProgressView("Loading more entries...")
-                                    .padding()
-                                    .onAppear {
-                                        // Load more entries when this view appears (user scrolled to bottom)
-                                        weightManager.loadMoreEntries()
-                                    }
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 16)
-                    }
-                }
-                .scrollDisabled(false)
-                .clipped()
-            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(viewBackground)
         }
-        .background(Color(hex: "#F0F1F4"))
         .id(refreshID)
         // No need to load sample data as it's handled by the WeightLogManager
         .sheet(isPresented: $showingUploadOptions) {
@@ -160,6 +166,9 @@ struct WeightLogView: View {
             message: { Text(importAlertMessage) }
         )
         .onAppear {
+            // Track page view
+            AnalyticsService.shared.trackWeightLogbookView()
+            
             // Check for automatic Health app updates when the view appears
             checkForHealthAppUpdates()
         }
@@ -227,66 +236,133 @@ struct WeightLogView: View {
 }
 
 struct MonthCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let monthName: String
     let entries: [WeightLogEntry]
+    let showMovingAverage: Bool
+    let showWeeklyRate: Bool
+    let showNotes: Bool
     @StateObject private var weightManager = WeightLogManager.shared
     @State private var showDeleteConfirmation = false
     @State private var entryToDelete: WeightLogEntry? = nil
     @State private var localEntries: [WeightLogEntry]
     
-    init(monthName: String, entries: [WeightLogEntry]) {
+    // Performance: Use cached formatters
+    private let performanceCache = PerformanceCache.shared
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
+    
+    // Calculate if weight increased or decreased this month
+    private var monthWeightChange: Double {
+        guard entries.count >= 2 else { return 0 }
+        let sortedEntries = entries.sorted { $0.date < $1.date }
+        let firstWeight = sortedEntries.first?.weight ?? 0
+        let lastWeight = sortedEntries.last?.weight ?? 0
+        return lastWeight - firstWeight
+    }
+    
+    // Gradient color based on weight change
+    private var gradientColor: Color {
+        if monthWeightChange > 0 {
+            return Color.orange // Weight gain
+        } else {
+            return Color(hex: "#35b8ff") // Weight loss or no change (blue)
+        }
+    }
+    
+    // Performance: Pre-computed gradient key for caching
+    private var gradientCacheKey: String {
+        let colorKey = monthWeightChange > 0 ? "orange" : "blue"
+        let modeKey = colorScheme == .dark ? "dark" : "light"
+        return "monthHeader_\(colorKey)_\(modeKey)"
+    }
+    
+    // Performance: Cached gradient image
+    private var cachedGradientImage: UIImage {
+        let baseColor = monthWeightChange > 0 ? UIColor.systemOrange : UIColor(red: 0.21, green: 0.72, blue: 1.0, alpha: 1.0)
+        let bgColor = colorScheme == .dark ? UIColor.systemGray6 : UIColor.systemBackground
+        
+        return performanceCache.getOrCreateGradient(
+            key: gradientCacheKey,
+            colors: [
+                baseColor.withAlphaComponent(0.7),
+                baseColor.withAlphaComponent(0.5),
+                baseColor.withAlphaComponent(0.25),
+                bgColor
+            ],
+            size: CGSize(width: 400, height: 100),
+            direction: .vertical
+        )
+    }
+    
+    init(monthName: String, entries: [WeightLogEntry], showMovingAverage: Bool, showWeeklyRate: Bool, showNotes: Bool) {
         self.monthName = monthName
         self.entries = entries
+        self.showMovingAverage = showMovingAverage
+        self.showWeeklyRate = showWeeklyRate
+        self.showNotes = showNotes
         _localEntries = State(initialValue: entries)
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Month header
-            Text(monthName.uppercased())
-                .font(.custom("Montserrat-SemiBold", size: 17))
-                .foregroundColor(.primary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            
-            // Table header
-            HStack {
-                Text("Date")
-                    .frame(width: 60, alignment: .leading)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("Recorded")
+            // Combined header with gradient
+            VStack(spacing: 0) {
+                // Month header
+                Text(monthName.uppercased())
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.primary)
                     .frame(maxWidth: .infinity)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
                 
-                Text("Moving\nAverage")
-                    .frame(maxWidth: .infinity)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                
-                Text("Weekly\nRate")
-                    .frame(maxWidth: .infinity)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                
-                Text("Notes")
-                    .frame(maxWidth: .infinity)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                // Table header
+                HStack {
+                    Text("Date")
+                        .frame(width: 40, alignment: .leading)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    Text("Recorded")
+                        .frame(width: 88, alignment: .center)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    if showMovingAverage {
+                        Text("Moving\nAverage")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    
+                    if showWeeklyRate {
+                        Text("Weekly\nRate")
+                            .frame(minWidth: 70, maxWidth: .infinity, alignment: .center)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            .background(Color(.systemGray6))
+            .background(
+                // Performance: Use cached gradient image instead of runtime LinearGradient
+                Image(uiImage: cachedGradientImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            )
             
             // Use custom swipe-to-delete implementation
             VStack(spacing: 0) {
                 ForEach(localEntries) { entry in
                     SwipeToDeleteRow(
                         entry: entry,
+                        showMovingAverage: showMovingAverage,
+                        showWeeklyRate: showWeeklyRate,
+                        showNotes: showNotes,
                         onDelete: {
                             entryToDelete = entry
                             showDeleteConfirmation = true
@@ -302,7 +378,7 @@ struct MonthCardView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(hex: "#FFFFFF"))
+                .fill(cardBackground)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16)) // Ensure content respects rounded corners
         .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2) // Shadow applied AFTER clipping
@@ -329,14 +405,22 @@ struct MonthCardView: View {
 
 // Custom swipe-to-delete row component
 struct SwipeToDeleteRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let entry: WeightLogEntry
+    let showMovingAverage: Bool
+    let showWeeklyRate: Bool
+    let showNotes: Bool
     let onDelete: () -> Void
     
     @State private var offset: CGFloat = 0
     @State private var showingDeleteButton = false
     
-    private let deleteButtonWidth: CGFloat = 80
+    private let deleteButtonWidth: CGFloat = 90
     private let swipeThreshold: CGFloat = 50
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         ZStack {
@@ -345,34 +429,35 @@ struct SwipeToDeleteRow: View {
                 Spacer()
                 
                 Button(action: onDelete) {
-                    VStack {
-                        Image(systemName: "trash")
-                            .font(.title2)
-                        Text("Delete")
-                            .font(.caption)
-                    }
-                    .foregroundColor(.white)
-                    .frame(width: deleteButtonWidth)
+                    Image(systemName: "trash")
+                        .foregroundColor(.white)
+                        .frame(width: 60, height: 50)
+                        .background(Color.red)
+                        .cornerRadius(8)
                 }
-                .frame(maxHeight: .infinity)
-                .background(Color.red)
+                .padding(.trailing, 16)
             }
             
             // Main content row
-            WeightLogRowView(entry: entry)
-                .padding(.vertical, 12)
-                .padding(.horizontal, 16)
-                .background(Color.white)
-                .offset(x: offset)
-                .simultaneousGesture(
-                    DragGesture()
+            WeightLogRowView(
+                entry: entry,
+                showMovingAverage: showMovingAverage,
+                showWeeklyRate: showWeeklyRate,
+                showNotes: showNotes
+            )
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(cardBackground)
+            .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 30, coordinateSpace: .local)
                         .onChanged { value in
                             let translation = value.translation.width
                             let verticalTranslation = value.translation.height
                             
-                            // Only handle horizontal swipes that are clearly intentional
-                            // Require significant horizontal movement AND minimal vertical movement
-                            if abs(translation) > 20 && abs(verticalTranslation) < abs(translation) * 0.5 {
+                            // Only handle clearly horizontal swipes
+                            // Require horizontal movement to be at least 2x vertical movement
+                            if abs(translation) > 30 && abs(verticalTranslation) < abs(translation) * 0.3 {
                                 if translation < 0 {
                                     offset = max(translation, -deleteButtonWidth)
                                 } else if offset < 0 {
@@ -385,8 +470,8 @@ struct SwipeToDeleteRow: View {
                             let velocity = value.velocity.width
                             let verticalTranslation = value.translation.height
                             
-                            // Only handle horizontal swipes that are clearly intentional
-                            if abs(translation) > 20 && abs(verticalTranslation) < abs(translation) * 0.5 {
+                            // Only handle clearly horizontal swipes
+                            if abs(translation) > 30 && abs(verticalTranslation) < abs(translation) * 0.3 {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                     if translation < -swipeThreshold || velocity < -500 {
                                         offset = -deleteButtonWidth
@@ -421,64 +506,66 @@ struct SwipeToDeleteRow: View {
 
 struct WeightLogRowView: View {
     let entry: WeightLogEntry
+    let showMovingAverage: Bool
+    let showWeeklyRate: Bool
+    let showNotes: Bool
+    
+    // Performance: Use cached formatters
+    private let cache = PerformanceCache.shared
     
     var body: some View {
         HStack(alignment: .center) {
-            // Date column
+            // Date column - use cached formatter
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.formattedDate)
+                Text(cache.formatShortDate(entry.date))
                     .font(.system(size: 18, weight: .medium))
-                Text(entry.dayOfWeek)
+                Text(cache.formatDayOfWeek(entry.date))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            .frame(width: 60, alignment: .leading)
+            .frame(width: 40, alignment: .leading)
             
-            // Recorded weight
-            Text(String(format: "%.1f", entry.weight))
+            // Recorded weight - use cached formatter
+            Text(cache.formatWeight(entry.weight))
                 .font(.system(size: 18, weight: .medium))
-                .frame(maxWidth: .infinity)
+                .frame(width: 88, alignment: .center)
             
-            // Moving average
-            Text(String(format: "%.1f", entry.movingAverage))
-                .font(.system(size: 18, weight: .medium))
-                .frame(maxWidth: .infinity)
+            // Moving average - use cached formatter
+            if showMovingAverage {
+                Text(cache.formatWeight(entry.movingAverage))
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
             
             // Weekly rate
-            if let weeklyRate = entry.weeklyRate {
-                HStack(spacing: 2) {
-                    Image(systemName: weeklyRate < 0 ? "arrow.down" : "arrow.up")
-                        .foregroundColor(weeklyRate < 0 ? .red : .green)
-                        .font(.caption)
+            if showWeeklyRate {
+                if let weeklyRate = entry.weeklyRate, abs(weeklyRate) > 0.05 {
+                    let isDecreasing = weeklyRate < 0
+                    let rateColor = isDecreasing ? Color(hex: "#35b8ff") : Color(hex: "#FF9500")
                     
-                    Text(String(format: "%.1f", abs(weeklyRate)))
-                        .foregroundColor(weeklyRate < 0 ? .red : .green)
-                        .font(.system(size: 18, weight: .medium))
+                    HStack(spacing: 2) {
+                        Image(systemName: isDecreasing ? "arrow.down" : "arrow.up")
+                            .foregroundColor(rateColor)
+                            .font(.caption)
+                        
+                        Text(cache.formatWeight(abs(weeklyRate)))
+                            .foregroundColor(rateColor)
+                            .font(.system(size: 18, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(rateColor.opacity(0.1))
+                    )
+                    .frame(minWidth: 70, maxWidth: .infinity, alignment: .center)
+                } else {
+                    Text("-")
+                        .foregroundColor(.secondary)
+                        .frame(minWidth: 70, maxWidth: .infinity, alignment: .center)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(weeklyRate < 0 ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
-                )
-                .frame(maxWidth: .infinity)
-            } else {
-                Text("-")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity)
             }
             
-            // Notes
-            if let notes = entry.notes, !notes.isEmpty {
-                Text(notes)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text("-")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
 
     }
@@ -591,10 +678,8 @@ struct AddWeightEntryView: View {
         weightManager.addEntry(newEntry)
         print("DEBUG: Entry added, current weightEntries count: \(weightManager.weightEntries.count)")
         
-        // Clear the form to show it was saved
-        weight = ""
-        notes = ""
-        selectedDate = Date()
+        // Dismiss the view after successful save
+        dismiss()
     }
 }
 
@@ -871,20 +956,35 @@ struct WeightSettingsView: View {
     @State private var exportMessage = ""
     @Binding var showingUploadOptions: Bool
     
+    // State for display options
+    @State private var showMovingAverage: Bool = UserDefaults.standard.bool(forKey: "showMovingAverage")
+    @State private var showWeeklyRate: Bool = UserDefaults.standard.bool(forKey: "showWeeklyRate")
+    @State private var showNotes: Bool = UserDefaults.standard.bool(forKey: "showNotes")
+    
     // State for auto-sync toggle
     @State private var autoSyncHealthData: Bool = UserDefaults.standard.bool(forKey: "autoSyncHealthWeight")
+    
+    // State for weight unit (0 = kg, 1 = lbs)
+    @State private var weightUnit: Int = UserDefaults.standard.integer(forKey: "weightUnit")
     
     var body: some View {
         NavigationView {
             List {
                 Section(header: Text("Display Options")) {
-                    Toggle("Show Moving Average", isOn: .constant(true))
-                    Toggle("Show Weekly Rate", isOn: .constant(true))
+                    Toggle("Show Moving Average", isOn: $showMovingAverage)
+                        .onChange(of: showMovingAverage) { _, newValue in
+                            UserDefaults.standard.set(newValue, forKey: "showMovingAverage")
+                        }
+                    
+                    Toggle("Show Weekly Rate", isOn: $showWeeklyRate)
+                        .onChange(of: showWeeklyRate) { _, newValue in
+                            UserDefaults.standard.set(newValue, forKey: "showWeeklyRate")
+                        }
                 }
                 
                 Section(header: Text("Health App Integration")) {
                     Toggle("Auto-sync Weight from Health", isOn: $autoSyncHealthData)
-                        .onChange(of: autoSyncHealthData) { newValue in
+                        .onChange(of: autoSyncHealthData) { _, newValue in
                             UserDefaults.standard.set(newValue, forKey: "autoSyncHealthWeight")
                         }
                     
@@ -894,11 +994,14 @@ struct WeightSettingsView: View {
                 }
                 
                 Section(header: Text("Units")) {
-                    Picker("Weight Unit", selection: .constant(0)) {
+                    Picker("Weight Unit", selection: $weightUnit) {
                         Text("kg").tag(0)
                         Text("lbs").tag(1)
                     }
                     .pickerStyle(SegmentedPickerStyle())
+                    .onChange(of: weightUnit) { _, newValue in
+                        UserDefaults.standard.set(newValue, forKey: "weightUnit")
+                    }
                 }
                 
                 Section(header: Text("Data Management")) {
@@ -946,6 +1049,22 @@ struct WeightSettingsView: View {
                     message: Text(exportMessage),
                     dismissButton: .default(Text("OK"))
                 )
+            }
+            .onAppear {
+                // Set default values if not already set
+                if !UserDefaults.standard.bool(forKey: "hasSetWeightDefaults") {
+                    UserDefaults.standard.set(true, forKey: "showMovingAverage")
+                    UserDefaults.standard.set(true, forKey: "showWeeklyRate")
+                    UserDefaults.standard.set(true, forKey: "showNotes")
+                    UserDefaults.standard.set(0, forKey: "weightUnit") // kg by default
+                    UserDefaults.standard.set(true, forKey: "hasSetWeightDefaults")
+                    
+                    // Update state to reflect defaults
+                    showMovingAverage = true
+                    showWeeklyRate = true
+                    showNotes = true
+                    weightUnit = 0
+                }
             }
         }
     }

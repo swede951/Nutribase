@@ -1,0 +1,37 @@
+======================================================================
+USDA Foods Global Update Script
+======================================================================
+
+Fetching ALL USDA foods from Typesense...
+(This includes both Foundation Foods and SR Legacy Foods)
+
+Fetched page 1: 37 foods (total: 37)
+
+======================================================================
+Found 37 USDA foods total
+======================================================================
+
+Updating ALL foods to be available globally...
+Adding countries: United States, United Kingdom, Canada, Australia, France... and 12 more
+
+✓ [1/37] Updated: Chuck Tender Steak
+✓ [2/37] Updated: Ribeye Steak
+✓ [3/37] Updated: Filet Mignon
+✓ [4/37] Updated: Ribeye Steak
+✓ [5/37] Updated: USDA Choice Eye Of Round Steak
+✓ [6/37] Updated: Beef Ribeye Steak Thin
+✓ [7/37] Updated: USDA Choice Chick Steak
+✓ [8/37] Updated: USDA stir Fry Steak
+✓ [9/37] Updated: Chicken THIGHS
+✓ [10/37] Updated: Angus Beef
+
+======================================================================
+Update complete!
+======================================================================
+Successfully updated: 37
+Failed: 0
+======================================================================
+
+✅ ALL USDA foods are now available in all regions!
+   Search for 'apple', 'banana', 'chicken', etc. to see them!
+

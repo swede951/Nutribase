@@ -6,8 +6,8 @@ class WeightLogManager: ObservableObject {
     // All weight entries stored in the app
     private var allWeightEntries: [WeightLogEntry] = []
     
-    // Reference to the Supabase service
-    private let supabaseService = SupabaseService.shared
+    // Reference to the Firebase service
+    private let firebaseWeightService = FirebaseWeightService.shared
     
     // Cancellables for managing subscriptions
     private var cancellables = Set<AnyCancellable>()
@@ -43,7 +43,7 @@ class WeightLogManager: ObservableObject {
     // Current user identifier for local storage (use authenticated user's UUID)
     private var currentUserId: String {
         // Use authenticated user's UUID if available, otherwise fallback to local UUID
-        if let authenticatedUserId = SimpleAuthService.shared.currentUser?.id {
+        if let authenticatedUserId = FirebaseAuthService.shared.currentUser?.id {
             return authenticatedUserId
         }
         
@@ -59,11 +59,7 @@ class WeightLogManager: ObservableObject {
     
     // Key for UserDefaults storage (user-specific)
     private var weightEntriesKey: String {
-        if UserDefaults.standard.bool(forKey: "guest_mode") {
-            return "weightEntries_guest"
-        } else {
-            return "weightEntries_\(currentUserId)"
-        }
+        return "weightEntries_\(currentUserId)"
     }
     
     // Singleton instance for app-wide access
@@ -83,7 +79,7 @@ class WeightLogManager: ObservableObject {
                 self?.loadLocalEntries()
                 // Delay sync to ensure authentication is complete
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    self?.syncFromSupabase()
+                    self?.syncFromFirebase()
                 }
             }
             .store(in: &cancellables)
@@ -99,19 +95,19 @@ class WeightLogManager: ObservableObject {
         
         // Try initial sync after a delay to allow for app startup authentication
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            self.syncFromSupabase()
+            self.syncFromFirebase()
         }
     }
     
-    // Save entries to UserDefaults and Supabase if authenticated
+    // Save entries to UserDefaults and Firebase if authenticated
     private func saveEntries() {
         // Always save locally
         if let encoded = try? JSONEncoder().encode(allWeightEntries) {
             UserDefaults.standard.set(encoded, forKey: weightEntriesKey)
         }
         
-        // Sync to Supabase if authenticated
-        syncToSupabase()
+        // Sync to Firebase if authenticated
+        syncToFirebase()
     }
     
     // Clear current user's weight data (called on sign out)
@@ -135,17 +131,18 @@ class WeightLogManager: ObservableObject {
             // Sort by date, newest first
             allWeightEntries.sort { $0.date > $1.date }
             
-            // Calculate weekly rates
-            calculateWeeklyRates()
-            
             print("[WeightLogManager] Loaded \(allWeightEntries.count) entries from UserDefaults")
             
-            // Load initial entries
+            // Load initial entries immediately so UI can show data
             loadInitialEntries()
-            
-            // Force set hasLoadedAllEntries = true to fix loading screen issue
             hasLoadedAllEntries = true
-            print("[WeightLogManager] 🔄 Force set hasLoadedAllEntries = true after loading from UserDefaults")
+            
+            // Recalculate moving averages on background thread to avoid blocking UI
+            print("[WeightLogManager] 🔄 Recalculating moving averages on background thread...")
+            calculateWeeklyRates { [weak self] in
+                print("[WeightLogManager] ✅ Moving averages recalculated")
+                self?.objectWillChange.send()
+            }
         } else {
             print("[WeightLogManager] No saved entries found, starting with empty data")
             // Start with empty data instead of loading sample data
@@ -155,50 +152,28 @@ class WeightLogManager: ObservableObject {
         }
     }
     
-    // MARK: - Supabase Sync Methods
+    // MARK: - Firebase Sync Methods
     
-    private func syncFromSupabase() {
-        guard SimpleAuthService.shared.isAuthenticated else {
-            print("[WeightLogManager] Not authenticated, skipping sync from Supabase")
+    private func syncFromFirebase() {
+        guard FirebaseAuthService.shared.isAuthenticated else {
+            print("[WeightLogManager] Not authenticated, skipping sync from Firebase")
             return
         }
         
-        print("[WeightLogManager] Loading weight logs from Supabase...")
+        guard let currentUser = FirebaseAuthService.shared.currentUser else {
+            print("[WeightLogManager] No current user, skipping Firebase sync")
+            return
+        }
+        
+        print("[WeightLogManager] Loading weight logs from Firebase...")
         isLoading = true
         syncError = nil
         
-        supabaseService.loadWeightLogs { [weak self] weightLogsData in
+        firebaseWeightService.fetchWeightEntries(userId: currentUser.id) { [weak self] entries in
             DispatchQueue.main.async {
                 self?.isLoading = false
                 
-                guard let weightLogsData = weightLogsData else {
-                    print("[WeightLogManager] No weight logs found in Supabase")
-                    return
-                }
-                
-                print("[WeightLogManager] Loaded \(weightLogsData.count) weight logs from Supabase")
-                
-                // Convert Supabase data to WeightLogEntry objects
-                let entries = weightLogsData.compactMap { data -> WeightLogEntry? in
-                    guard let idString = data["id"] as? String,
-                          let id = UUID(uuidString: idString),
-                          let dateString = data["date"] as? String,
-                          let date = ISO8601DateFormatter().date(from: dateString),
-                          let weight = data["weight"] as? Double else {
-                        return nil
-                    }
-                    
-                    let movingAverage = data["moving_average"] as? Double
-                    // Include id field when loading from Supabase
-                    
-                    return WeightLogEntry(
-                        id: id,
-                        date: date,
-                        weight: weight,
-                        movingAverage: movingAverage ?? weight,
-                        weeklyRate: nil // Will be calculated locally
-                    )
-                }
+                print("[WeightLogManager] Loaded \(entries.count) weight logs from Firebase")
                 
                 // Merge with local entries (avoid duplicates)
                 self?.mergeWeightEntries(entries)
@@ -206,14 +181,17 @@ class WeightLogManager: ObservableObject {
         }
     }
     
-    private func syncToSupabase() {
-        print("[WeightLogManager] syncToSupabase called")
-        print("[WeightLogManager] Authentication check: \(SimpleAuthService.shared.isAuthenticated)")
-        print("[WeightLogManager] Current user ID: \(SimpleAuthService.shared.currentUser?.id ?? "nil")")
-        print("[WeightLogManager] Access token exists: \(SimpleAuthService.shared.accessToken != nil)")
+    private func syncToFirebase() {
+        print("[WeightLogManager] syncToFirebase called")
+        print("[WeightLogManager] Authentication check: \(FirebaseAuthService.shared.isAuthenticated)")
         
-        guard SimpleAuthService.shared.isAuthenticated else {
-            print("[WeightLogManager] ❌ Not authenticated, skipping sync to Supabase")
+        guard FirebaseAuthService.shared.isAuthenticated else {
+            print("[WeightLogManager] ❌ Not authenticated, skipping sync to Firebase")
+            return
+        }
+        
+        guard let currentUser = FirebaseAuthService.shared.currentUser else {
+            print("[WeightLogManager] ❌ No current user, skipping Firebase sync")
             return
         }
         
@@ -222,53 +200,18 @@ class WeightLogManager: ObservableObject {
             return
         }
         
-        print("[WeightLogManager] ✅ Starting sync of \(allWeightEntries.count) weight entries to Supabase...")
+        print("[WeightLogManager] ✅ Starting sync of \(allWeightEntries.count) weight entries to Firebase...")
         
-        // Process entries in batches to avoid overwhelming Supabase
-        let batchSize = 50
-        let batches = allWeightEntries.chunked(into: batchSize)
-        
-        print("[WeightLogManager] Created \(batches.count) batches of size \(batchSize)")
-        
-        syncBatches(batches, currentIndex: 0) { success in
+        // Use Firebase batch save for efficiency
+        firebaseWeightService.batchSaveWeightEntries(allWeightEntries, userId: currentUser.id) { success in
             if success {
-                print("✅ All weight logs synced to Supabase successfully")
+                print("✅ All weight logs synced to Firebase successfully")
             } else {
-                print("❌ Failed to sync some weight logs to Supabase")
+                print("❌ Failed to sync some weight logs to Firebase")
             }
         }
     }
     
-    private func syncBatches(_ batches: [[WeightLogEntry]], currentIndex: Int, completion: @escaping (Bool) -> Void) {
-        guard currentIndex < batches.count else {
-            completion(true)
-            return
-        }
-        
-        let batch = batches[currentIndex]
-        let weightLogsData = batch.map { entry in
-            return [
-                "id": entry.id.uuidString,
-                "user_id": SimpleAuthService.shared.currentUser?.id ?? "",
-                "date": ISO8601DateFormatter().string(from: entry.date),
-                "weight": round(entry.weight * 10) / 10, // Round to 1 decimal place
-                "moving_average": round(entry.movingAverage * 10) / 10 // Round to 1 decimal place
-                // Fixed floating point precision issues
-            ]
-        }
-        
-        print("[WeightLogManager] Syncing batch \(currentIndex + 1)/\(batches.count) (\(batch.count) entries)")
-        
-        supabaseService.saveWeightLogs(weightLogsData) { success in
-            if success {
-                // Continue with next batch
-                self.syncBatches(batches, currentIndex: currentIndex + 1, completion: completion)
-            } else {
-                print("❌ Failed to sync batch \(currentIndex + 1)")
-                completion(false)
-            }
-        }
-    }
     
     private func mergeWeightEntries(_ newEntries: [WeightLogEntry]) {
         // Create a set of existing dates for fast lookup
@@ -281,23 +224,24 @@ class WeightLogManager: ObservableObject {
         }
         
         if !uniqueEntries.isEmpty {
-            print("[WeightLogManager] Adding \(uniqueEntries.count) new entries from Supabase")
+            print("[WeightLogManager] Adding \(uniqueEntries.count) new entries from Firebase")
             allWeightEntries.append(contentsOf: uniqueEntries)
             allWeightEntries.sort { $0.date > $1.date }
             
-            // Calculate weekly rates for merged data
-            calculateWeeklyRates()
-            
-            // Update displayed entries
-            weightEntries = allWeightEntries
-            hasLoadedAllEntries = true
-            
-            // Save merged data locally
-            if let encoded = try? JSONEncoder().encode(allWeightEntries) {
-                UserDefaults.standard.set(encoded, forKey: weightEntriesKey)
+            // Calculate weekly rates for merged data (async)
+            calculateWeeklyRates { [weak self] in
+                guard let self = self else { return }
+                
+                // Update displayed entries (already on main thread)
+                self.hasLoadedAllEntries = true
+                
+                // Save merged data locally
+                if let encoded = try? JSONEncoder().encode(self.allWeightEntries) {
+                    UserDefaults.standard.set(encoded, forKey: self.weightEntriesKey)
+                }
             }
         } else {
-            print("[WeightLogManager] No new entries to add from Supabase")
+            print("[WeightLogManager] No new entries to add from Firebase")
         }
     }
     
@@ -328,53 +272,48 @@ class WeightLogManager: ObservableObject {
         // Sort by date, newest first
         allWeightEntries.sort { $0.date > $1.date }
         
-        // Calculate weekly rates for all entries
-        calculateWeeklyRates()
-        
         print("[WeightLogManager] Entries count after add: \(allWeightEntries.count)")
         
         // Invalidate weight chart cache when new entry is added
         WeightChartCache.shared.invalidateCache()
         
-        // Save to UserDefaults immediately
-        if let encoded = try? JSONEncoder().encode(allWeightEntries) {
-            UserDefaults.standard.set(encoded, forKey: weightEntriesKey)
-            print("[WeightLogManager] Saved \(allWeightEntries.count) entries to UserDefaults with key: \(weightEntriesKey)")
-        }
-        
-        // Force UI update on main thread
-        DispatchQueue.main.async {
-            // Refresh displayed entries
-            self.weightEntries = self.allWeightEntries
+        // Calculate weekly rates for all entries (async to avoid blocking UI)
+        calculateWeeklyRates { [weak self] in
+            guard let self = self else { return }
+            
+            // Save to UserDefaults after calculation completes
+            if let encoded = try? JSONEncoder().encode(self.allWeightEntries) {
+                UserDefaults.standard.set(encoded, forKey: self.weightEntriesKey)
+                print("[WeightLogManager] Saved \(self.allWeightEntries.count) entries to UserDefaults with key: \(self.weightEntriesKey)")
+            }
+            
+            // UI is already updated in calculateWeeklyRates completion
             self.hasLoadedAllEntries = true
-            print("[WeightLogManager] Updated weightEntries to \(self.allWeightEntries.count) entries on main thread")
+            print("[WeightLogManager] Updated weightEntries to \(self.allWeightEntries.count) entries")
             
             // Trigger UI refresh
             self.objectWillChange.send()
         }
         
-        // Sync to Supabase if authenticated
-        syncToSupabase()
+        // Sync to Firebase if authenticated
+        syncToFirebase()
     }
     
     func deleteEntry(at indexSet: IndexSet) {
         // Get the entries to delete from the displayed entries
         let entriesToDelete = indexSet.map { weightEntries[$0] }
         
-        // Delete from Supabase first if authenticated
-        if SimpleAuthService.shared.isAuthenticated {
-            let weightLogsToDelete = entriesToDelete.map { entry in
-                return [
-                    "user_id": SimpleAuthService.shared.currentUser?.id ?? "",
-                    "date": ISO8601DateFormatter().string(from: entry.date)
-                ]
-            }
+        // Delete from Firebase first if authenticated
+        if FirebaseAuthService.shared.isAuthenticated {
+            guard let currentUser = FirebaseAuthService.shared.currentUser else { return }
             
-            supabaseService.deleteWeightLogs(weightLogsToDelete) { success in
-                if success {
-                    print("✅ Weight entries deleted from Supabase")
-                } else {
-                    print("❌ Failed to delete some weight entries from Supabase")
+            for entry in entriesToDelete {
+                firebaseWeightService.deleteWeightEntry(entryId: entry.id.uuidString, userId: currentUser.id) { success in
+                    if success {
+                        print("✅ Weight entry deleted from Firebase")
+                    } else {
+                        print("❌ Failed to delete weight entry from Firebase")
+                    }
                 }
             }
         }
@@ -389,25 +328,22 @@ class WeightLogManager: ObservableObject {
         // Remove from displayed entries
         weightEntries.remove(atOffsets: indexSet)
         
-        // Save to UserDefaults
-        saveEntries()
+        // Recalculate moving averages and weekly rates for remaining entries
+        recalculateMovingAverages()
     }
     
     func clearAllData() {
-        // Delete all entries from Supabase if authenticated
-        if SimpleAuthService.shared.isAuthenticated {
-            let weightLogsToDelete = allWeightEntries.map { entry in
-                return [
-                    "user_id": SimpleAuthService.shared.currentUser?.id ?? "",
-                    "date": ISO8601DateFormatter().string(from: entry.date)
-                ]
-            }
+        // Delete all entries from Firebase if authenticated
+        if FirebaseAuthService.shared.isAuthenticated {
+            guard let currentUser = FirebaseAuthService.shared.currentUser else { return }
             
-            supabaseService.deleteWeightLogs(weightLogsToDelete) { success in
-                if success {
-                    print("✅ All weight entries deleted from Supabase")
-                } else {
-                    print("❌ Failed to delete some weight entries from Supabase")
+            for entry in allWeightEntries {
+                firebaseWeightService.deleteWeightEntry(entryId: entry.id.uuidString, userId: currentUser.id) { success in
+                    if success {
+                        print("✅ Weight entry deleted from Firebase")
+                    } else {
+                        print("❌ Failed to delete weight entry from Firebase")
+                    }
                 }
             }
         }
@@ -439,7 +375,7 @@ class WeightLogManager: ObservableObject {
             let dateKey = "\(dateComponents.year!)-\(dateComponents.month!)-\(dateComponents.day!)"
             
             // Check if we already have an entry for this date
-            if let existingEntry = entriesByDate[dateKey] {
+            if entriesByDate[dateKey] != nil {
                 print("[WeightLogManager] Found existing entry for date \(dateKey). Replacing.")
             } else {
                 newEntries.append(entry)
@@ -456,26 +392,26 @@ class WeightLogManager: ObservableObject {
         allWeightEntries = mergedEntries
         allWeightEntries.sort { $0.date > $1.date } // Sort by date, newest first
         
-        // Calculate weekly rates for all entries
-        calculateWeeklyRates()
-        
-        // Update the visible entries
+        // Update the visible entries immediately so UI shows data
         weightEntries = allWeightEntries
-        
-        // Since we've loaded all entries after an import
         hasLoadedAllEntries = true
         
-        // Save to UserDefaults
-        saveEntries()
-        
-        // Sync imported entries to Supabase if authenticated
-        print("[WeightLogManager] About to sync \(allWeightEntries.count) entries to Supabase after import")
-        print("[WeightLogManager] Authentication status: \(SimpleAuthService.shared.isAuthenticated)")
-        print("[WeightLogManager] Current user: \(SimpleAuthService.shared.currentUser?.id ?? "none")")
-        
-        // Add a small delay to ensure authentication is stable
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.syncToSupabase()
+        // Calculate weekly rates for all entries (async to avoid blocking UI)
+        calculateWeeklyRates { [weak self] in
+            guard let self = self else { return }
+            
+            // Save to UserDefaults after calculation
+            self.saveEntries()
+            
+            // Sync imported entries to Firebase if authenticated
+            print("[WeightLogManager] About to sync \(self.allWeightEntries.count) entries to Firebase after import")
+            print("[WeightLogManager] Authentication status: \(FirebaseAuthService.shared.isAuthenticated)")
+            print("[WeightLogManager] Current user: \(FirebaseAuthService.shared.currentUser?.id ?? "none")")
+            
+            // Add a small delay to ensure authentication is stable
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.syncToFirebase()
+            }
         }
     }
     
@@ -582,107 +518,53 @@ class WeightLogManager: ObservableObject {
         
         print("[WeightLogManager] Loaded \(allWeightEntries.count) sample entries")
         
-        // Calculate weekly rates for sample data
-        calculateWeeklyRates()
-        
-        // Load initial entries
+        // Load initial entries immediately so UI shows data
         loadInitialEntries()
         
+        // Calculate moving averages and weekly rates (async to avoid blocking UI)
+        calculateWeeklyRates { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
     
-    // Calculate moving averages and weekly rates to match reference app
-    private func calculateWeeklyRates() {
-        // Sort entries by date (oldest first) for calculation
-        let sortedEntries = allWeightEntries.sorted { $0.date < $1.date }
-        
-        if sortedEntries.isEmpty {
+    // Calculate moving averages and weekly rates using bidirectional EMA + Savitzky-Golay
+    // Runs on background thread to avoid blocking UI
+    private func calculateWeeklyRates(completion: (() -> Void)? = nil) {
+        if allWeightEntries.isEmpty {
+            completion?()
             return
         }
         
-        var updatedEntries: [WeightLogEntry] = []
+        let entriesToProcess = allWeightEntries
         
-        // Calculate moving averages and weekly rates
-        for i in 0..<sortedEntries.count {
-            let currentEntry = sortedEntries[i]
+        // Move heavy computation to background thread
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let processedEntries = WeightMovingAverageCalculator.calculateMovingAverages(for: entriesToProcess)
             
-            // Calculate moving average using simple moving average approach
-            var movingAverage: Double
-            if i == 0 {
-                // First entry: moving average = recorded weight
-                movingAverage = currentEntry.weight
-            } else {
-                // Use a weighted average that gives more weight to recent entries
-                // Based on analysis of reference data, appears to use alpha ≈ 0.05
-                let alpha = 0.05
-                let previousMovingAverage = updatedEntries[i-1].movingAverage
-                movingAverage = alpha * currentEntry.weight + (1 - alpha) * previousMovingAverage
-                movingAverage = round(movingAverage * 10) / 10  // Round to 1 decimal
-            }
-            
-            // Calculate weekly rate - simplified approach
-            var weeklyRate: Double? = nil
-            
-            // Look for entries to calculate rate (need at least 2 entries)
-            if i >= 1 {
-                // Find the best entry around 7 days ago, but be more flexible
-                var bestPreviousIndex: Int? = nil
-                var bestTimeDifference: Double = Double.greatestFiniteMagnitude
+            // Update on main thread
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.allWeightEntries = processedEntries
                 
-                // Look backwards for entries
-                for j in (0..<i).reversed() {
-                    let daysDifference = currentEntry.date.timeIntervalSince(sortedEntries[j].date) / (24 * 60 * 60)
-                    
-                    // Accept entries between 1 and 14 days ago (more flexible range)
-                    if daysDifference >= 1 && daysDifference <= 14 {
-                        let distanceFrom7Days = abs(daysDifference - 7.0)
-                        if distanceFrom7Days < bestTimeDifference {
-                            bestTimeDifference = distanceFrom7Days
-                            bestPreviousIndex = j
-                        }
-                    }
+                // Update visible entries if they've been loaded
+                if self.hasLoadedAllEntries {
+                    self.weightEntries = self.allWeightEntries
                 }
                 
-                // Calculate weekly rate if we found a suitable previous entry
-                if let previousIndex = bestPreviousIndex {
-                    let previousEntry = updatedEntries[previousIndex]
-                    let actualDaysDifference = currentEntry.date.timeIntervalSince(sortedEntries[previousIndex].date) / (24 * 60 * 60)
-                    
-                    // Use moving averages for rate calculation
-                    let weightDifference = movingAverage - previousEntry.movingAverage
-                    let rawWeeklyRate = weightDifference * (7.0 / actualDaysDifference)
-                    
-                    // Round to 1 decimal place
-                    let roundedRate = round(rawWeeklyRate * 10) / 10
-                    
-                    // Show rate if it's meaningful (>= 0.1) and within reasonable range
-                    if abs(roundedRate) >= 0.1 && abs(roundedRate) <= 5.0 {
-                        weeklyRate = roundedRate
-                    }
-                }
+                completion?()
             }
-            
-            // Create updated entry
-            let updatedEntry = WeightLogEntry(
-                id: currentEntry.id,
-                date: currentEntry.date,
-                weight: currentEntry.weight,
-                movingAverage: movingAverage,
-                weeklyRate: weeklyRate,
-                notes: currentEntry.notes
-            )
-            
-            updatedEntries.append(updatedEntry)
         }
-        
-        // Sort back to newest first order
-        updatedEntries.sort { $0.date > $1.date }
-        
-        // Replace entries with updated ones
-        allWeightEntries = updatedEntries
-        
-        // Update visible entries if they've been loaded
-        if hasLoadedAllEntries {
-            weightEntries = allWeightEntries
+    }
+    
+    // Public method to force recalculation of moving averages
+    func recalculateMovingAverages() {
+        print("[WeightLogManager] Force recalculating moving averages for \(allWeightEntries.count) entries")
+        calculateWeeklyRates { [weak self] in
+            guard let self = self else { return }
+            // Force UI update (already on main thread from completion)
+            self.objectWillChange.send()
+            // Save updated entries
+            self.saveEntries()
         }
     }
     

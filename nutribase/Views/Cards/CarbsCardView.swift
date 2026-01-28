@@ -8,23 +8,56 @@ import SwiftUI
 import Combine
 
 struct CarbsCardView: View {
-    // Use FoodLogManager to get real carbs data
-    @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @Environment(\.colorScheme) private var colorScheme
+    var isPreview: Bool = false
     
-    // Use UserProfile to get the user's carbs target
+    @ObservedObject private var foodLogManager = FoodLogManager.shared
     @ObservedObject private var userProfile = UserProfile.shared
     
-    // State to track the selected date (defaults to today)
     @State private var selectedDate = Date()
+    @AppStorage("carbsCardViewMode") private var viewMode: ViewMode = .daily
+    @State private var last7DaysData: [DayData] = []
+    @State private var showingDetailView = false
+    
+    private static let previewDaysData: [DayData] = [
+        DayData(date: Date(), consumed: 120, dayLetter: "S"),
+        DayData(date: Date(), consumed: 180, dayLetter: "S"),
+        DayData(date: Date(), consumed: 220, dayLetter: "M"),
+        DayData(date: Date(), consumed: 150, dayLetter: "T"),
+        DayData(date: Date(), consumed: 200, dayLetter: "W"),
+        DayData(date: Date(), consumed: 175, dayLetter: "T"),
+        DayData(date: Date(), consumed: 140, dayLetter: "F")
+    ]
+    private var previewCarbsTarget: Int { 250 }
+    private var previewCarbsConsumed: Int { 165 }
+    
+    enum ViewMode: String, CaseIterable {
+        case daily = "Daily"
+        case weekly = "Weekly"
+    }
+    
+    struct DayData: Identifiable {
+        let id = UUID()
+        let date: Date
+        let consumed: Int
+        let dayLetter: String
+    }
     
     // Computed property for carbs target in grams
     var carbsTarget: Int {
+        if isPreview { return previewCarbsTarget }
         return userProfile.carbGoalGrams > 0 ? userProfile.carbGoalGrams : 250
     }
     
-    // Calculate carbs consumed from food log
+    // Calculate carbs consumed from food log - now uses shared cache
     var carbsConsumed: Int {
-        return foodLogManager.totalCarbsForDay(date: selectedDate)
+        if isPreview { return previewCarbsConsumed }
+        return Int(DailyNutritionCache.shared.getDaySummary(for: selectedDate).carbs)
+    }
+    
+    private var displayData: [DayData] {
+        if isPreview { return Self.previewDaysData }
+        return last7DaysData
     }
     
     var carbsRemaining: Int {
@@ -32,56 +65,154 @@ struct CarbsCardView: View {
     }
     
     var progressPercentage: Double {
-        return Double(carbsConsumed) / Double(carbsTarget)
+        let raw = Double(carbsConsumed) / Double(carbsTarget)
+        return min(max(raw, 0), 1.0) // Clamp to 0...1 for ProgressView
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header with standardized top spacing
-            HStack {
-                Text("Carbs")
-                    .font(.custom("Montserrat-SemiBold", size: 17))
-                Spacer()
-            }
-            .padding(.bottom, 4)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("\(carbsConsumed)g")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    Text("/ \(carbsTarget)g")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
+        ZStack(alignment: .topTrailing) {
+            FixedSizeCard(title: "Carbs", onCardTap: isPreview ? nil : {
+                showingDetailView = true
+            }) {
+                if viewMode == .daily {
+                    VStack(spacing: 0) {
+                        Spacer()
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text("\(carbsConsumed)g")
+                                    .font(.system(size: 28, weight: .bold))
+                                
+                                Text("/ \(carbsTarget)g")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundColor(.accessibleSecondary)
+                            }
+                            
+                            ProgressView(value: progressPercentage)
+                                .progressViewStyle(LinearProgressViewStyle(tint: CardType.carbs.color))
+                            
+                            Text("\(carbsRemaining > 0 ? "\(carbsRemaining)g remaining" : "Goal exceeded by \(abs(carbsRemaining))g")")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(carbsRemaining > 0 ? .secondary : .orange)
+                        }
+                        
+                        Spacer()
+                    }
+                } else {
+                    VStack(alignment: .center, spacing: 8) {
+                        Spacer()
+                        
+                        // Custom bar chart with grey backgrounds and target line
+                        let barHeight: CGFloat = 40
+                        let maxRatio: CGFloat = 1.2 // 120% of target
+                        // Target line position: at 100% (target), which is 1/1.2 = 83.3% of max height
+                        let targetLineOffset = barHeight * (1.0 - 1.0 / maxRatio)
+                        
+                        ZStack(alignment: .top) {
+                            HStack(alignment: .bottom, spacing: 6) {
+                                ForEach(displayData) { dayData in
+                                    VStack(spacing: 4) {
+                                        // Grey background bar (full height)
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Color(.systemGray5))
+                                            .frame(width: 12, height: barHeight)
+                                            .overlay(
+                                                GeometryReader { geometry in
+                                                    VStack(spacing: 0) {
+                                                        Spacer(minLength: 0)
+                                                        
+                                                        // Colored fill from bottom
+                                                        let progress = CGFloat(dayData.consumed) / CGFloat(carbsTarget) / maxRatio
+                                                        if progress > 0 {
+                                                            RoundedRectangle(cornerRadius: 2)
+                                                                .fill(CardType.carbs.color)
+                                                                .frame(width: 12, height: min(geometry.size.height * progress, geometry.size.height))
+                                                        }
+                                                    }
+                                                }
+                                            )
+                                        
+                                        Text(dayData.dayLetter)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            
+                            // Target line at correct position (100% of target = 83.3% up from bottom)
+                            Rectangle()
+                                .fill(colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground))
+                                .frame(height: 2)
+                                .offset(y: targetLineOffset)
+                        }
+                        
+                        Text("\(carbsConsumed)g / \(carbsTarget)g")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .padding(.bottom, 12)
+                    }
                 }
-                
-                ProgressView(value: progressPercentage)
-                    .progressViewStyle(LinearProgressViewStyle(tint: CardType.carbs.color))
-                
-                Text("\(carbsRemaining > 0 ? "\(carbsRemaining)g remaining" : "Goal exceeded by \(abs(carbsRemaining))g")")
-                    .font(.caption)
-                    .foregroundColor(carbsRemaining > 0 ? .secondary : .orange)
+            }
+            .onAppear {
+                if !isPreview { load7DaysData() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .foodLogUpdated)) { _ in
+                if !isPreview {
+                    self.selectedDate = Date()
+                    load7DaysData()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .nutritionGoalsUpdated)) { _ in
+                if !isPreview {
+                    self.selectedDate = Date()
+                    load7DaysData()
+                }
+            }
+            .sheet(isPresented: $showingDetailView) {
+                CarbsDetailView(foodLogManager: foodLogManager, userProfile: userProfile)
             }
             
-            Spacer()
+            if !isPreview {
+                Menu {
+                    ForEach(ViewMode.allCases, id: \.self) { mode in
+                        Button(mode.rawValue) {
+                            viewMode = mode
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 6)
-        .frame(height: 120)
-        .onTapGesture {
-            // Navigate to food log when tapped
-            NotificationCenter.default.post(name: .navigateToFoodLog, object: nil)
+    }
+    
+    private func load7DaysData() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        var daysData: [DayData] = []
+        
+        for dayOffset in (0..<7).reversed() {
+            if let dayStart = calendar.date(byAdding: .day, value: -dayOffset, to: today) {
+                let dayLetter = getDayLetter(for: dayStart)
+                let consumed = foodLogManager.totalCarbsForDay(date: dayStart)
+                daysData.append(DayData(date: dayStart, consumed: consumed, dayLetter: dayLetter))
+            }
         }
-        // Listen for food log updates
-        .onReceive(NotificationCenter.default.publisher(for: .foodLogUpdated)) { _ in
-            // Force view to refresh
-            self.selectedDate = Date()
-        }
-        // Listen for nutrition goals updates
-        .onReceive(NotificationCenter.default.publisher(for: .nutritionGoalsUpdated)) { _ in
-            // Force view to refresh when nutrition goals change
-            self.selectedDate = Date()
-        }
+        
+        last7DaysData = daysData.sorted { $0.date < $1.date }
+    }
+    
+    private func getDayLetter(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "E"
+        let dayName = formatter.string(from: date)
+        return String(dayName.prefix(1))
     }
     
     // Calculate total carbs consumed for the day

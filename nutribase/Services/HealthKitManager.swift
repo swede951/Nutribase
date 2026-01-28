@@ -7,14 +7,17 @@ class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
     private let stepsQuantityType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
     private let bodyMassQuantityType = HKQuantityType.quantityType(forIdentifier: .bodyMass)!
+    private let activeEnergyQuantityType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
     
     @Published var todaySteps: Int = 0
     @Published var weeklySteps: [Int] = Array(repeating: 0, count: 7)
+    @Published var todayActiveCalories: Int = 0
     @Published var isAuthorized: Bool = false
     @Published var isWeightAuthorized: Bool = false
     
     // Store query for observer
     private var stepCountObserverQuery: HKObserverQuery?
+    private var activeEnergyObserverQuery: HKObserverQuery?
     
     private init() {
         checkAuthorizationStatus()
@@ -38,7 +41,8 @@ class HealthKitManager: ObservableObject {
         // Define the types we want to read
         let typesToRead: Set<HKObjectType> = [
             stepsQuantityType,
-            bodyMassQuantityType
+            bodyMassQuantityType,
+            activeEnergyQuantityType
         ]
         
         // Request authorization
@@ -58,9 +62,11 @@ class HealthKitManager: ObservableObject {
                 if effectiveSuccess {
                     // Set up observers after successful authorization
                     self.setupStepCountObserver()
+                    self.setupActiveEnergyObserver()
                     // Initial fetch
                     self.fetchTodaySteps { _, _ in }
                     self.fetchWeeklySteps { _, _ in }
+                    self.fetchTodayActiveCalories { _, _ in }
                 }
                 completion(effectiveSuccess, error)
             }
@@ -80,9 +86,11 @@ class HealthKitManager: ObservableObject {
         if isAuthorized {
             // Set up observers if already authorized
             setupStepCountObserver()
+            setupActiveEnergyObserver()
             // Initial fetch
             fetchTodaySteps { _, _ in }
             fetchWeeklySteps { _, _ in }
+            fetchTodayActiveCalories { _, _ in }
         }
     }
     
@@ -121,6 +129,117 @@ class HealthKitManager: ObservableObject {
         
         // Save the query
         stepCountObserverQuery = query
+    }
+    
+    // Setup observer for active energy changes
+    private func setupActiveEnergyObserver() {
+        // Stop any existing query
+        if let existingQuery = activeEnergyObserverQuery {
+            healthStore.stop(existingQuery)
+        }
+        
+        // Create a new observer query
+        let query = HKObserverQuery(sampleType: activeEnergyQuantityType, predicate: nil) { [weak self] (query, completionHandler, error) in
+            guard let self = self else { return }
+            
+            if error == nil {
+                // Update active calories when changes are detected
+                self.fetchTodayActiveCalories { _, _ in }
+            }
+            
+            // Call the completion handler to allow future updates
+            completionHandler()
+        }
+        
+        // Execute the query and enable background delivery if available
+        healthStore.execute(query)
+        
+        healthStore.enableBackgroundDelivery(for: activeEnergyQuantityType, frequency: .immediate) { success, error in
+            if let error = error {
+                print("Failed to enable background delivery for active energy: \(error.localizedDescription)")
+            } else if success {
+                print("Successfully enabled background delivery for active energy")
+            }
+        }
+        
+        // Save the query
+        activeEnergyObserverQuery = query
+    }
+    
+    func fetchTodayActiveCalories(completion: @escaping (Int, Error?) -> Void) {
+        guard isAuthorized else {
+            completion(0, nil)
+            return
+        }
+        
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
+        
+        let now = Date()
+        let startOfDay = calendar.startOfDay(for: now)
+        
+        let queryStartDate = startOfDay > now ? calendar.date(byAdding: .day, value: -1, to: startOfDay) ?? now : startOfDay
+        
+        let predicate = HKQuery.predicateForSamples(
+            withStart: queryStartDate,
+            end: now,
+            options: .strictStartDate
+        )
+        
+        let query = HKStatisticsQuery(
+            quantityType: activeEnergyQuantityType,
+            quantitySamplePredicate: predicate,
+            options: .cumulativeSum
+        ) { [weak self] _, result, error in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                guard let result = result, let sum = result.sumQuantity() else {
+                    completion(0, error)
+                    return
+                }
+                
+                let calories = Int(sum.doubleValue(for: HKUnit.kilocalorie()))
+                self.todayActiveCalories = calories
+                completion(calories, nil)
+            }
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    func fetchActiveCaloriesForDateRange(start: Date, end: Date, completion: @escaping (Int, Error?) -> Void) {
+        guard isAuthorized else {
+            completion(0, nil)
+            return
+        }
+        
+        let now = Date()
+        let queryEnd = end > now ? now : end
+        
+        let predicate = HKQuery.predicateForSamples(
+            withStart: start,
+            end: queryEnd,
+            options: .strictStartDate
+        )
+        
+        let query = HKStatisticsQuery(
+            quantityType: activeEnergyQuantityType,
+            quantitySamplePredicate: predicate,
+            options: .cumulativeSum
+        ) { _, result, error in
+            DispatchQueue.main.async {
+                guard let result = result, let sum = result.sumQuantity() else {
+                    completion(0, error)
+                    return
+                }
+                
+                let calories = Int(sum.doubleValue(for: HKUnit.kilocalorie()))
+                completion(calories, nil)
+            }
+        }
+        
+        healthStore.execute(query)
     }
     
     func fetchTodaySteps(completion: @escaping (Int, Error?) -> Void) {
@@ -280,6 +399,61 @@ class HealthKitManager: ObservableObject {
     func refreshHealthData() {
         fetchTodaySteps { _, _ in }
         fetchWeeklySteps { _, _ in }
+    }
+    
+    /// Batch fetch daily steps for a date range using HKStatisticsCollectionQuery
+    /// This is much more efficient than making individual queries for each day
+    func fetchDailyStepsForRange(start: Date, end: Date, completion: @escaping ([Date: Int]) -> Void) {
+        guard isAuthorized else {
+            completion([:])
+            return
+        }
+        
+        let calendar = Calendar.current
+        let startOfStartDay = calendar.startOfDay(for: start)
+        let now = Date()
+        let queryEnd = end > now ? now : end
+        
+        // Create a predicate for the date range
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startOfStartDay,
+            end: queryEnd,
+            options: .strictStartDate
+        )
+        
+        // Create interval components for daily aggregation
+        var interval = DateComponents()
+        interval.day = 1
+        
+        // Create the statistics collection query
+        let query = HKStatisticsCollectionQuery(
+            quantityType: stepsQuantityType,
+            quantitySamplePredicate: predicate,
+            options: .cumulativeSum,
+            anchorDate: startOfStartDay,
+            intervalComponents: interval
+        )
+        
+        query.initialResultsHandler = { _, results, error in
+            var dailySteps: [Date: Int] = [:]
+            
+            if let statsCollection = results {
+                statsCollection.enumerateStatistics(from: startOfStartDay, to: queryEnd) { statistics, _ in
+                    let date = calendar.startOfDay(for: statistics.startDate)
+                    if let sum = statistics.sumQuantity() {
+                        dailySteps[date] = Int(sum.doubleValue(for: HKUnit.count()))
+                    } else {
+                        dailySteps[date] = 0
+                    }
+                }
+            }
+            
+            DispatchQueue.main.async {
+                completion(dailySteps)
+            }
+        }
+        
+        healthStore.execute(query)
     }
     
     // MARK: - Weight Data Methods

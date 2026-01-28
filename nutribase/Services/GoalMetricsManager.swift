@@ -23,13 +23,14 @@ class GoalMetricsManager: ObservableObject {
         let defaultMetrics = [
             GoalMetric(type: .protein, isSelected: true, goal: 176),
             GoalMetric(type: .steps, isSelected: true, goal: 10000),
+            GoalMetric(type: .activityCalories, isSelected: false, goal: 500),
             GoalMetric(type: .nova4, isSelected: true, goal: 20),
             GoalMetric(type: .calories, isSelected: false, goal: 2100),
             GoalMetric(type: .caloriesRemaining, isSelected: false, goal: 2100),
             GoalMetric(type: .carbs, isSelected: false, goal: 250),
-            GoalMetric(type: .fat, isSelected: false, goal: 70),
-            GoalMetric(type: .water, isSelected: false, goal: 2000),
-            GoalMetric(type: .sleep, isSelected: false, goal: 8)
+            GoalMetric(type: .fat, isSelected: false, goal: 70)
+            // GoalMetric(type: .water, isSelected: false, goal: 2000), // TEMPORARILY DISABLED
+            // GoalMetric(type: .sleep, isSelected: false, goal: 8) // TEMPORARILY DISABLED
         ]
         
         // Try to load saved metrics order

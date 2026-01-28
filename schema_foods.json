@@ -1,0 +1,39 @@
+{
+  "name": "foods",
+  "fields": [
+    {"name": "id", "type": "string"},
+    {"name": "name", "type": "string"},
+    {"name": "brand", "type": "string", "optional": true},
+    {"name": "barcode", "type": "string", "optional": true, "index": true},
+    
+    {"name": "calories", "type": "int32", "optional": true},
+    {"name": "protein", "type": "float", "optional": true},
+    {"name": "carbohydrates", "type": "float", "optional": true},
+    {"name": "fat", "type": "float", "optional": true},
+    {"name": "saturated_fat", "type": "float", "optional": true},
+    {"name": "fiber", "type": "float", "optional": true},
+    {"name": "sugar", "type": "float", "optional": true},
+    {"name": "sodium", "type": "float", "optional": true},
+    
+    {"name": "categories", "type": "string[]", "optional": true, "facet": true},
+    {"name": "ingredients", "type": "string[]", "optional": true},
+    {"name": "allergens", "type": "string[]", "optional": true},
+    {"name": "serving_size", "type": "string", "optional": true},
+    {"name": "serving_unit", "type": "string", "optional": true},
+    {"name": "countries", "type": "string[]", "optional": true},
+    
+    {"name": "nova_score", "type": "int32", "optional": true},
+    {"name": "nutriscore_grade", "type": "string", "optional": true},
+    {"name": "nutriscore_score", "type": "int32", "optional": true},
+    
+    {"name": "country_codes", "type": "string[]", "optional": true, "facet": true},
+    {"name": "name_norm", "type": "string", "optional": true},
+    {"name": "brand_norm", "type": "string", "optional": true},
+    {"name": "food_kind", "type": "string", "optional": true, "facet": true},
+    {"name": "is_generic", "type": "bool", "optional": true, "facet": true},
+    {"name": "quality_score", "type": "int32"},
+    {"name": "popularity", "type": "int32", "optional": true},
+    {"name": "source", "type": "string", "optional": true, "facet": true}
+  ],
+  "default_sorting_field": "quality_score"
+}

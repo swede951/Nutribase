@@ -24,22 +24,9 @@ struct CircularProgressBar: View {
                 .animation(.linear, value: progress)
             
             // Center text
-            VStack(spacing: 0) {
-                HStack(spacing: 2) {
-                    Text("\(current)")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Text("/")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                        .alignmentGuide(.firstTextBaseline) { d in d[.firstTextBaseline] - 2 }
-                }
-                
-                Text("\(total)")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
-            }
+            Text("\(current)")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.primary)
         }
     }
 }

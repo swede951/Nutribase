@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SignUpView: View {
-    @EnvironmentObject var supabaseService: SupabaseService
+    @StateObject private var authService = FirebaseAuthService.shared
     @Environment(\.presentationMode) var presentationMode
     
     @State private var email = ""
@@ -10,27 +10,29 @@ struct SignUpView: View {
     @State private var isSigningUp = false
     @State private var errorMessage: String?
     @State private var showingAlert = false
+    @State private var showingVerificationMessage = false
+    @State private var verificationMessage = ""
     
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
                 // Header
-                VStack(spacing: 15) {
-                    Image("nutrition-balance-icon")
+                VStack(spacing: 5) {
+                    Image("app-logo")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 100, height: 100)
+                        .frame(width: 180, height: 180)
                     
                     Text("Create Account")
                         .font(.custom("Montserrat-ExtraBold", size: 28))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.white)
                     
                     Text("Join NutriBase to track your nutrition")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white)
                 }
-                .padding(.top, 20)
-                .padding(.bottom, 30)
+                .padding(.top, 40)
+                .padding(.bottom, 0)
                 
                 // Sign up form
                 VStack(spacing: 16) {
@@ -82,7 +84,7 @@ struct SignUpView: View {
                     .padding()
                     .background(
                         isFormValid && !isSigningUp ?
-                            Color.green : Color.green.opacity(0.5)
+                            Color(UIColor.black) : Color(UIColor.black).opacity(0.8)
                     )
                     .foregroundColor(.white)
                     .cornerRadius(8)
@@ -94,19 +96,28 @@ struct SignUpView: View {
                 // Back to login button
                 Button(action: { presentationMode.wrappedValue.dismiss() }) {
                     Text("Already have an account? Log In")
-                        .foregroundColor(.green)
+                        .foregroundColor(.white)
                 }
                 .padding(.bottom)
             }
             .padding()
-            .background(Color(hex: "b6e2ff"))
-            .ignoresSafeArea(.all)
-            .navigationBarItems(leading: Button(action: {
-                presentationMode.wrappedValue.dismiss()
-            }) {
-                Image(systemName: "xmark")
-                    .foregroundColor(.primary)
-            })
+            .background(
+                Color(hex: "35b8ff")
+                    .ignoresSafeArea(.all)
+            )
+            .navigationBarHidden(true)
+            .overlay(
+                // Close button in top-left corner
+                Button(action: {
+                    presentationMode.wrappedValue.dismiss()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(20)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            )
             .alert(isPresented: $showingAlert) {
                 Alert(
                     title: Text("Error"),
@@ -114,7 +125,17 @@ struct SignUpView: View {
                     dismissButton: .default(Text("OK"))
                 )
             }
+            .alert(isPresented: $showingVerificationMessage) {
+                Alert(
+                    title: Text("Verify Your Email"),
+                    message: Text(verificationMessage),
+                    dismissButton: .default(Text("OK")) {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                )
+            }
         }
+        .keyboardDismissToolbar()
     }
     
     private var isFormValid: Bool {
@@ -128,16 +149,26 @@ struct SignUpView: View {
         isSigningUp = true
         errorMessage = nil
         
-        // Sign up functionality disabled - redirect to sign in
-        isSigningUp = false
-        errorMessage = "Sign up is currently disabled. Please use sign in."
-        showingAlert = true
+        authService.signUp(email: email, password: password) { success, error in
+            DispatchQueue.main.async {
+                self.isSigningUp = false
+                
+                if success {
+                    // Sign up successful, show verification message
+                    self.verificationMessage = "Account created successfully! Please check your email (\(self.email)) and click the verification link before signing in."
+                    self.showingVerificationMessage = true
+                } else {
+                    // Show error message
+                    self.errorMessage = error ?? "Sign up failed. Please try again."
+                    self.showingAlert = true
+                }
+            }
+        }
     }
 }
 
 struct SignUpView_Previews: PreviewProvider {
     static var previews: some View {
         SignUpView()
-            .environmentObject(SupabaseService.shared)
     }
 }

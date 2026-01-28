@@ -2,11 +2,16 @@ import SwiftUI
 import HealthKit
 
 struct HealthKitConnectionView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var healthKitManager = HealthKitManager.shared
     @State private var isConnecting = false
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+    }
     
     var body: some View {
         VStack(spacing: 20) {
@@ -88,7 +93,7 @@ struct HealthKitConnectionView: View {
                     }
                 }
                 .padding()
-                .background(Color(.systemBackground))
+                .background(cardBackground)
                 .cornerRadius(12)
                 .shadow(radius: 2)
                 .padding()

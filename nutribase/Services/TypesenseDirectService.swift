@@ -22,8 +22,137 @@ class TypesenseDirectService: ObservableObject {
     
     private struct TypesenseConfig {
         static let apiURL = "https://h8ugnjal1c65sm2op-1.a1.typesense.net"
-        static let searchOnlyApiKey = "TozhqOtg2gh7kLUUeteL8LVTtuKRv9gq"
-        static let collectionName = "foods"
+        static let productsCollection = "foods"  // Open Food Facts products
+        static let ingredientsCollection = "foods_ingredients"  // USDA ingredients
+        
+        // SECURITY: Always use Firebase Functions in production
+        // API keys are stored securely in Firebase Secret Manager
+        static let useSecureCloudMode = true
+        
+        // Placeholder for legacy direct mode (disabled - will fail if used)
+        // Direct API calls are disabled for security reasons
+        static let searchOnlyApiKey = "DISABLED_USE_FIREBASE_FUNCTIONS"
+    }
+    
+    // Search intent types
+    private enum SearchIntent {
+        case ingredient  // Simple ingredient search (chicken, rice, etc.)
+        case product     // Branded/prepared product search
+        case mixed       // Unclear intent - search both
+    }
+    
+    // Region name to ISO code mapping
+    private func regionToISOCode(_ region: String) -> String {
+        let mapping: [String: String] = [
+            "United Kingdom": "gb",
+            "United States": "us",
+            "Ireland": "ie",
+            "France": "fr",
+            "Germany": "de",
+            "Spain": "es",
+            "Italy": "it",
+            "Netherlands": "nl",
+            "Belgium": "be",
+            "Sweden": "se",
+            "Norway": "no",
+            "Denmark": "dk",
+            "Poland": "pl",
+            "Portugal": "pt",
+            "Switzerland": "ch",
+            "Austria": "at",
+            "Australia": "au",
+            "Canada": "ca",
+            "New Zealand": "nz",
+            "All Regions": "all"
+        ]
+        return mapping[region, default: region.lowercased()]
+    }
+    
+    // MARK: - UK/US Food Synonyms
+    
+    /// Bidirectional synonym groups - searching for any term finds all related terms
+    private let foodSynonyms: [[String]] = [
+        // Proteins
+        ["mince", "ground beef", "minced beef", "ground meat"],
+        ["prawns", "shrimp", "king prawns"],
+        ["gammon", "ham steak"],
+        
+        // Vegetables
+        ["courgette", "zucchini", "courgettes", "zucchinis"],
+        ["aubergine", "eggplant", "aubergines", "eggplants"],
+        ["rocket", "arugula", "rocket salad", "arugula salad"],
+        ["coriander", "cilantro", "fresh coriander", "fresh cilantro"],
+        ["spring onion", "spring onions", "scallion", "scallions", "green onion", "green onions"],
+        ["bell pepper", "capsicum", "sweet pepper"],
+        ["swede", "rutabaga", "yellow turnip"],
+        ["mangetout", "mange tout", "snow peas", "sugar snap peas"],
+        ["beetroot", "beet", "beets", "red beet"],
+        ["broad beans", "fava beans", "fava"],
+        ["sweetcorn", "sweet corn", "corn on the cob"],
+        ["chips", "fries", "french fries", "oven chips"],
+        
+        // Snacks
+        ["crisps", "potato chips", "potato crisps"],
+        ["biscuit", "biscuits", "cookie", "cookies"],
+        ["sweets", "candy", "candies"],
+        
+        // Dairy
+        ["single cream", "light cream", "pouring cream"],
+        ["double cream", "heavy cream", "heavy whipping cream", "whipping cream"],
+        ["full fat milk", "whole milk", "full cream milk"],
+        ["semi skimmed", "semi-skimmed milk", "2% milk", "reduced fat milk"],
+        ["skimmed milk", "skim milk", "fat free milk", "nonfat milk"],
+        
+        // Baking/Pantry
+        ["plain flour", "all purpose flour", "all-purpose flour"],
+        ["strong flour", "bread flour", "strong bread flour"],
+        ["caster sugar", "castor sugar", "superfine sugar"],
+        ["icing sugar", "powdered sugar", "confectioners sugar"],
+        ["bicarbonate of soda", "bicarb", "baking soda"],
+        ["cornflour", "corn flour", "cornstarch", "corn starch"],
+        ["treacle", "black treacle", "molasses"],
+        ["golden syrup", "light treacle"],
+        
+        // Grains
+        ["porridge", "porridge oats", "oatmeal", "oat porridge"],
+        ["wholemeal", "whole meal", "wholewheat", "whole wheat"],
+        
+        // Misc
+        ["jam", "fruit preserve", "preserves"],
+        ["stock cube", "stock cubes", "bouillon cube", "bouillon"],
+        ["tomato puree", "tomato purée", "tomato paste", "tomato concentrate"],
+        ["muesli", "granola", "bircher muesli"],
+    ]
+    
+    /// Expand a search query with synonyms for better matching
+    private func expandQueryWithSynonyms(_ query: String) -> String {
+        let queryLower = query.lowercased()
+        var expandedTerms: Set<String> = [query] // Always include original
+        
+        for synonymGroup in foodSynonyms {
+            // Check if any synonym in this group matches part of the query
+            for synonym in synonymGroup {
+                if queryLower.contains(synonym.lowercased()) {
+                    // Add all synonyms from this group as alternatives
+                    for alt in synonymGroup where alt.lowercased() != synonym.lowercased() {
+                        // Replace the matched term with the alternative
+                        let replacement = queryLower.replacingOccurrences(of: synonym.lowercased(), with: alt.lowercased())
+                        if replacement != queryLower {
+                            expandedTerms.insert(replacement)
+                        }
+                    }
+                    break // Only match one synonym group per query
+                }
+            }
+        }
+        
+        if expandedTerms.count > 1 {
+            print("🔤 Synonym expansion: '\(query)' → \(expandedTerms.count) variants")
+        }
+        
+        // Return as comma-separated for multi-search, or just the first few
+        // For Typesense, we'll use the original + primary synonym
+        return Array(expandedTerms).prefix(3).joined(separator: " ")
     }
     
     // MARK: - Search Result Caching
@@ -41,7 +170,78 @@ class TypesenseDirectService: ObservableObject {
         }
     }
     
+    // MARK: - Helper Methods
+    
+    /// Clean up brand name - removes duplicates and takes the first meaningful brand
+    private func cleanBrandName(_ rawBrand: String?) -> String? {
+        guard let brand = rawBrand, !brand.isEmpty else { return nil }
+        
+        // Split by comma and clean each part
+        let parts = brand.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        
+        // Return the first non-empty part, or nil if none
+        return parts.first { !$0.isEmpty }
+    }
+    
     // MARK: - Public Methods
+    
+    /// Detect search intent based on query characteristics
+    private func detectSearchIntent(_ query: String) -> SearchIntent {
+        let queryLower = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = queryLower.split(separator: " ").map(String.init)
+        
+        // Brand keywords (UK + global)
+        let brandKeywords = [
+            // UK retailers
+            "tesco", "sainsbury", "sainsburys", "asda", "morrisons", "waitrose",
+            "marks", "spencer", "m&s", "coop", "co-op", "aldi", "lidl", "iceland",
+            // US/Global
+            "walmart", "target", "kroger", "costco", "trader", "joe", "whole foods",
+            // Major food brands
+            "nestle", "kraft", "heinz", "kellogg", "mars", "cadbury", "coca-cola",
+            "pepsi", "unilever", "danone", "ferrero", "mondelez",
+            // Fast food
+            "mcdonald", "kfc", "burger king", "subway", "starbucks", "domino",
+            "pizza hut", "taco bell", "wendy", "chick-fil-a", "popeyes"
+        ]
+        
+        // Prepared/product/packaging keywords
+        let productKeywords = [
+            "wrap", "nuggets", "nugget", "bucket", "shake", "bar", "meal", "ready",
+            "frozen", "microwave", "instant", "packet", "tin", "can", "bottle",
+            "pack", "box", "tub", "pot", "sachet", "pouch",
+            "pizza", "burger", "sandwich", "burrito", "taco", "fries",
+            "prepared", "cooked", "baked", "fried", "grilled", "roasted",
+            "flavored", "flavoured", "seasoned", "marinated", "breaded",
+            "stuffed", "filled", "topped", "glazed", "smoked", "cured"
+        ]
+        
+        // Check for brand keywords
+        for brand in brandKeywords {
+            if queryLower.contains(brand) {
+                print("🎯 PRODUCT intent detected: brand keyword '\(brand)'")
+                return .product
+            }
+        }
+        
+        // Check for product/prepared keywords
+        for keyword in productKeywords {
+            if tokens.contains(keyword) || queryLower.contains(keyword) {
+                print("🎯 PRODUCT intent detected: product keyword '\(keyword)'")
+                return .product
+            }
+        }
+        
+        // Short queries (1-3 tokens) without brand/product keywords = ingredient intent
+        if tokens.count <= 3 {
+            print("🥕 INGREDIENT intent detected: short query (\(tokens.count) tokens)")
+            return .ingredient
+        }
+        
+        // Longer queries (4+ tokens) without brand/product keywords = mixed intent
+        print("🔀 MIXED intent detected: longer query (\(tokens.count) tokens) without clear signals")
+        return .mixed
+    }
     
     /// Search for foods matching the given query with enhanced search capabilities
     func searchFoods(query: String, completion: @escaping ([FoodItem]?, Error?) -> Void) {
@@ -50,16 +250,29 @@ class TypesenseDirectService: ObservableObject {
             return
         }
         // Check cache first
-        let cacheKey = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let cacheKey = query.lowercased()
         if let cachedResult = searchCache[cacheKey], !cachedResult.isExpired {
             print("📦 Returning cached results for: \(query) (\(cachedResult.results.count) items)")
+            // Apply cached serving information to cached search results
+            let foodsWithCache = FoodServingCacheService.shared.applyCachedServingInfo(to: cachedResult.results)
             DispatchQueue.main.async {
-                completion(cachedResult.results, nil)
+                completion(foodsWithCache, nil)
             }
             return
         }
         
-        print("🔍 Enhanced Typesense search for: \(query) using direct HTTP")
+        // Expand query with UK/US synonyms for human-like matching
+        let expandedQuery = expandQueryWithSynonyms(query)
+        
+        // SECURE MODE: Route through Firebase Functions (API keys stay on server)
+        if TypesenseConfig.useSecureCloudMode {
+            print("🔒 Secure search via Firebase Functions for: \(query)")
+            performSecureCloudSearch(query: expandedQuery, cacheKey: cacheKey, completion: completion)
+            return
+        }
+        
+        // DIRECT MODE: For development/testing only
+        print("🔍 Direct Typesense search for: \(query)")
         
         // One-time schema inspection to understand available fields (for debugging)
         if !hasInspectedSchema {
@@ -73,56 +286,363 @@ class TypesenseDirectService: ObservableObject {
             }
         }
         
-        // Perform search with retry logic
-        performSearchWithRetry(query: query, cacheKey: cacheKey, retryCount: 0, completion: completion)
+        // Detect search intent (use original query for intent detection)
+        let intent = detectSearchIntent(query)
+        
+        // Perform two-lane search based on intent (use expanded query for actual search)
+        performTwoLaneSearch(query: expandedQuery, intent: intent, cacheKey: cacheKey, completion: completion)
     }
     
-    /// Perform search with retry logic for better reliability
-    private func performSearchWithRetry(query: String, cacheKey: String, retryCount: Int, completion: @escaping ([FoodItem]?, Error?) -> Void) {
-        // Build the URL for the search endpoint
-        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.collectionName)/documents/search"
-        guard var urlComponents = URLComponents(string: urlString) else {
+    /// Perform search via Firebase Functions (secure - API keys stay on server)
+    private func performSecureCloudSearch(query: String, cacheKey: String, completion: @escaping ([FoodItem]?, Error?) -> Void) {
+        // Build multi-search request for two-lane search
+        let searches: [[String: Any]] = [
+            // Ingredients collection
+            [
+                "collection": TypesenseConfig.ingredientsCollection,
+                "q": query,
+                "query_by": "name,brand,name_norm,brand_norm",
+                "query_by_weights": "5,3,4,2",
+                "num_typos": "2",
+                "prefix": "true",
+                "per_page": "50",
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ],
+            // Products collection
+            [
+                "collection": TypesenseConfig.productsCollection,
+                "q": query,
+                "query_by": "name,brand,name_norm,brand_norm,ingredients_text",
+                "query_by_weights": "5,3,4,2,1",
+                "num_typos": "2",
+                "prefix": "true",
+                "per_page": "50",
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ]
+        ]
+        
+        TypesenseCloudService.shared.multiSearch(searches: searches) { [weak self] result in
+            switch result {
+            case .success(let searchResults):
+                var allFoods: [FoodItem] = []
+                
+                // Parse results from both collections
+                for searchResult in searchResults {
+                    for hit in searchResult.hits {
+                        if let document = hit["document"] as? [String: Any],
+                           let food = self?.parseFoodDocument(document) {
+                            allFoods.append(food)
+                        }
+                    }
+                }
+                
+                // Deduplicate and rank
+                let rankedFoods = self?.rankFoodsByRelevanceAndQuality(allFoods, query: query) ?? allFoods
+                let uniqueFoods = self?.deduplicateFoods(rankedFoods) ?? rankedFoods
+                let topResults = Array(uniqueFoods.prefix(50))
+                
+                // Cache results
+                self?.searchCache[cacheKey] = CachedSearchResult(results: topResults, timestamp: Date())
+                
+                // Apply cached serving info
+                let foodsWithCache = FoodServingCacheService.shared.applyCachedServingInfo(to: topResults)
+                
+                DispatchQueue.main.async {
+                    completion(foodsWithCache, nil)
+                }
+                
+            case .failure(let error):
+                print("❌ Secure cloud search failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion(nil, error)
+                }
+            }
+        }
+    }
+    
+    /// Parse a Typesense document into a FoodItem
+    private func parseFoodDocument(_ doc: [String: Any]) -> FoodItem? {
+        guard let name = doc["name"] as? String else { return nil }
+        
+        let calories = doc["calories"] as? Int ?? Int(doc["calories"] as? Double ?? 0)
+        let protein = doc["protein"] as? Double ?? Double(doc["protein"] as? Int ?? 0)
+        // Check "carbohydrates" first (database field name), then fall back to "carbs"
+        let carbs: Double = {
+            if let val = doc["carbohydrates"] as? Double { return val }
+            if let val = doc["carbohydrates"] as? Int { return Double(val) }
+            if let val = doc["carbs"] as? Double { return val }
+            if let val = doc["carbs"] as? Int { return Double(val) }
+            return 0.0
+        }()
+        let fat = doc["fat"] as? Double ?? Double(doc["fat"] as? Int ?? 0)
+        
+        return FoodItem(
+            name: name,
+            brandName: cleanBrandName(doc["brand"] as? String),
+            barcode: doc["barcode"] as? String ?? doc["id"] as? String,
+            calories: calories,
+            protein: protein,
+            carbs: carbs,
+            fat: fat,
+            novaScore: doc["nova_final"] as? Int ?? doc["nova_score"] as? Int ?? 0,
+            novaScoreIsEstimated: doc["nova_source"] as? String == "estimated",
+            nutriScoreGrade: doc["nutriscore_grade"] as? String,
+            nutriScoreIsEstimated: false,
+            servingSize: doc["serving_size"] as? String,
+            servingsPerPackage: doc["servings_per_package"] as? Double,
+            servingType: doc["serving_unit"] as? String,
+            fiber: doc["fiber"] as? Double,
+            sugar: doc["sugar"] as? Double,
+            sodium: doc["sodium"] as? Double,
+            saturatedFat: doc["saturated_fat"] as? Double,
+            ingredients: doc["ingredients_text"] as? String,
+            countries: doc["countries"] as? [String]
+        )
+    }
+    
+    /// Deduplicate foods by name+brand
+    private func deduplicateFoods(_ foods: [FoodItem]) -> [FoodItem] {
+        var seen = Set<String>()
+        return foods.filter { food in
+            let key = "\(food.name.lowercased())_\(food.brandName?.lowercased() ?? "")"
+            if seen.contains(key) {
+                return false
+            }
+            seen.insert(key)
+            return true
+        }
+    }
+    
+    /// Perform two-lane search: query both collections and merge results
+    private func performTwoLaneSearch(query: String, intent: SearchIntent, cacheKey: String, completion: @escaping ([FoodItem]?, Error?) -> Void) {
+        let group = DispatchGroup()
+        var ingredientResults: [FoodItem] = []
+        var productResults: [FoodItem] = []
+        var searchErrors: [Error] = []
+        
+        // Determine which collections to search based on intent
+        let searchIngredients = intent == .ingredient || intent == .mixed
+        let searchProducts = intent == .product || intent == .mixed
+        
+        print("🔍 Two-lane search: ingredients=\(searchIngredients), products=\(searchProducts)")
+        
+        // Search for ingredients using strict ingredient query
+        if searchIngredients {
+            group.enter()
+            performIngredientSearch(
+                query: query,
+                retryCount: 0
+            ) { foods, error in
+                if let foods = foods {
+                    ingredientResults = foods
+                    print("✅ Ingredients lane: \(foods.count) results")
+                } else if let error = error {
+                    searchErrors.append(error)
+                }
+                group.leave()
+            }
+        }
+        
+        // Search for products using brand-friendly product query
+        if searchProducts {
+            group.enter()
+            performProductSearch(
+                query: query,
+                retryCount: 0
+            ) { foods, error in
+                if let foods = foods {
+                    productResults = foods
+                    print("✅ Products lane: \(foods.count) results")
+                } else if let error = error {
+                    searchErrors.append(error)
+                }
+                group.leave()
+            }
+        }
+        
+        // Wait for both searches to complete
+        group.notify(queue: .main) {
+            // If both searches failed, return error
+            if ingredientResults.isEmpty && productResults.isEmpty && !searchErrors.isEmpty {
+                completion(nil, searchErrors.first)
+                return
+            }
+            
+            // Merge and rank results based on intent
+            let mergedResults = self.mergeAndRankResults(
+                ingredientResults: ingredientResults,
+                productResults: productResults,
+                query: query,
+                intent: intent
+            )
+            
+            print("✅ Two-lane search complete: \(mergedResults.count) total results")
+            
+            // Apply cached serving information
+            let foodsWithCache = FoodServingCacheService.shared.applyCachedServingInfo(to: mergedResults)
+            
+            // Cache the results
+            self.searchCache[cacheKey] = CachedSearchResult(results: mergedResults, timestamp: Date())
+            
+            completion(foodsWithCache, nil)
+        }
+    }
+    
+    /// Merge and rank results from both lanes based on intent
+    private func mergeAndRankResults(
+        ingredientResults: [FoodItem],
+        productResults: [FoodItem],
+        query: String,
+        intent: SearchIntent
+    ) -> [FoodItem] {
+        var allResults: [FoodItem] = []
+        
+        switch intent {
+        case .ingredient:
+            // Ingredient intent: prioritize ingredients heavily, add some products at end
+            print("🥕 Ranking for INGREDIENT intent")
+            allResults = ingredientResults + productResults.prefix(10)  // Take only top 10 products
+            
+        case .product:
+            // Product intent: prioritize products heavily, add some ingredients at end
+            print("🎯 Ranking for PRODUCT intent")
+            allResults = productResults + ingredientResults.prefix(5)  // Take only top 5 ingredients
+            
+        case .mixed:
+            // Mixed intent: interleave results, slight preference for ingredients
+            print("🔀 Ranking for MIXED intent")
+            // Take top results from each, ingredients first
+            let maxIngredients = min(25, ingredientResults.count)
+            let maxProducts = min(25, productResults.count)
+            allResults = Array(ingredientResults.prefix(maxIngredients)) + Array(productResults.prefix(maxProducts))
+        }
+        
+        // Apply smart 0-calorie filtering
+        let filteredResults = filterZeroCalorieEntries(allResults)
+        
+        // Re-rank all results by relevance and quality
+        let rankedResults = rankFoodsByRelevanceAndQuality(filteredResults, query: query)
+        
+        // Limit final results to 50
+        return Array(rankedResults.prefix(50))
+    }
+    
+    /// Perform strict ingredient search with fallback
+    private func performIngredientSearch(
+        query: String,
+        retryCount: Int,
+        completion: @escaping ([FoodItem]?, Error?) -> Void
+    ) {
+        // First try: strict ingredient search
+        performIngredientSearchInternal(
+            query: query,
+            strictMode: true,
+            retryCount: retryCount
+        ) { foods, error in
+            if let foods = foods, foods.count >= 5 {
+                // Success with strict search
+                completion(foods, nil)
+            } else {
+                // Fallback: widen to include products
+                print("⚠️ Ingredient search returned < 5 results (\(foods?.count ?? 0)), using fallback")
+                self.performIngredientSearchInternal(
+                    query: query,
+                    strictMode: false,
+                    retryCount: retryCount,
+                    completion: completion
+                )
+            }
+        }
+    }
+    
+    /// Internal ingredient search with configurable strictness
+    private func performIngredientSearchInternal(
+        query: String,
+        strictMode: Bool,
+        retryCount: Int,
+        completion: @escaping ([FoodItem]?, Error?) -> Void
+    ) {
+        // Build the URL for the search endpoint (search both collections)
+        let urlString = "\(TypesenseConfig.apiURL)/multi_search"
+        guard let url = URL(string: urlString) else {
             completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
             return
         }
         
-        // Enhanced search parameters with multi-field search, typo tolerance, and boosting
-        urlComponents.queryItems = [
-            // Multi-field search with industry-standard field boosting (name gets highest priority)
-            URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "query_by", value: "name,brand,ingredients"),
-            URLQueryItem(name: "query_by_weights", value: "10,5,2"), // Industry standard: name 10x, brand 5x, ingredients 2x
-            
-            // Typo tolerance - allow up to 2 typos for queries longer than 3 characters
-            URLQueryItem(name: "typo_tokens_threshold", value: "1"),
-            URLQueryItem(name: "num_typos", value: "2"),
-            
-            // Enable prefix matching for name and brand (better autocomplete experience)
-            URLQueryItem(name: "prefix", value: "true,true,false"),
-            
-            // Increase results for better selection
-            URLQueryItem(name: "per_page", value: "50"),
-            
-            // Optimal ranking using available sortable fields: text relevance first, then custom sort score
-            URLQueryItem(name: "sort_by", value: "_text_match:desc,sort_score:desc"),
-            
-            // Highlight matching terms for better UX (optional)
-            URLQueryItem(name: "highlight_full_fields", value: "name,brand")
-        ]
+        // Get region preference
+        let preferredRegion = UserDefaults.standard.string(forKey: "preferredFoodRegion") ?? "All Regions"
         
-        guard let url = urlComponents.url else {
-            completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL components"]))
-            return
+        // Build filter_by query
+        var filters: [String] = ["calories:>0"]  // Always filter out foods with 0 calories
+        
+        // Strict mode: only ingredients. Fallback: ingredients + products
+        if strictMode {
+            filters.append("food_kind:=ingredient")
+        } else {
+            filters.append("food_kind:=[ingredient,product]")
         }
         
-        // Create the request with timeout
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 10.0 // 10 second timeout
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Add region filter if not "All Regions"
+        if preferredRegion != "All Regions" {
+            let countryCode = regionToISOCode(preferredRegion)
+            filters.append("country_codes:=[\(countryCode)]")
+            print("🌍 Filtering search by region code: \(countryCode)")
+        }
         
-        // Important: Use setValue instead of addValue for the API key header
+        let filterString = filters.joined(separator: " && ")
+        
+        // Build multi-search request body
+        let searches: [[String: Any]] = [
+            // Search ingredients collection
+            [
+                "collection": TypesenseConfig.ingredientsCollection,
+                "q": query,
+                "query_by": "name_norm,name",
+                "query_by_weights": "100,50",  // Boost normalized name heavily
+                "filter_by": filterString,
+                "drop_tokens_threshold": strictMode ? 0 : 1,
+                "num_typos": 1,
+                "prefix": "true,true",
+                "prioritize_exact_match": true,
+                "prioritize_token_position": true,
+                "per_page": 50,
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ],
+            // Search products collection (only in non-strict mode with widened filter)
+            strictMode ? [:] : [
+                "collection": TypesenseConfig.productsCollection,
+                "q": query,
+                "query_by": "name_norm,name",
+                "query_by_weights": "100,50",
+                "filter_by": filterString,  // Use same widened filter as ingredients collection
+                "drop_tokens_threshold": 1,
+                "num_typos": 1,
+                "prefix": "true,true",
+                "prioritize_exact_match": true,
+                "prioritize_token_position": true,
+                "per_page": 50,
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ]
+        ].filter { !$0.isEmpty }
+        
+        let requestBody: [String: Any] = ["searches": searches]
+        
+        print("🥕 Ingredient search (strict=\(strictMode)): \(searches.count) collection(s)")
+        
+        // Create the request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(TypesenseConfig.searchOnlyApiKey, forHTTPHeaderField: "X-TYPESENSE-API-KEY")
+        
+        // Set request body
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        } catch {
+            completion(nil, error)
+            return
+        }
         
         // Execute the request
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
@@ -134,7 +654,7 @@ class TypesenseDirectService: ObservableObject {
                 if retryCount < 2 && (error as NSError).code != NSURLErrorCancelled {
                     print("🔄 Retrying search due to network error (attempt \(retryCount + 1)/3)...")
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
-                        self.performSearchWithRetry(query: query, cacheKey: cacheKey, retryCount: retryCount + 1, completion: completion)
+                        self.performIngredientSearchInternal(query: query, strictMode: strictMode, retryCount: retryCount + 1, completion: completion)
                     }
                 } else {
                     DispatchQueue.main.async {
@@ -164,7 +684,7 @@ class TypesenseDirectService: ObservableObject {
                     if retryCount < 2 && httpResponse.statusCode >= 500 {
                         print("🔄 Retrying search due to server error (attempt \(retryCount + 1)/3)...")
                         DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
-                            self.performSearchWithRetry(query: query, cacheKey: cacheKey, retryCount: retryCount + 1, completion: completion)
+                            self.performIngredientSearchInternal(query: query, strictMode: strictMode, retryCount: retryCount + 1, completion: completion)
                         }
                     } else {
                         DispatchQueue.main.async {
@@ -183,7 +703,7 @@ class TypesenseDirectService: ObservableObject {
                 if retryCount < 2 {
                     print("🔄 Retrying search due to missing data (attempt \(retryCount + 1)/3)...")
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
-                        self.performSearchWithRetry(query: query, cacheKey: cacheKey, retryCount: retryCount + 1, completion: completion)
+                        self.performIngredientSearchInternal(query: query, strictMode: strictMode, retryCount: retryCount + 1, completion: completion)
                     }
                 } else {
                     DispatchQueue.main.async {
@@ -194,21 +714,28 @@ class TypesenseDirectService: ObservableObject {
             }
             
             do {
-                // Parse the JSON response
+                // Parse multi-search response
                 let jsonResponse = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
-                print("📝 Raw Typesense response received")
+                print("📝 Multi-search response received")
                 
-                guard let hits = jsonResponse?["hits"] as? [[String: Any]] else {
-                    print("❌ No hits found in response")
+                guard let results = jsonResponse?["results"] as? [[String: Any]] else {
+                    print("❌ No results array in multi-search response")
                     DispatchQueue.main.async {
                         completion([], nil)
                     }
                     return
                 }
                 
+                // Combine all hits from all searches
                 var foods: [FoodItem] = []
+                for (index, result) in results.enumerated() {
+                    guard let hits = result["hits"] as? [[String: Any]] else {
+                        print("⚠️ No hits in search result \(index)")
+                        continue
+                    }
+                    print("📊 Search \(index): \(hits.count) hits")
                 
-                for hit in hits {
+                    for hit in hits {
                     guard let document = hit["document"] as? [String: Any],
                           let name = document["name"] as? String else {
                         continue
@@ -217,7 +744,7 @@ class TypesenseDirectService: ObservableObject {
                     print("🍎 Processing food: \(name)")
                     
                     // Extract basic information
-                    let brandName = document["brand"] as? String
+                    let brandName = self.cleanBrandName(document["brand"] as? String)
                     let barcode = document["barcode"] as? String
                     let novaScore = document["nova_score"] as? Int ?? 0
                     let nutriScoreGrade = document["nutriscore_grade"] as? String
@@ -229,103 +756,84 @@ class TypesenseDirectService: ObservableObject {
                     var carbs = 0.0
                     var fat = 0.0
                     
-                    // Try to parse nutrients from JSON string first
-                    if let nutrientsText = document["nutrients_text"] as? String,
-                       let nutrientsData = nutrientsText.data(using: .utf8),
-                       let nutrients = try? JSONSerialization.jsonObject(with: nutrientsData) as? [String: Any] {
-                        
-                        print("  📊 Parsing nutrients from JSON string")
-                        
-                        // Extract nutritional values
-                        if let caloriesValue = nutrients["calories"] as? Int {
-                            calories = caloriesValue
-                        } else if let caloriesValue = nutrients["calories"] as? Double {
-                            calories = Int(caloriesValue)
-                        }
-                        
-                        if let proteinValue = nutrients["protein"] as? Double {
-                            protein = proteinValue
-                        } else if let proteinValue = nutrients["protein"] as? Int {
-                            protein = Double(proteinValue)
-                        }
-                        
-                        // Carbs might be stored as "carbohydrates" in the JSON
-                        if let carbsValue = nutrients["carbohydrates"] as? Double {
-                            carbs = carbsValue
-                        } else if let carbsValue = nutrients["carbs"] as? Double {
-                            carbs = carbsValue
-                        } else if let carbsValue = nutrients["carbohydrates"] as? Int {
-                            carbs = Double(carbsValue)
-                        } else if let carbsValue = nutrients["carbs"] as? Int {
-                            carbs = Double(carbsValue)
-                        }
-                        
-                        if let fatValue = nutrients["fat"] as? Double {
-                            fat = fatValue
-                        } else if let fatValue = nutrients["fat"] as? Int {
-                            fat = Double(fatValue)
-                        }
-                        
-                    } else {
-                        // Fallback to direct fields if nutrients_text is not available
-                        calories = document["calories"] as? Int ?? 0
-                        protein = (document["protein"] as? NSNumber)?.doubleValue ?? 0
-                        carbs = (document["carbs"] as? NSNumber)?.doubleValue ?? 0
-                        fat = (document["fat"] as? NSNumber)?.doubleValue ?? 0
-                        print("  ❌ No nutrients_text field found, using direct fields")
-                    }
+                    // Extract micronutrients - NEW!
+                    var fiber: Double? = nil
+                    var sugar: Double? = nil
+                    var sodium: Double? = nil
+                    var saturatedFat: Double? = nil
                     
-                    // Handle serving size (could be number or string) - with debugging
+                    // Extract nutrition data directly from document fields (simplified schema)
+                    calories = (document["calories"] as? Int) ?? Int(document["calories"] as? String ?? "0") ?? 0
+                    protein = (document["protein"] as? Double) ?? Double(document["protein"] as? String ?? "0") ?? 0.0
+                    carbs = (document["carbohydrates"] as? Double) ?? Double(document["carbohydrates"] as? String ?? "0") ?? 0.0
+                    fat = (document["fat"] as? Double) ?? Double(document["fat"] as? String ?? "0") ?? 0.0
+                    
+                    // Extract micronutrients from direct fields (handle strings and numbers)
+                    fiber = (document["fiber"] as? Double) ?? Double(document["fiber"] as? String ?? "") ?? nil
+                    sugar = (document["sugar"] as? Double) ?? Double(document["sugar"] as? String ?? "") ?? nil
+                    sodium = (document["sodium"] as? Double) ?? Double(document["sodium"] as? String ?? "") ?? nil
+                    saturatedFat = (document["saturated_fat"] as? Double) ?? Double(document["saturated_fat"] as? String ?? "") ?? nil
+                    
+                    print("  📊 Parsed nutrition data for \(name):")
+                    print("    calories: \(calories)")
+                    print("    protein: \(protein)g")
+                    print("    carbohydrates: \(carbs)g")
+                    print("    fat: \(fat)g")
+                    if let fiber = fiber { print("    fiber: \(fiber)g") }
+                    if let sugar = sugar { print("    sugar: \(sugar)g") }
+                    if let sodium = sodium { print("    sodium: \(sodium)g") }
+                    if let saturatedFat = saturatedFat { print("    saturated_fat: \(saturatedFat)g") }
+                    
+                    // Handle serving size from direct document fields
                     var servingSize: String? = nil
-                    var servingType: String? = nil
-                    
-                    // First try to get from nutrients_text JSON (if it was parsed above)
-                    if let nutrientsText = document["nutrients_text"] as? String,
-                       let nutrientsData = nutrientsText.data(using: .utf8),
-                       let nutrients = try? JSONSerialization.jsonObject(with: nutrientsData) as? [String: Any] {
-                        
-                        if let servingSizeValue = nutrients["serving_size"] as? String {
-                            servingSize = servingSizeValue
-                            print("  📏 Found serving_size in nutrients_text: \(servingSizeValue)")
-                        }
-                        
-                        if let servingUnitValue = nutrients["serving_unit"] as? String {
-                            servingType = servingUnitValue
-                            print("  📏 Found serving_unit in nutrients_text: \(servingUnitValue)")
-                        }
+                    if let servingSizeNum = document["serving_size"] as? NSNumber {
+                        servingSize = "\(servingSizeNum)"
+                        print("  📏 Found serving_size (number): \(servingSize!)")
+                    } else if let servingSizeStr = document["serving_size"] as? String {
+                        servingSize = servingSizeStr
+                        print("  📏 Found serving_size (string): \(servingSize!)")
+                    } else {
+                        print("  ❌ No serving_size field found")
                     }
                     
-                    // Fallback to direct document fields if not found in nutrients_text
-                    if servingSize == nil {
-                        if let servingSizeNum = document["serving_size"] as? NSNumber {
-                            servingSize = "\(servingSizeNum)"
-                            print("  📏 Found serving_size (number): \(servingSize!)")
-                        } else if let servingSizeStr = document["serving_size"] as? String {
-                            servingSize = servingSizeStr
-                            print("  📏 Found serving_size (string): \(servingSize!)")
-                        } else {
-                            print("  ❌ No serving_size field found in document or nutrients_text")
+                    let servingType = document["serving_unit"] as? String
+                    if let servingType = servingType {
+                        print("  📏 Found serving_unit: \(servingType)")
+                    } else {
+                        print("  ❌ No serving_unit field found")
+                    }
+                    
+                    // Parse ingredients (not used in FoodItem creation but kept for potential future use)
+                    let _ = {
+                        if let ingredientsArray = document["ingredients"] as? [String] {
+                            return ingredientsArray
+                        } else if let ingredientsText = document["ingredients_text"] as? String {
+                            return ingredientsText.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
                         }
+                        return [String]()
+                    }()
+                    
+                    // Debug micronutrients
+                    var micronutrientCount = 0
+                    if fiber != nil { micronutrientCount += 1 }
+                    if sugar != nil { micronutrientCount += 1 }
+                    if sodium != nil { micronutrientCount += 1 }
+                    if saturatedFat != nil { micronutrientCount += 1 }
+                    
+                    if micronutrientCount > 0 {
+                        print("  🥗 Found \(micronutrientCount) micronutrients for \(name)")
                     }
                     
-                    if servingType == nil {
-                        servingType = document["serving_unit"] as? String
-                        if let servingType = servingType {
-                            print("  📏 Found serving_unit: \(servingType)")
-                        } else {
-                            print("  ❌ No serving_unit field found in document or nutrients_text")
-                        }
+                    // Extract region information
+                    let countries = document["countries"] as? [String]
+                    let purchasePlaces = document["purchase_places"] as? String
+                    let origins = document["origins"] as? String
+                    
+                    if let countries = countries, !countries.isEmpty {
+                        print("  🌍 Countries: \(countries.joined(separator: ", "))")
                     }
                     
-                    // Parse ingredients
-                    var ingredients: [String] = []
-                    if let ingredientsArray = document["ingredients"] as? [String] {
-                        ingredients = ingredientsArray
-                    } else if let ingredientsText = document["ingredients_text"] as? String {
-                        ingredients = ingredientsText.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    }
-                    
-                    // Create FoodItem
+                    // Create FoodItem with micronutrients and region data
                     let food = FoodItem(
                         name: name,
                         brandName: brandName,
@@ -337,10 +845,18 @@ class TypesenseDirectService: ObservableObject {
                         novaScore: novaScore,
                         nutriScoreGrade: nutriScoreGrade,
                         servingSize: servingSize,
-                        servingType: servingType
+                        servingType: servingType,
+                        fiber: fiber,
+                        sugar: sugar,
+                        sodium: sodium,
+                        saturatedFat: saturatedFat,
+                        countries: countries,
+                        purchasePlaces: purchasePlaces,
+                        origins: origins
                     )
                     
-                    foods.append(food)
+                        foods.append(food)
+                    }
                 }
                 
                 print("✅ Found \(foods.count) foods matching query: \(query)")
@@ -350,11 +866,13 @@ class TypesenseDirectService: ObservableObject {
                 print("📊 After 0-calorie filtering: \(filteredFoods.count) foods remain")
                 
                 // Apply MyFitnessPal-style semantic relevance ranking + nutritional completeness
-                let rankedFoods = self.rankFoodsByRelevanceAndQuality(filteredFoods, query: query)
+                let semanticallyRankedFoods = self.rankFoodsByRelevanceAndQuality(filteredFoods, query: query)
                 
-                // Cache the results
-                self.searchCache[cacheKey] = CachedSearchResult(results: rankedFoods, timestamp: Date())
+                // DISABLED: SearchRankingService was overwriting our semantic scores
+                // Instead, semantic relevance is the primary ranking factor
+                let rankedFoods = semanticallyRankedFoods
                 
+                // Return results (caching happens at the two-lane search level)
                 DispatchQueue.main.async {
                     completion(rankedFoods, nil)
                 }
@@ -366,7 +884,270 @@ class TypesenseDirectService: ObservableObject {
                 if retryCount < 2 {
                     print("🔄 Retrying search (attempt \(retryCount + 1)/3)...")
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
-                        self.performSearchWithRetry(query: query, cacheKey: cacheKey, retryCount: retryCount + 1, completion: completion)
+                        self.performIngredientSearchInternal(query: query, strictMode: strictMode, retryCount: retryCount + 1, completion: completion)
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        completion(nil, error)
+                    }
+                }
+            }
+        }
+        
+        task.resume()
+    }
+    
+    /// Perform brand-friendly product search
+    private func performProductSearch(
+        query: String,
+        retryCount: Int,
+        completion: @escaping ([FoodItem]?, Error?) -> Void
+    ) {
+        // Build the URL for multi-search endpoint
+        let urlString = "\(TypesenseConfig.apiURL)/multi_search"
+        guard let url = URL(string: urlString) else {
+            completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
+            return
+        }
+        
+        // Get region preference
+        let preferredRegion = UserDefaults.standard.string(forKey: "preferredFoodRegion") ?? "All Regions"
+        
+        // Build filter_by query for products
+        var filters: [String] = ["calories:>0", "food_kind:=product"]
+        
+        // Add region filter if not "All Regions"
+        if preferredRegion != "All Regions" {
+            let countryCode = regionToISOCode(preferredRegion)
+            filters.append("country_codes:=[\(countryCode)]")
+            print("🌍 Filtering search by region code: \(countryCode)")
+        }
+        
+        let filterString = filters.joined(separator: " && ")
+        
+        // Build multi-search request body
+        let searches: [[String: Any]] = [
+            // Search products collection (brand-friendly)
+            [
+                "collection": TypesenseConfig.productsCollection,
+                "q": query,
+                "query_by": "brand_norm,name_norm,brand,name",
+                "query_by_weights": "100,90,50,40",  // Boost brand fields for products
+                "filter_by": filterString,
+                "drop_tokens_threshold": 1,
+                "num_typos": 2,  // More lenient for products
+                "prefix": "true,true,true,true",
+                "prioritize_exact_match": true,
+                "prioritize_token_position": true,
+                "per_page": 50,
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ],
+            // Also search ingredients collection for product-tagged items
+            [
+                "collection": TypesenseConfig.ingredientsCollection,
+                "q": query,
+                "query_by": "name_norm,name",
+                "query_by_weights": "100,50",
+                "filter_by": "calories:>0 && food_kind:=product" + (preferredRegion != "All Regions" ? " && country_codes:=[\(regionToISOCode(preferredRegion))]" : ""),
+                "drop_tokens_threshold": 1,
+                "num_typos": 2,
+                "prefix": "true,true",
+                "prioritize_exact_match": true,
+                "prioritize_token_position": true,
+                "per_page": 50,
+                "sort_by": "_text_match(buckets:10):desc,popularity:desc,quality_score:desc"
+            ]
+        ]
+        
+        let requestBody: [String: Any] = ["searches": searches]
+        
+        print("🎯 Product search: \(searches.count) collection(s)")
+        
+        // Create the request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(TypesenseConfig.searchOnlyApiKey, forHTTPHeaderField: "X-TYPESENSE-API-KEY")
+        
+        // Set request body
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        } catch {
+            completion(nil, error)
+            return
+        }
+        
+        // Execute the request
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            // Check for network errors with retry logic
+            if let error = error {
+                print("❌ Network error: \(error.localizedDescription)")
+                
+                if retryCount < 2 && (error as NSError).code != NSURLErrorCancelled {
+                    print("🔄 Retrying search due to network error (attempt \(retryCount + 1)/3)...")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
+                        self.performProductSearch(query: query, retryCount: retryCount + 1, completion: completion)
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        completion(nil, error)
+                    }
+                }
+                return
+            }
+            
+            // Check HTTP response
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 HTTP Status: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode != 200 {
+                    let responseError = NSError(
+                        domain: "TypesenseService",
+                        code: httpResponse.statusCode,
+                        userInfo: [NSLocalizedDescriptionKey: "HTTP Error: \(httpResponse.statusCode)"]
+                    )
+                    
+                    if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                        print("❌ Error response: \(responseString)")
+                    }
+                    
+                    if retryCount < 2 && httpResponse.statusCode >= 500 {
+                        print("🔄 Retrying search due to server error (attempt \(retryCount + 1)/3)...")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
+                            self.performProductSearch(query: query, retryCount: retryCount + 1, completion: completion)
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            completion(nil, responseError)
+                        }
+                    }
+                    return
+                }
+            }
+            
+            // Ensure we have data
+            guard let data = data else {
+                print("❌ No data received")
+                
+                if retryCount < 2 {
+                    print("🔄 Retrying search due to missing data (attempt \(retryCount + 1)/3)...")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
+                        self.performProductSearch(query: query, retryCount: retryCount + 1, completion: completion)
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        completion(nil, NSError(domain: "TypesenseService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data received"]))
+                    }
+                }
+                return
+            }
+            
+            do {
+                // Parse multi-search response
+                let jsonResponse = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+                print("📝 Multi-search response received")
+                
+                guard let results = jsonResponse?["results"] as? [[String: Any]] else {
+                    print("❌ No results array in multi-search response")
+                    DispatchQueue.main.async {
+                        completion([], nil)
+                    }
+                    return
+                }
+                
+                // Combine all hits from all searches
+                var foods: [FoodItem] = []
+                for (index, result) in results.enumerated() {
+                    guard let hits = result["hits"] as? [[String: Any]] else {
+                        print("⚠️ No hits in search result \(index)")
+                        continue
+                    }
+                    print("📊 Search \(index): \(hits.count) hits")
+                
+                    for hit in hits {
+                        guard let document = hit["document"] as? [String: Any],
+                              let name = document["name"] as? String else {
+                            continue
+                        }
+                        
+                        // Extract basic information
+                        let brandName = self.cleanBrandName(document["brand"] as? String)
+                        let barcode = document["barcode"] as? String
+                        let novaScore = document["nova_score"] as? Int ?? 0
+                        let nutriScoreGrade = document["nutriscore_grade"] as? String
+                        
+                        // Extract nutritional values
+                        let calories = (document["calories"] as? Int) ?? Int(document["calories"] as? String ?? "0") ?? 0
+                        let protein = (document["protein"] as? Double) ?? Double(document["protein"] as? String ?? "0") ?? 0.0
+                        let carbs = (document["carbohydrates"] as? Double) ?? Double(document["carbohydrates"] as? String ?? "0") ?? 0.0
+                        let fat = (document["fat"] as? Double) ?? Double(document["fat"] as? String ?? "0") ?? 0.0
+                        
+                        // Extract micronutrients
+                        let fiber = (document["fiber"] as? Double) ?? Double(document["fiber"] as? String ?? "") ?? nil
+                        let sugar = (document["sugar"] as? Double) ?? Double(document["sugar"] as? String ?? "") ?? nil
+                        let sodium = (document["sodium"] as? Double) ?? Double(document["sodium"] as? String ?? "") ?? nil
+                        let saturatedFat = (document["saturated_fat"] as? Double) ?? Double(document["saturated_fat"] as? String ?? "") ?? nil
+                        
+                        // Handle serving size
+                        var servingSize: String? = nil
+                        if let servingSizeNum = document["serving_size"] as? NSNumber {
+                            servingSize = "\(servingSizeNum)"
+                        } else if let servingSizeStr = document["serving_size"] as? String {
+                            servingSize = servingSizeStr
+                        }
+                        
+                        let servingType = document["serving_unit"] as? String
+                        
+                        // Extract region information
+                        let countries = document["countries"] as? [String]
+                        let purchasePlaces = document["purchase_places"] as? String
+                        let origins = document["origins"] as? String
+                        
+                        let food = FoodItem(
+                            name: name,
+                            brandName: brandName,
+                            barcode: barcode,
+                            calories: calories,
+                            protein: protein,
+                            carbs: carbs,
+                            fat: fat,
+                            novaScore: novaScore,
+                            nutriScoreGrade: nutriScoreGrade,
+                            servingSize: servingSize,
+                            servingType: servingType,
+                            fiber: fiber,
+                            sugar: sugar,
+                            sodium: sodium,
+                            saturatedFat: saturatedFat,
+                            countries: countries,
+                            purchasePlaces: purchasePlaces,
+                            origins: origins
+                        )
+                        
+                        foods.append(food)
+                    }
+                }
+                
+                print("✅ Found \(foods.count) products matching query: \(query)")
+                
+                // Apply smart 0-calorie filtering
+                let filteredFoods = self.filterZeroCalorieEntries(foods)
+                
+                // Apply ranking
+                let rankedFoods = self.rankFoodsByRelevanceAndQuality(filteredFoods, query: query)
+                
+                DispatchQueue.main.async {
+                    completion(rankedFoods, nil)
+                }
+                
+            } catch {
+                print("❌ JSON parsing error: \(error.localizedDescription)")
+                
+                if retryCount < 2 {
+                    print("🔄 Retrying search (attempt \(retryCount + 1)/3)...")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount + 1)) {
+                        self.performProductSearch(query: query, retryCount: retryCount + 1, completion: completion)
                     }
                 } else {
                     DispatchQueue.main.async {
@@ -492,6 +1273,32 @@ class TypesenseDirectService: ObservableObject {
         } catch {
             print("⚠️ Failed to encode food history: \(error)")
         }
+        
+        // Increment global popularity in Typesense (the flywheel)
+        incrementPopularity(for: food)
+    }
+    
+    /// Increment popularity counter in Typesense for a selected food
+    /// This creates a "flywheel" effect - search gets better as more people use it
+    private func incrementPopularity(for food: FoodItem) {
+        // Use barcode as document ID (that's how OFF products are indexed)
+        // For USDA items without barcode, skip popularity update
+        guard let barcode = food.barcode, !barcode.isEmpty else {
+            print("⚠️ Cannot increment popularity: no barcode (likely USDA ingredient)")
+            return
+        }
+        
+        // SECURE MODE: Route through Firebase Functions
+        if TypesenseConfig.useSecureCloudMode {
+            TypesenseCloudService.shared.incrementPopularity(
+                documentId: barcode,
+                collection: TypesenseConfig.productsCollection
+            )
+            return
+        }
+        
+        // DIRECT MODE: For development only (requires admin key in app - not secure)
+        print("⚠️ Direct popularity update disabled in production")
     }
     
     /// Calculate serving size practicality score - boost foods with custom serving sizes
@@ -738,25 +1545,43 @@ class TypesenseDirectService: ObservableObject {
     private func calculateSemanticRelevanceScore(_ food: FoodItem, query: String) -> Double {
         let queryLower = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let nameLower = food.name.lowercased()
-        let brandLower = food.brandName?.lowercased() ?? ""
+        let _ = food.brandName?.lowercased() ?? "" // brandLower not used in current implementation
         
         var score: Double = 0.0
         
         // 1. EXACT MATCH BONUS (highest priority)
         if nameLower == queryLower {
-            score += 100.0
+            score += 500.0  // Massively boost exact matches
         }
         
-        // 2. SIMPLE/GENERIC FOOD PRIORITIZATION (MyFitnessPal's key strategy)
-        // Prioritize foods without brand names (generic/USDA foods)
-        if food.brandName == nil || food.brandName?.isEmpty == true {
-            score += 50.0
-        }
-        
-        // 3. SEMANTIC WORD MATCHING
+        // 2. SINGLE WORD MATCH (e.g., "pasta" query matching "pasta" name)
         let queryWords = queryLower.split(separator: " ").map(String.init)
         let nameWords = nameLower.split(separator: " ").map(String.init)
         
+        // If query is single word and name is single word and they match
+        if queryWords.count == 1 && nameWords.count == 1 && queryWords[0] == nameWords[0] {
+            score += 400.0  // Huge boost for single-word exact matches
+        }
+        
+        // 3. SIMPLICITY BONUS (fewer words = more basic ingredient) - MOVED UP
+        let wordCount = nameWords.count
+        if wordCount == 1 {
+            score += 200.0  // Massively boost single-word foods
+        } else if wordCount == 2 {
+            score += 100.0  // "Pasta shells" > "Tuna pasta bake"
+        } else if wordCount == 3 {
+            score += 50.0
+        } else if wordCount <= 5 {
+            score += 20.0
+        }
+        
+        // 4. SIMPLE/GENERIC FOOD PRIORITIZATION (MyFitnessPal's key strategy)
+        // Prioritize foods without brand names (generic/USDA foods)
+        if food.brandName == nil || food.brandName?.isEmpty == true {
+            score += 80.0  // Increased from 50
+        }
+        
+        // 5. SEMANTIC WORD MATCHING
         // Bonus for each query word found in food name
         for queryWord in queryWords {
             for nameWord in nameWords {
@@ -776,19 +1601,11 @@ class TypesenseDirectService: ObservableObject {
             }
         }
         
-        // 4. SIMPLICITY BONUS (fewer words = more basic ingredient)
-        let wordCount = nameWords.count
-        if wordCount <= 3 {
-            score += 30.0 // "Chicken breast" > "Fajita chicken breast strips"
-        } else if wordCount <= 5 {
-            score += 15.0
-        }
-        
-        // 5. HEAVILY PENALIZE PROCESSED/PREPARED FOODS (this is key!)
-        let processedKeywords = ["stuffed", "filled", "strips", "fajita", "seasoned", "marinated", "breaded", "fried", "cooked", "prepared", "florentine", "parmesan", "swiss", "grilled", "boneless"]
+        // 6. HEAVILY PENALIZE PROCESSED/PREPARED FOODS (this is key!)
+        let processedKeywords = ["bake", "stuffed", "filled", "strips", "fajita", "seasoned", "marinated", "breaded", "fried", "cooked", "prepared", "florentine", "parmesan", "swiss", "grilled", "boneless", "meal", "ready"]
         for keyword in processedKeywords {
             if nameLower.contains(keyword) {
-                score -= 50.0 // Increased penalty for processed foods
+                score -= 100.0 // Doubled penalty for processed foods
             }
         }
         
@@ -897,7 +1714,7 @@ class TypesenseDirectService: ObservableObject {
         print("🔍 Inspecting Typesense schema for available fields...")
         
         // Build the URL for the collection schema endpoint
-        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.collectionName)"
+        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.productsCollection)"
         guard let url = URL(string: urlString) else {
             completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
             return
@@ -974,7 +1791,7 @@ class TypesenseDirectService: ObservableObject {
         print("🔍 Testing enhanced Typesense connection with direct HTTP...")
         
         // Build the URL for a simple search endpoint test
-        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.collectionName)/documents/search"
+        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.productsCollection)/documents/search"
         guard var urlComponents = URLComponents(string: urlString) else {
             completion(false, "Invalid URL")
             return
@@ -1028,70 +1845,15 @@ class TypesenseDirectService: ObservableObject {
     
     /// Search for foods by barcode with enhanced capabilities
     func searchByBarcode(barcode: String, completion: @escaping (FoodItem?, Error?) -> Void) {
-        print("🔍 Enhanced Typesense barcode search for: \(barcode)")
+        print("🔍 Barcode search for: \(barcode)")
         
-        // Build the URL for the search endpoint
-        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.collectionName)/documents/search"
-        guard var urlComponents = URLComponents(string: urlString) else {
-            completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"]))
-            return
-        }
-        
-        // Enhanced barcode search parameters
-        urlComponents.queryItems = [
-            URLQueryItem(name: "q", value: barcode),
-            URLQueryItem(name: "query_by", value: "barcode"),
-            URLQueryItem(name: "filter_by", value: "barcode:=\(barcode)"), // Exact match filter
-            URLQueryItem(name: "per_page", value: "1")
-        ]
-        
-        guard let url = urlComponents.url else {
-            completion(nil, NSError(domain: "TypesenseService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL components"]))
-            return
-        }
-        
-        // Create the request
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 10.0
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(TypesenseConfig.searchOnlyApiKey, forHTTPHeaderField: "X-TYPESENSE-API-KEY")
-        
-        // Execute the request
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                print("❌ Network error: \(error.localizedDescription)")
-                DispatchQueue.main.async {
-                    completion(nil, error)
-                }
-                return
-            }
+        // Use secure Firebase Functions route for barcode lookup
+        TypesenseCloudService.shared.lookupBarcode(barcode: barcode) { [weak self] result in
+            guard let self = self else { return }
             
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                let responseError = NSError(
-                    domain: "TypesenseService",
-                    code: httpResponse.statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP Error: \(httpResponse.statusCode)"]
-                )
-                DispatchQueue.main.async {
-                    completion(nil, responseError)
-                }
-                return
-            }
-            
-            guard let data = data else {
-                DispatchQueue.main.async {
-                    completion(nil, NSError(domain: "TypesenseService", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data received"]))
-                }
-                return
-            }
-            
-            do {
-                let jsonResponse = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
-                
-                guard let hits = jsonResponse?["hits"] as? [[String: Any]],
-                      !hits.isEmpty,
-                      let document = hits[0]["document"] as? [String: Any],
+            switch result {
+            case .success(let document):
+                guard let document = document,
                       let name = document["name"] as? String else {
                     print("❌ No barcode match found for: \(barcode)")
                     DispatchQueue.main.async {
@@ -1101,32 +1863,37 @@ class TypesenseDirectService: ObservableObject {
                 }
                 
                 // Extract the same data as in regular search
-                let brandName = document["brand"] as? String
+                let brandName = self.cleanBrandName(document["brand"] as? String)
                 let foundBarcode = document["barcode"] as? String
                 let novaScore = document["nova_score"] as? Int ?? 0
-                let nutriScoreGrade = document["nutri_score_grade"] as? String
+                let nutriScoreGrade = document["nutriscore_grade"] as? String
                 
-                var calories = 0
-                var protein = 0.0
-                var carbs = 0.0
-                var fat = 0.0
+                print("  🏷️ Food metadata:")
+                print("    name: \(name)")
+                print("    brand: \(brandName ?? "No brand")")
+                print("    barcode: \(foundBarcode ?? "No barcode")")
+                print("    nova_score: \(novaScore)")
+                print("    nutriscore_grade: \(nutriScoreGrade ?? "No grade")")
                 
-                // Parse nutrition data
-                if let nutrientsText = document["nutrients_text"] as? String,
-                   let nutrientsData = nutrientsText.data(using: .utf8),
-                   let nutrients = try? JSONSerialization.jsonObject(with: nutrientsData) as? [String: Any] {
-                    
-                    calories = (nutrients["calories"] as? Int) ?? Int((nutrients["calories"] as? Double) ?? 0)
-                    protein = (nutrients["protein"] as? Double) ?? Double((nutrients["protein"] as? Int) ?? 0)
-                    carbs = (nutrients["carbohydrates"] as? Double) ?? (nutrients["carbs"] as? Double) ?? Double((nutrients["carbohydrates"] as? Int) ?? 0)
-                    fat = (nutrients["fat"] as? Double) ?? Double((nutrients["fat"] as? Int) ?? 0)
-                } else {
-                    calories = document["calories"] as? Int ?? 0
-                    protein = (document["protein"] as? NSNumber)?.doubleValue ?? 0
-                    carbs = (document["carbs"] as? NSNumber)?.doubleValue ?? 0
-                    fat = (document["fat"] as? NSNumber)?.doubleValue ?? 0
-                }
+                // Extract nutrition data using same logic as regular search
+                let calories = (document["calories"] as? Int) ?? Int(document["calories"] as? String ?? "0") ?? 0
+                let protein = (document["protein"] as? Double) ?? Double(document["protein"] as? String ?? "0") ?? 0.0
+                let carbs = (document["carbohydrates"] as? Double) ?? Double(document["carbohydrates"] as? String ?? "0") ?? 0.0
+                let fat = (document["fat"] as? Double) ?? Double(document["fat"] as? String ?? "0") ?? 0.0
                 
+                // Extract micronutrients using same logic as regular search
+                let fiber = (document["fiber"] as? Double) ?? Double(document["fiber"] as? String ?? "") ?? nil
+                let sugar = (document["sugar"] as? Double) ?? Double(document["sugar"] as? String ?? "") ?? nil
+                let sodium = (document["sodium"] as? Double) ?? Double(document["sodium"] as? String ?? "") ?? nil
+                let saturatedFat = (document["saturated_fat"] as? Double) ?? Double(document["saturated_fat"] as? String ?? "") ?? nil
+                
+                print("  📊 Parsed nutrition data:")
+                print("    calories: \(calories)")
+                print("    protein: \(protein)g")
+                print("    carbohydrates: \(carbs)g")
+                print("    fat: \(fat)g")
+                
+                // Handle serving size from direct document fields
                 var servingSize: String? = nil
                 if let servingSizeNum = document["serving_size"] as? NSNumber {
                     servingSize = "\(servingSizeNum)"
@@ -1136,12 +1903,10 @@ class TypesenseDirectService: ObservableObject {
                 
                 let servingType = document["serving_unit"] as? String
                 
-                var ingredients: [String] = []
-                if let ingredientsArray = document["ingredients"] as? [String] {
-                    ingredients = ingredientsArray
-                } else if let ingredientsText = document["ingredients_text"] as? String {
-                    ingredients = ingredientsText.split(separator: ",").map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                }
+                // Extract region information
+                let countries = document["countries"] as? [String]
+                let purchasePlaces = document["purchase_places"] as? String
+                let origins = document["origins"] as? String
                 
                 let food = FoodItem(
                     name: name,
@@ -1154,22 +1919,164 @@ class TypesenseDirectService: ObservableObject {
                     novaScore: novaScore,
                     nutriScoreGrade: nutriScoreGrade,
                     servingSize: servingSize,
-                    servingType: servingType
+                    servingType: servingType,
+                    fiber: fiber,
+                    sugar: sugar,
+                    sodium: sodium,
+                    saturatedFat: saturatedFat,
+                    countries: countries,
+                    purchasePlaces: purchasePlaces,
+                    origins: origins
                 )
                 
-                print("✅ Found barcode match: \(name)")
+                // Apply cached serving information to the found food
+                let foodWithCache = FoodServingCacheService.shared.applyCachedServingInfo(to: [food]).first ?? food
+                
                 DispatchQueue.main.async {
-                    completion(food, nil)
+                    completion(foodWithCache, nil)
                 }
                 
-            } catch {
-                print("❌ JSON parsing error: \(error.localizedDescription)")
+            case .failure(let error):
+                print("❌ Barcode lookup error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     completion(nil, error)
                 }
             }
         }
+    }
+    
+    // MARK: - Add New Product
+    
+    /// Add a new product to the Typesense database
+    func addNewProduct(
+        name: String,
+        brandName: String?,
+        barcode: String?,
+        calories: Int,
+        protein: Double,
+        carbohydrates: Double,
+        fat: Double,
+        fiber: Double? = nil,
+        sugar: Double? = nil,
+        sodium: Double? = nil,
+        saturatedFat: Double? = nil,
+        servingSize: String? = nil,
+        servingsPerPackage: Double? = nil,
+        servingType: String? = nil,
+        ingredients: String = "",
+        novaScore: Int = 1,
+        nutriScoreGrade: String? = nil
+    ) async throws -> String {
         
-        task.resume()
+        print("🍎 Adding new product to Typesense: \(name)")
+        
+        // Create unique ID for the product
+        let productId = UUID().uuidString
+        
+        // Build the document for Typesense
+        var document: [String: Any] = [
+            "id": productId,
+            "name": name,
+            "calories": calories,
+            "protein": protein,
+            "carbohydrates": carbohydrates,
+            "fat": fat,
+            "nova_score": novaScore,
+            "user_contributed": true,
+            "created_at": ISO8601DateFormatter().string(from: Date())
+        ]
+        
+        // Add optional fields
+        if let brandName = brandName, !brandName.isEmpty {
+            document["brand"] = brandName
+        }
+        
+        if let barcode = barcode, !barcode.isEmpty {
+            document["barcode"] = barcode
+        }
+        
+        if let fiber = fiber {
+            document["fiber"] = fiber
+        }
+        
+        if let sugar = sugar {
+            document["sugar"] = sugar
+        }
+        
+        if let sodium = sodium {
+            document["sodium"] = sodium
+        }
+        
+        if let saturatedFat = saturatedFat {
+            document["saturated_fat"] = saturatedFat
+        }
+        
+        if let servingSize = servingSize, !servingSize.isEmpty {
+            document["serving_size"] = servingSize
+        }
+        
+        if let servingsPerPackage = servingsPerPackage {
+            document["servings_per_package"] = servingsPerPackage
+        }
+        
+        if let servingType = servingType, !servingType.isEmpty {
+            document["serving_type"] = servingType
+        }
+        
+        if !ingredients.isEmpty {
+            document["ingredients"] = ingredients
+        }
+        
+        if let nutriScoreGrade = nutriScoreGrade, !nutriScoreGrade.isEmpty {
+            document["nutriscore_grade"] = nutriScoreGrade
+        }
+        
+        // Build the URL for adding documents
+        let urlString = "\(TypesenseConfig.apiURL)/collections/\(TypesenseConfig.productsCollection)/documents"
+        
+        guard let url = URL(string: urlString) else {
+            throw NSError(domain: "TypesenseDirectService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+        
+        // Create the request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(TypesenseConfig.searchOnlyApiKey, forHTTPHeaderField: "X-TYPESENSE-API-KEY")
+        
+        // Convert document to JSON
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: document)
+            request.httpBody = jsonData
+            
+            print("📤 Submitting document: \(String(data: jsonData, encoding: .utf8) ?? "Unable to encode")")
+        } catch {
+            throw NSError(domain: "TypesenseDirectService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to encode document: \(error.localizedDescription)"])
+        }
+        
+        // Perform the request
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 Response status: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode == 201 {
+                    // Success - document created
+                    print("✅ Product added successfully with ID: \(productId)")
+                    return productId
+                } else {
+                    // Handle error response
+                    let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    print("❌ Failed to add product. Status: \(httpResponse.statusCode), Error: \(errorMessage)")
+                    throw NSError(domain: "TypesenseDirectService", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to add product: \(errorMessage)"])
+                }
+            } else {
+                throw NSError(domain: "TypesenseDirectService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+            }
+        } catch {
+            print("❌ Network error: \(error.localizedDescription)")
+            throw error
+        }
     }
 }

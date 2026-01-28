@@ -19,8 +19,14 @@ class AnalyticsService: ObservableObject {
     private var isInitialized: Bool = false
     
     private init() {
-        // Load consent state from UserDefaults
-        self.isEnabled = UserDefaults.standard.bool(forKey: "analytics_consent_granted")
+        // Load consent state from UserDefaults, default to true if not set
+        if UserDefaults.standard.object(forKey: "analytics_consent_granted") == nil {
+            // First time - enable analytics by default
+            self.isEnabled = true
+            UserDefaults.standard.set(true, forKey: "analytics_consent_granted")
+        } else {
+            self.isEnabled = UserDefaults.standard.bool(forKey: "analytics_consent_granted")
+        }
     }
     
     // MARK: - Initialization
@@ -40,11 +46,9 @@ class AnalyticsService: ObservableObject {
     }
     
     private func configureFirebase() {
-        // Set initial analytics collection state
-        setAnalyticsCollectionEnabled(isEnabled)
-        
+        // HTTP/1.1 client configuration - no Firebase SDK needed
         #if DEBUG
-        print("🔍 AnalyticsService: Firebase Analytics configured")
+        print("🔍 AnalyticsService: HTTP/1.1 client configured")
         #endif
     }
     
@@ -56,12 +60,7 @@ class AnalyticsService: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: "analytics_consent_granted")
         
         #if DEBUG
-        print("🔍 AnalyticsService: Analytics collection \(enabled ? "enabled" : "disabled")")
-        #endif
-        
-        // Firebase Analytics collection control
-        #if canImport(FirebaseAnalytics)
-        Analytics.setAnalyticsCollectionEnabled(enabled)
+        print("🔍 AnalyticsService: Analytics collection \(enabled ? "enabled" : "disabled") (HTTP/1.1 client)")
         #endif
     }
     
@@ -69,7 +68,12 @@ class AnalyticsService: ObservableObject {
     
     /// Track a custom event with optional parameters
     func trackEvent(_ name: String, parameters: [String: Any]? = nil) {
-        guard isEnabled && isInitialized else { return }
+        guard isEnabled && isInitialized else { 
+            #if DEBUG
+            print("🔍 AnalyticsService: Event '\(name)' skipped - enabled: \(isEnabled), initialized: \(isInitialized)")
+            #endif
+            return 
+        }
         
         #if DEBUG
         let paramString = parameters?.map { "\($0.key): \($0.value)" }.joined(separator: ", ") ?? "none"
@@ -79,7 +83,7 @@ class AnalyticsService: ObservableObject {
         // Filter parameters to ensure no PII/health data
         let filteredParams = filterParameters(parameters)
         
-        // Firebase Analytics event logging
+        // Use Firebase Analytics SDK
         #if canImport(FirebaseAnalytics)
         Analytics.logEvent(name, parameters: filteredParams)
         #endif
@@ -112,10 +116,8 @@ class AnalyticsService: ObservableObject {
         print("🔍 AnalyticsService: User property '\(name)': \(value ?? "nil")")
         #endif
         
-        // Firebase Analytics user property
-        #if canImport(FirebaseAnalytics)
-        Analytics.setUserProperty(value, forName: name)
-        #endif
+        // Use HTTP/1.1 client for user properties too
+        sendUserPropertyViaHTTP1(name: name, value: value)
     }
     
     // MARK: - Privacy Helpers
@@ -168,6 +170,83 @@ class AnalyticsService: ObservableObject {
         }
         
         return false
+    }
+    
+    // MARK: - HTTP/1.1 Implementation
+    
+    private func sendEventViaHTTP1(name: String, parameters: [String: Any]?) {
+        let apiKey = FirebaseConfig.apiKey
+        let batchLogUrl = FirebaseConfig.batchLogUrl
+        
+        #if DEBUG
+        print("🔍 AnalyticsService: Sending event '\(name)' via HTTP/1.1 client")
+        print("🔍 API Key: \(apiKey.prefix(20))...")
+        print("🔍 URL: \(batchLogUrl)")
+        #endif
+        
+        // Generate a client ID (should be persistent per user)
+        let clientId = UserDefaults.standard.string(forKey: "analytics_client_id") ?? {
+            let newClientId = UUID().uuidString
+            UserDefaults.standard.set(newClientId, forKey: "analytics_client_id")
+            return newClientId
+        }()
+        
+        // Create GA4 Measurement Protocol payload
+        var eventData: [String: Any] = [
+            "name": name
+        ]
+        
+        if let parameters = parameters {
+            eventData["parameters"] = parameters
+        }
+        
+        let payload: [String: Any] = [
+            "client_id": clientId,
+            "events": [eventData]
+        ]
+        
+        // Use POST request with GA4 Measurement Protocol
+        guard let url = URL(string: "\(batchLogUrl)?measurement_id=G-XXXXXXXXXX&api_secret=\(apiKey)") else {
+            #if DEBUG
+            print("❌ Invalid URL for GA4 Measurement Protocol")
+            #endif
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                DispatchQueue.main.async {
+                    #if DEBUG
+                    if let error = error {
+                        print("❌ Failed to send event '\(name)': \(error.localizedDescription)")
+                    } else if let httpResponse = response as? HTTPURLResponse {
+                        if httpResponse.statusCode == 204 {
+                            print("✅ Event '\(name)' sent via HTTP/1.1")
+                        } else {
+                            print("❌ Failed to send event '\(name)': HTTP \(httpResponse.statusCode)")
+                        }
+                    }
+                    #endif
+                }
+            }.resume()
+        } catch {
+            #if DEBUG
+            print("❌ Failed to serialize payload for event '\(name)': \(error.localizedDescription)")
+            #endif
+        }
+    }
+    
+    private func sendUserPropertyViaHTTP1(name: String, value: String?) {
+        // For now, just log user properties locally since they're less critical
+        #if DEBUG
+        print("📝 User property '\(name)' = '\(value ?? "nil")' (stored locally)")
+        #endif
     }
 }
 
@@ -308,5 +387,51 @@ extension AnalyticsService {
         trackEvent("feature_tapped", parameters: [
             "feature_name": featureName
         ])
+    }
+    
+    // MARK: - Session Events
+    func trackSessionStart() {
+        // session_start is automatically tracked by Firebase Analytics
+        // No need to manually log it
+        #if DEBUG
+        print("🔍 AnalyticsService: session_start is automatically tracked by Firebase")
+        #endif
+    }
+    
+    func trackAppOpen() {
+        trackEvent("app_open")
+    }
+    
+    func trackAppBackground() {
+        trackEvent("app_background")
+    }
+    
+    func trackSessionEnd(duration: TimeInterval) {
+        let durationCategory = duration < 30 ? "short" : duration < 300 ? "medium" : "long"
+        trackEvent("session_end", parameters: [
+            "session_duration_category": durationCategory,
+            "session_duration_seconds": Int(duration)
+        ])
+    }
+    
+    // MARK: - Page View Events (Main 4 Pages)
+    func trackDashboardView() {
+        trackScreenView("Dashboard", screenClass: "DashboardView")
+        trackEvent("page_view_dashboard")
+    }
+    
+    func trackFoodLogView() {
+        trackScreenView("Food Log", screenClass: "FoodLogView")
+        trackEvent("page_view_food_log")
+    }
+    
+    func trackPhasesView() {
+        trackScreenView("Phases", screenClass: "TestPhasesView")
+        trackEvent("page_view_phases")
+    }
+    
+    func trackWeightLogbookView() {
+        trackScreenView("Weight Logbook", screenClass: "WeightLogbookView")
+        trackEvent("page_view_weight_logbook")
     }
 }

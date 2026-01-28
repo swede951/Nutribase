@@ -22,7 +22,7 @@ struct BarcodeScannerView: View {
                     switch result {
                     case .success(let code):
                         scannedBarcode = code
-                    case .failure(let error):
+                    case .failure(_):
                         // Silently handle barcode scan errors for simulator testing
                         break
                     }

@@ -1,13 +1,27 @@
 import SwiftUI
 
 struct PersonalInformationView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var userProfile = UserProfile.shared
     @State private var showingHeightPicker = false
     @State private var showingWeightPicker = false
     
+    private var viewBackground: Color {
+        colorScheme == .dark ? Color.black : Color(.systemGray6)
+    }
+    
     // Temporary state for pickers
     @State private var heightCm = 170.0
     @State private var weightKg = 70.0
+    @State private var weightInputText = ""
+    @State private var weightUnit: WeightUnit = .kg
+    
+    enum WeightUnit: String, CaseIterable {
+        case kg = "kg"
+        case lbs = "lbs"
+    }
+    
+    let availableRegions = ["All Regions", "United Kingdom", "United States", "France", "Germany", "Italy", "Spain", "Netherlands", "Belgium", "Switzerland", "Australia", "Canada", "New Zealand", "Ireland", "Norway", "Sweden", "Denmark"]
     
     var body: some View {
         Form {
@@ -25,17 +39,20 @@ struct PersonalInformationView: View {
                     .labelsHidden()
                 }
                 
-                // Age picker
+                // Date of Birth picker
+                DatePicker(
+                    "Date of Birth",
+                    selection: $userProfile.dateOfBirth,
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+                
+                // Age display (computed from DOB)
                 HStack {
                     Text("Age")
                     Spacer()
-                    Picker("Age", selection: $userProfile.age) {
-                        ForEach(12...100, id: \.self) { age in
-                            Text("\(age) years").tag(age)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
+                    Text("\(userProfile.age) years")
+                        .foregroundColor(.secondary)
                 }
                 
                 // Height button that shows sheet
@@ -63,6 +80,19 @@ struct PersonalInformationView: View {
                             .foregroundColor(.blue)
                     }
                 }
+                
+                // Preferred Region picker
+                HStack {
+                    Text("Preferred Region")
+                    Spacer()
+                    Picker("Region", selection: $userProfile.preferredRegion) {
+                        ForEach(availableRegions, id: \.self) { region in
+                            Text(region).tag(region)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
             }
             
             Section(header: Text("Activity Level")) {
@@ -73,25 +103,12 @@ struct PersonalInformationView: View {
                 }
                 .pickerStyle(.navigationLink)
             }
-            
-            Section(footer: Text("Your Total Daily Energy Expenditure (TDEE) is calculated based on your personal information and activity level.")) {
-                if userProfile.dailyCalorieGoal > 0 {
-                    HStack {
-                        Text("Estimated TDEE")
-                        Spacer()
-                        Text("\(userProfile.dailyCalorieGoal) calories")
-                            .bold()
-                    }
-                } else {
-                    Button("Calculate TDEE") {
-                        userProfile.calculateTDEE()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .foregroundColor(.blue)
-                }
-            }
         }
+        .scrollContentBackground(.hidden)
+        .background(viewBackground)
         .navigationTitle("Personal Information")
+        .toolbarBackground(viewBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .sheet(isPresented: $showingHeightPicker) {
             heightPickerView
         }
@@ -108,14 +125,35 @@ struct PersonalInformationView: View {
     // Height picker sheet
     var heightPickerView: some View {
         NavigationStack {
-            VStack {
-                Picker("Height", selection: $heightCm) {
-                    ForEach(120...220, id: \.self) { cm in
-                        Text(formatHeight(Double(cm))).tag(Double(cm))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(120...220, id: \.self) { cm in
+                            Button {
+                                heightCm = Double(cm)
+                            } label: {
+                                Text(formatHeight(Double(cm)))
+                                    .font(.title3)
+                                    .foregroundColor(Int(heightCm) == cm ? .blue : .primary)
+                                    .fontWeight(Int(heightCm) == cm ? .semibold : .regular)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(Int(heightCm) == cm ? Color.blue.opacity(0.1) : Color.clear)
+                                    .cornerRadius(8)
+                            }
+                            .id(cm)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .onAppear {
+                    // Scroll to current height with animation
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        withAnimation {
+                            proxy.scrollTo(Int(heightCm), anchor: .center)
+                        }
                     }
                 }
-                .pickerStyle(.wheel)
-                .labelsHidden()
             }
             .navigationTitle("Select Height")
             .navigationBarTitleDisplayMode(.inline)
@@ -133,30 +171,59 @@ struct PersonalInformationView: View {
                 }
             }
         }
-        .presentationDetents([.height(250)])
+        .presentationDetents([.medium])
     }
     
-    // Weight picker sheet
+    // Weight picker sheet with text input and unit toggle
     var weightPickerView: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Weight (kg)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("80.0", value: $weightKg, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.center)
-                        .font(.title2)
+            VStack(spacing: 24) {
+                // Unit toggle
+                Picker("Unit", selection: $weightUnit) {
+                    ForEach(WeightUnit.allCases, id: \.self) { unit in
+                        Text(unit.rawValue).tag(unit)
+                    }
                 }
-                .padding(.horizontal)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .onChange(of: weightUnit) { oldValue, newValue in
+                    // Convert the current input value when switching units
+                    if let currentValue = Double(weightInputText) {
+                        if newValue == .lbs && oldValue == .kg {
+                            // Converting from kg to lbs
+                            weightInputText = String(format: "%.1f", currentValue * 2.20462)
+                        } else if newValue == .kg && oldValue == .lbs {
+                            // Converting from lbs to kg
+                            weightInputText = String(format: "%.1f", currentValue / 2.20462)
+                        }
+                    }
+                }
                 
-                Text(formatWeight(weightKg))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.bottom)
+                // Weight input
+                VStack(spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        TextField(weightUnit == .kg ? "70.0" : "154.0", text: $weightInputText)
+                            .font(.system(size: 48, weight: .medium))
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 180)
+                        
+                        Text(weightUnit.rawValue)
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Show converted value
+                    if let inputValue = Double(weightInputText), inputValue > 0 {
+                        Text(weightUnit == .kg 
+                             ? String(format: "%.1f lbs", inputValue * 2.20462)
+                             : String(format: "%.1f kg", inputValue / 2.20462))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 24)
                 
                 Spacer()
             }
@@ -170,17 +237,44 @@ struct PersonalInformationView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        // Validate weight is within reasonable range
-                        if weightKg >= 30.0 && weightKg <= 200.0 {
-                            userProfile.weightKg = weightKg
-                            showingWeightPicker = false
-                        }
+                        saveWeight()
                     }
-                    .disabled(weightKg < 30.0 || weightKg > 200.0)
+                    .disabled(!isValidWeight)
+                }
+            }
+            .onAppear {
+                // Initialize with current weight in selected unit
+                if weightUnit == .kg {
+                    weightInputText = String(format: "%.1f", weightKg)
+                } else {
+                    weightInputText = String(format: "%.1f", weightKg * 2.20462)
                 }
             }
         }
-        .presentationDetents([.height(300)])
+        .presentationDetents([.height(280)])
+    }
+    
+    // Validate weight input
+    private var isValidWeight: Bool {
+        guard let value = Double(weightInputText) else { return false }
+        if weightUnit == .kg {
+            return value >= 30.0 && value <= 300.0
+        } else {
+            return value >= 66.0 && value <= 660.0
+        }
+    }
+    
+    // Save weight in kg
+    private func saveWeight() {
+        guard let value = Double(weightInputText) else { return }
+        
+        if weightUnit == .kg {
+            userProfile.weightKg = value
+        } else {
+            // Convert lbs to kg
+            userProfile.weightKg = value / 2.20462
+        }
+        showingWeightPicker = false
     }
     
     // Helper functions

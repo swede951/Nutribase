@@ -1,8 +1,13 @@
+// COMMENTED OUT - Old List-based Settings View
+// Replaced with modern card-based design in SettingsViewRedesigned.swift
+// Keep this file for reference in case we need to revert
+
+/*
 import SwiftUI
 import UniformTypeIdentifiers
 import Combine
 
-struct SettingsView: View {
+struct SettingsViewOld: View {
     @StateObject private var weightManager = WeightLogManager.shared
     @StateObject private var analyticsService = AnalyticsService.shared
     @State private var showingFilePicker = false
@@ -13,44 +18,71 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Custom header to match Logbook height - only show when not navigated
-                ZStack {
-                    Text("Settings")
-                        .font(.custom("Montserrat-Bold", size: 17))
-                        .foregroundColor(.black)
-                        .frame(maxWidth: .infinity)
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .padding(.top, 1)
-                .background(Color(.systemGray6))
-                List {
-                // Profile Section
-                Section(header: Text("Account").font(.headline).foregroundColor(.black).textCase(nil)) {
-                    NavigationLink {
-                        ProfileView()
-                    } label: {
-                        HStack(spacing: 15) {
-                            Image(systemName: "person.circle")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 24, height: 24)
-                                .foregroundColor(.blue)
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Profile")
-                                    .font(.body)
-                                Text("Account settings and login options")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+            ZStack {
+                // Background color matching other views
+                Color(.systemGray6)
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    // Custom header to match other views
+                    ZStack {
+                        Text("Settings")
+                            .font(.custom("Montserrat-Bold", size: 17))
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
                     }
-                }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .padding(.top, 1)
+                    .background(Color(.systemGray6))
+                    
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            // Account Section
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Account")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .padding(.horizontal, 16)
+                                
+                                VStack(spacing: 0) {
+                                    NavigationLink {
+                                        ProfileView()
+                                    } label: {
+                                        HStack(spacing: 15) {
+                                            Image(systemName: "person.circle")
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 24, height: 24)
+                                                .foregroundColor(.blue)
+                                            
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("Profile")
+                                                    .font(.body)
+                                                    .foregroundColor(.primary)
+                                                Text("Account settings and login options")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundColor(.gray)
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 12)
+                                    }
+                                }
+                                .background(Color.white)
+                                .cornerRadius(16)
+                                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
+                            }
+                            .padding(.horizontal, 16)
                 
                 // Food Database Section - Added at the top for visibility
-                Section(header: Text("Food Database").font(.headline).foregroundColor(.black).textCase(nil)) {
+                Section(header: Text("Food Database").font(.headline).foregroundColor(.primary).textCase(nil)) {
                     NavigationLink {
                         AddFoodView()
                     } label: {
@@ -73,7 +105,7 @@ struct SettingsView: View {
                 }
                 
                 // User Settings Section
-                Section(header: Text("User Settings").font(.headline).foregroundColor(.black).textCase(nil)) {
+                Section(header: Text("User Settings").font(.headline).foregroundColor(.primary).textCase(nil)) {
                     NavigationLink(destination: PersonalInformationView()) {
                         HStack(spacing: 15) {
                             Image(systemName: "person.crop.circle")
@@ -111,8 +143,66 @@ struct SettingsView: View {
                     }
                 }
                 
+                // Privacy Section
+                Section(header: Text("Privacy").font(.headline).foregroundColor(.primary).textCase(nil)) {
+                    NavigationLink(destination: TermsOfServiceView()) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "doc.text")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.blue)
+                            Text("Terms of Service").font(.body)
+                        }
+                    }
+                    
+                    NavigationLink(destination: PrivacyPolicyView()) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "hand.raised")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.blue)
+                            Text("Privacy Policy").font(.body)
+                        }
+                    }
+                    
+                    NavigationLink(destination: DataConsentsView()) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "checkmark.shield")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.green)
+                            Text("Data Consents").font(.body)
+                        }
+                    }
+                    
+                    NavigationLink(destination: SharingSettingsView()) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "envelope")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.purple)
+                            Text("Sharing and Email Settings").font(.body)
+                        }
+                    }
+                    
+                    NavigationLink(destination: ContactSupportView()) {
+                        HStack(spacing: 15) {
+                            Image(systemName: "questionmark.circle")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.gray)
+                            Text("Contact Support").font(.body)
+                        }
+                    }
+                }
+                
                 // Data Section
-                Section(header: Text("Data").font(.headline).foregroundColor(.black).textCase(nil)) {
+                Section(header: Text("Data").font(.headline).foregroundColor(.primary).textCase(nil)) {
                     Button(action: {
                         showingFilePicker = true
                     }) {
@@ -200,37 +290,6 @@ struct SettingsView: View {
                     }
                     .foregroundColor(.primary)
                 }
-                
-                // Privacy Section
-                Section(header: Text("Privacy").font(.headline).foregroundColor(.black).textCase(nil)) {
-                    HStack(spacing: 15) {
-                        Image(systemName: "chart.bar")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 24, height: 24)
-                            .foregroundColor(.blue)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Share Anonymous Analytics")
-                                .font(.body)
-                            Text("Help improve Nutribase by sharing anonymous usage data")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Toggle("", isOn: Binding(
-                            get: { analyticsService.isEnabled },
-                            set: { enabled in
-                                analyticsService.setAnalyticsCollectionEnabled(enabled)
-                                if enabled {
-                                    analyticsService.trackEvent("analytics_consent_granted")
-                                }
-                            }
-                        ))
-                    }
-                }
 
             }
             .navigationBarHidden(true)
@@ -304,5 +363,6 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView()
+    SettingsViewOld()
 }
+*/

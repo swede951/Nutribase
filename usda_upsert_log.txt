@@ -1,0 +1,135 @@
+Reading USDA SR Legacy Foods data...
+Found 7793 foods in USDA data
+Transforming foods to Typesense format...
+Transformed 7756 foods with complete nutrition data
+Saving transformed data to usda_foods_typesense.json...
+
+First food item preview:
+{
+  "id": "167512",
+  "name": "Pillsbury Golden Layer Buttermilk Biscuits, Artificial Flavor, refrigerated dough",
+  "brand": "USDA",
+  "barcode": null,
+  "calories": 307,
+  "protein": 5.9,
+  "carbohydrates": 41.2,
+  "fat": 13.2,
+  "saturated_fat": 2.9,
+  "fiber": 1.2,
+  "sugar": 5.9,
+  "sodium": 1060.0,
+  "allergens": [],
+  "categories": [
+    "Baked Products"
+  ],
+  "ingredients": [],
+  "countries": [
+    "United States",
+    "United Kingdom",
+    "Canada",
+    "Australia",
+    "France",
+    "Germany",
+    "Spain",
+    "Italy",
+    "Netherlands",
+    "Belgium",
+    "Switzerland",
+    "Sweden",
+    "Norway",
+    "Denmark",
+    "Ireland",
+    "New Zealand",
+    "All Regions"
+  ],
+  "nova_score": 1,
+  "nutriscore_grade": null,
+  "nutriscore_score": null
+}
+
+Ready to import 7756 foods to Typesense.
+Please update TYPESENSE_API_KEY in the script before proceeding.
+Continue with import? (yes/no): 
+Importing to Typesense...
+Progress: 100/7756 processed
+Progress: 200/7756 processed
+Progress: 300/7756 processed
+Progress: 400/7756 processed
+Progress: 500/7756 processed
+Progress: 600/7756 processed
+Progress: 700/7756 processed
+Progress: 800/7756 processed
+Progress: 900/7756 processed
+Progress: 1000/7756 processed
+Progress: 1100/7756 processed
+Progress: 1200/7756 processed
+Progress: 1300/7756 processed
+Progress: 1400/7756 processed
+Progress: 1500/7756 processed
+Progress: 1600/7756 processed
+Progress: 1700/7756 processed
+Progress: 1800/7756 processed
+Progress: 1900/7756 processed
+Progress: 2000/7756 processed
+Progress: 2100/7756 processed
+Progress: 2200/7756 processed
+Progress: 2300/7756 processed
+Progress: 2400/7756 processed
+Progress: 2500/7756 processed
+Progress: 2600/7756 processed
+Progress: 2700/7756 processed
+Progress: 2800/7756 processed
+Progress: 2900/7756 processed
+Progress: 3000/7756 processed
+Progress: 3100/7756 processed
+Progress: 3200/7756 processed
+Progress: 3300/7756 processed
+Progress: 3400/7756 processed
+Progress: 3500/7756 processed
+Progress: 3600/7756 processed
+Progress: 3700/7756 processed
+Progress: 3800/7756 processed
+Progress: 3900/7756 processed
+Progress: 4000/7756 processed
+Progress: 4100/7756 processed
+Progress: 4200/7756 processed
+Progress: 4300/7756 processed
+Progress: 4400/7756 processed
+Progress: 4500/7756 processed
+Progress: 4600/7756 processed
+Progress: 4700/7756 processed
+Progress: 4800/7756 processed
+Progress: 4900/7756 processed
+Progress: 5000/7756 processed
+Progress: 5100/7756 processed
+Progress: 5200/7756 processed
+Progress: 5300/7756 processed
+Progress: 5400/7756 processed
+Progress: 5500/7756 processed
+Progress: 5600/7756 processed
+Progress: 5700/7756 processed
+Progress: 5800/7756 processed
+Progress: 5900/7756 processed
+Progress: 6000/7756 processed
+Progress: 6100/7756 processed
+Progress: 6200/7756 processed
+Progress: 6300/7756 processed
+Progress: 6400/7756 processed
+Progress: 6500/7756 processed
+Progress: 6600/7756 processed
+Progress: 6700/7756 processed
+Progress: 6800/7756 processed
+Progress: 6900/7756 processed
+Progress: 7000/7756 processed
+Progress: 7100/7756 processed
+Progress: 7200/7756 processed
+Progress: 7300/7756 processed
+Progress: 7400/7756 processed
+Progress: 7500/7756 processed
+Progress: 7600/7756 processed
+Progress: 7700/7756 processed
+Progress: 7756/7756 processed
+
+Import complete!
+Successfully imported: 7756
+Failed: 0
