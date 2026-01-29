@@ -9,9 +9,11 @@ import Foundation
 import SwiftUI
 
 struct DashboardCard: Identifiable, Equatable {
-    let id = UUID()
     var cardType: CardType
     var size: CardSize
+    
+    // Use cardType as stable identity (no duplicate card types on dashboard)
+    var id: CardType { cardType }
     
     init(cardType: CardType) {
         self.cardType = cardType
@@ -19,6 +21,6 @@ struct DashboardCard: Identifiable, Equatable {
     }
     
     static func == (lhs: DashboardCard, rhs: DashboardCard) -> Bool {
-        return lhs.id == rhs.id
+        return lhs.cardType == rhs.cardType
     }
 }

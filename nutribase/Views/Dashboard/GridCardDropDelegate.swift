@@ -9,39 +9,53 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct GridCardDropDelegate: DropDelegate {
-    let card: DashboardCard
+    let target: CardType
     @Binding var cards: [DashboardCard]
-    let insertionIndex: Int
-    
+    @Binding var dragged: CardType?
+    @Binding var hoverTarget: CardType?
+    @Binding var isDragging: Bool
+
+    func dropEntered(info: DropInfo) {
+        // Track hover for highlight
+        hoverTarget = target
+
+        guard let dragged = dragged, dragged != target else { return }
+        guard
+            let fromIndex = cards.firstIndex(where: { $0.cardType == dragged }),
+            let toIndex = cards.firstIndex(where: { $0.cardType == target })
+        else { return }
+
+        if fromIndex == toIndex { return }
+
+        // Only animate the reorder. Do NOT save here.
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            cards.move(
+                fromOffsets: IndexSet(integer: fromIndex),
+                toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex
+            )
+        }
+    }
+
     func performDrop(info: DropInfo) -> Bool {
-        guard let item = info.itemProviders(for: [.text]).first else {
-            return false
+        // End drag with NO animation to prevent minus-button flicker
+        withTransaction(Transaction(animation: nil)) {
+            hoverTarget = nil
+            dragged = nil
+            isDragging = false
         }
-        
-        item.loadItem(forTypeIdentifier: UTType.text.identifier as String, options: nil) { (data, error) in
-            DispatchQueue.main.async {
-                guard let data = data as? Data,
-                      let idString = String(data: data, encoding: .utf8),
-                      let draggedUUID = UUID(uuidString: idString),
-                      let draggedCard = cards.first(where: { $0.id == draggedUUID }),
-                      let fromIndex = cards.firstIndex(of: draggedCard),
-                      let toIndex = cards.firstIndex(of: card) else { return }
-                
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    // Handle the move
-                    if fromIndex != toIndex {
-                        cards.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
-                        
-                        // Save the updated card order
-                        saveCardOrder()
-                    }
-                }
-            }
-        }
-        
+
+        saveCardOrder()
         return true
     }
-    
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if hoverTarget == target { hoverTarget = nil }
+    }
+
     private func saveCardOrder() {
         let cardTypes = cards.map { $0.cardType }
         if let encodedData = try? JSONEncoder().encode(cardTypes) {

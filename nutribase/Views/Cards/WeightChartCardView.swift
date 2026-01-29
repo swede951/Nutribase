@@ -1027,9 +1027,10 @@ struct WeightChartDetailView: View {
 
     private var xAxisLabelsView: some View {
         let labels = axisLabels()
+        let effectiveTimeframe = effectiveTimeframeForAllTime()
 
-        // For 1M, 3M, and 1Y timeframes, position labels based on actual dates
-        if selectedTimeFrame == .oneMonth || selectedTimeFrame == .oneYear || selectedTimeFrame == .threeMonths {
+        // For 1M, 3M, 1Y, and All timeframes, position labels based on actual dates
+        if effectiveTimeframe == .oneMonth || effectiveTimeframe == .oneYear || effectiveTimeframe == .threeMonths || effectiveTimeframe == .allTime {
             return AnyView(
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
@@ -1046,7 +1047,7 @@ struct WeightChartDetailView: View {
                 .padding(.top, 8)
             )
         } else {
-            // For other timeframes, use evenly distributed HStack
+            // For 1W timeframe, use evenly distributed HStack
             return AnyView(
                 HStack {
                     ForEach(labels, id: \.0) { (date, label) in
@@ -1084,6 +1085,32 @@ struct WeightChartDetailView: View {
             formatter.dateFormat = "yyyy"
         }
 
+        // For All Time (>365 days), show year labels positioned in the middle of each year
+        if effectiveTimeframe == .allTime {
+            var result: [(Date, String)] = []
+            let calendar = Calendar.current
+            
+            // Get start and end years from actual data
+            let startYear = calendar.component(.year, from: xDomain.lowerBound)
+            let endYear = calendar.component(.year, from: xDomain.upperBound)
+            
+            for year in startYear...endYear {
+                // Position label at July 1st (middle of year)
+                if let yearMid = calendar.date(from: DateComponents(year: year, month: 7, day: 1)) {
+                    // Only include if the year has data within it
+                    let yearStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1))!
+                    let yearEnd = calendar.date(from: DateComponents(year: year, month: 12, day: 31))!
+                    
+                    // Check if this year overlaps with our data range
+                    if yearEnd >= xDomain.lowerBound && yearStart <= xDomain.upperBound {
+                        result.append((yearMid, "\(year)"))
+                    }
+                }
+            }
+            
+            return result
+        }
+        
         // For 1M, 3M, and 1Y, show all months with labels positioned in the middle
         if effectiveTimeframe == .oneMonth || effectiveTimeframe == .oneYear || effectiveTimeframe == .threeMonths {
             var result: [(Date, String)] = []
@@ -1121,7 +1148,7 @@ struct WeightChartDetailView: View {
             return result
         }
         
-        // For other timeframes: 4–6 evenly spaced labels
+        // For 1W: evenly spaced day labels
         let count = max(3, min(6, points.count))
         let step = max(1, points.count / (count - 1))
 
@@ -1925,6 +1952,36 @@ private struct CanvasChart: View {
             }
         }
         
+        // Weekly gridlines for 1M timeframe (Mondays - between month markers and daily lines)
+        // Visual hierarchy: Month (0.4, 1.0) > Week (0.35, 0.75) > Daily (0.25, 0.5)
+        if effectiveTimeframe == .oneMonth {
+            let calendar = Calendar.current
+            var weekPath = Path()
+            
+            // Find first Monday in range
+            var currentDate = calendar.startOfDay(for: xDomain.lowerBound)
+            while calendar.component(.weekday, from: currentDate) != 2 { // 2 = Monday
+                guard let next = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+                currentDate = next
+            }
+            
+            // Iterate through Mondays
+            while currentDate <= xDomain.upperBound {
+                // Skip if this is the 1st of the month (already drawn as month marker)
+                let dayOfMonth = calendar.component(.day, from: currentDate)
+                if dayOfMonth != 1 && currentDate >= xDomain.lowerBound {
+                    let x = xPosition(for: currentDate, in: size)
+                    weekPath.move(to: CGPoint(x: x, y: 0))
+                    weekPath.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                
+                guard let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentDate) else { break }
+                currentDate = nextWeek
+            }
+            
+            context.stroke(weekPath, with: .color(Color.gray.opacity(0.35)), lineWidth: 0.75)
+        }
+        
         // Vertical year markers for All time view if data spans multiple years
         if effectiveTimeframe == .allTime {
             let calendar = Calendar.current
@@ -1948,7 +2005,92 @@ private struct CanvasChart: View {
                 
                 // Draw year markers with slightly more visible line
                 context.stroke(yearPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
+                
+                // SUB-LINES: Monthly markers for All Time (lighter, between year markers)
+                // Performance: Single path, skip Jan 1st (already drawn as year marker)
+                var monthSubPath = Path()
+                let startComponents = calendar.dateComponents([.year, .month], from: xDomain.lowerBound)
+                
+                if let iterStart = calendar.date(from: startComponents) {
+                    var currentDate = iterStart
+                    
+                    while currentDate <= xDomain.upperBound {
+                        // Skip January (month 1) - already drawn as year marker
+                        let month = calendar.component(.month, from: currentDate)
+                        if month != 1 && currentDate >= xDomain.lowerBound {
+                            let x = xPosition(for: currentDate, in: size)
+                            monthSubPath.move(to: CGPoint(x: x, y: 0))
+                            monthSubPath.addLine(to: CGPoint(x: x, y: size.height))
+                        }
+                        
+                        guard let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) else { break }
+                        currentDate = nextMonth
+                    }
+                    
+                    context.stroke(monthSubPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+                }
             }
+        }
+        
+        // SUB-LINES: Weekly markers for 3M timeframe (between month markers)
+        // Performance: Single path, skip 1st of month (already drawn as month marker)
+        if effectiveTimeframe == .threeMonths {
+            let calendar = Calendar.current
+            var weekSubPath = Path()
+            
+            // Find first Monday in range
+            var currentDate = calendar.startOfDay(for: xDomain.lowerBound)
+            while calendar.component(.weekday, from: currentDate) != 2 { // 2 = Monday
+                guard let next = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+                currentDate = next
+            }
+            
+            // Iterate through Mondays
+            while currentDate <= xDomain.upperBound {
+                // Skip if this is the 1st of the month (already drawn as month marker)
+                let dayOfMonth = calendar.component(.day, from: currentDate)
+                if dayOfMonth != 1 && currentDate >= xDomain.lowerBound {
+                    let x = xPosition(for: currentDate, in: size)
+                    weekSubPath.move(to: CGPoint(x: x, y: 0))
+                    weekSubPath.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                
+                guard let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: currentDate) else { break }
+                currentDate = nextWeek
+            }
+            
+            context.stroke(weekSubPath, with: .color(Color.gray.opacity(0.15)), lineWidth: 0.5)
+        }
+        
+        // SUB-LINES: Weekly markers for 1Y timeframe (between month markers)
+        // Performance: Single path, skip 1st of month, draw every 2 weeks to avoid clutter
+        if effectiveTimeframe == .oneYear {
+            let calendar = Calendar.current
+            var weekSubPath = Path()
+            
+            // Find first Monday in range
+            var currentDate = calendar.startOfDay(for: xDomain.lowerBound)
+            while calendar.component(.weekday, from: currentDate) != 2 { // 2 = Monday
+                guard let next = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+                currentDate = next
+            }
+            
+            // Iterate through every 2nd Monday (bi-weekly) to reduce clutter
+            while currentDate <= xDomain.upperBound {
+                // Skip if within 3 days of 1st of month (too close to month marker)
+                let dayOfMonth = calendar.component(.day, from: currentDate)
+                if dayOfMonth > 3 && dayOfMonth < 28 && currentDate >= xDomain.lowerBound {
+                    let x = xPosition(for: currentDate, in: size)
+                    weekSubPath.move(to: CGPoint(x: x, y: 0))
+                    weekSubPath.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                
+                // Move 2 weeks forward
+                guard let nextBiWeek = calendar.date(byAdding: .weekOfYear, value: 2, to: currentDate) else { break }
+                currentDate = nextBiWeek
+            }
+            
+            context.stroke(weekSubPath, with: .color(Color.gray.opacity(0.12)), lineWidth: 0.5)
         }
     }
 

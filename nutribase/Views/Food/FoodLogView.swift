@@ -587,7 +587,7 @@ struct FoodLogView: View {
                         } else if progress > 0.9 {
                             return .orange
                         } else {
-                            return .blue
+                            return Color(red: 0.6, green: 0.2, blue: 0.8) // Purple to match Daily Goals card
                         }
                     }()
                     
@@ -1178,13 +1178,14 @@ struct FoodLogView: View {
                 let consumed = totalCaloriesForDay()
                 let remaining = max(goal - consumed, 0)
                 let progress = min(CGFloat(consumed) / CGFloat(goal), 1.0)
+                let caloriesColor = Color(red: 0.6, green: 0.2, blue: 0.8) // Purple to match Daily Goals card
                 ZStack {
                     Circle()
-                        .stroke(Color.blue.opacity(0.2), lineWidth: 4)
+                        .stroke(caloriesColor.opacity(0.2), lineWidth: 4)
                         .frame(width: 50, height: 50)
                     Circle()
                         .trim(from: 0, to: 1 - progress)
-                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .stroke(caloriesColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                         .frame(width: 50, height: 50)
                         .rotationEffect(.degrees(-90))
                     

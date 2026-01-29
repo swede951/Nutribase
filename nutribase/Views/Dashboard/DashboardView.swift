@@ -78,6 +78,11 @@ struct DashboardView: View {
     // State for edit mode
     @State private var isEditing = false
     
+    // Track which card is being dragged (to hide remove button during drag)
+    @State private var draggedCardId: CardType? = nil
+    @State private var hoverTarget: CardType? = nil
+    @State private var isDragging = false
+    
     // Cached grid rows to avoid recalculation on every render
     @State private var cachedGridRows: [[DashboardCard]] = []
     @State private var lastCardsHash: Int = 0
@@ -310,15 +315,17 @@ struct DashboardView: View {
                                                 }
                                             }
                                             .onDrag {
+                                                draggedCardId = card.cardType
+                                                isDragging = true
                                                 if !isEditing {
                                                     HapticManager.shared.mediumFeedback()
                                                     withAnimation(.easeInOut(duration: 0.2)) {
                                                         isEditing = true
                                                     }
                                                 }
-                                                return NSItemProvider(object: card.id.uuidString as NSString)
+                                                return NSItemProvider(object: card.cardType.rawValue as NSString)
                                             }
-                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(card: card, cards: $cards, insertionIndex: getCardIndex(for: card)))
+                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(target: card.cardType, cards: $cards, dragged: $draggedCardId, hoverTarget: $hoverTarget, isDragging: $isDragging))
                                     } else {
                                         // Regular 1-column cards
                                         cardView(for: card)
@@ -331,15 +338,17 @@ struct DashboardView: View {
                                                 }
                                             }
                                             .onDrag {
+                                                draggedCardId = card.cardType
+                                                isDragging = true
                                                 if !isEditing {
                                                     HapticManager.shared.mediumFeedback()
                                                     withAnimation(.easeInOut(duration: 0.2)) {
                                                         isEditing = true
                                                     }
                                                 }
-                                                return NSItemProvider(object: card.id.uuidString as NSString)
+                                                return NSItemProvider(object: card.cardType.rawValue as NSString)
                                             }
-                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(card: card, cards: $cards, insertionIndex: getCardIndex(for: card)))
+                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(target: card.cardType, cards: $cards, dragged: $draggedCardId, hoverTarget: $hoverTarget, isDragging: $isDragging))
                                     }
                                 }
                                 
@@ -352,7 +361,7 @@ struct DashboardView: View {
                                     Rectangle()
                                         .fill(Color.black.opacity(0.001))
                                         .frame(maxWidth: .infinity, minHeight: 120)
-                                        .onDrop(of: [.text], delegate: GridEmptySpaceDropDelegate(cards: $cards, insertionIndex: getInsertionIndexForRow(rowIndex, row: row)))
+                                        .onDrop(of: [.text], delegate: GridEmptySpaceDropDelegate(insertionIndex: getInsertionIndexForRow(rowIndex, row: row), cards: $cards, dragged: $draggedCardId, isDragging: $isDragging))
                                 }
                             }
                         }
@@ -388,6 +397,8 @@ struct DashboardView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 16) // Match vertical spacing between card rows
                 }
+                // Catch-all drop zone for entire content area
+                .onDrop(of: [.text], delegate: DashboardFallbackDropDelegate(dragged: $draggedCardId, isDragging: $isDragging))
                 }
             }
             .onAppear {
@@ -421,6 +432,24 @@ struct DashboardView: View {
                 // Refresh grid when weight chart size mode changes
                 invalidateGridCache()
                 refreshID = UUID()
+            }
+            .onChange(of: isEditing) { _, newValue in
+                // Reset drag state when exiting edit mode
+                if !newValue {
+                    draggedCardId = nil
+                    isDragging = false
+                }
+            }
+            .onChange(of: isDragging) { _, newValue in
+                // Drag cancel watchdog - if still "dragging" after 1s with no drop, assume cancelled
+                if newValue {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if isDragging && hoverTarget == nil {
+                            draggedCardId = nil
+                            isDragging = false
+                        }
+                    }
+                }
             }
             .id(refreshID) // Force view refresh when refreshID changes
         }
@@ -479,12 +508,12 @@ struct DashboardView: View {
                 regularCardView(for: card.cardType)
             }
             
-            // Remove button overlay (only visible in edit mode)
-            if isEditing {
+            // Remove button overlay (visible in edit mode, hidden during drag)
+            if isEditing && !isDragging {
                 VStack {
                     HStack {
                         Button(action: {
-                            removeWidget(cardId: card.id)
+                            removeWidget(cardType: card.cardType)
                         }) {
                             Image(systemName: "minus.circle.fill")
                                 .font(.title2)
@@ -497,8 +526,14 @@ struct DashboardView: View {
                     Spacer()
                 }
                 .offset(x: -10, y: -10)  // Position button outside card bounds
+                .transaction { $0.animation = nil }  // Don't animate minus button presence
             }
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.blue, lineWidth: hoverTarget == card.cardType ? 2 : 0)
+                .animation(.easeInOut(duration: 0.12), value: hoverTarget)
+        )
     }
     
     // Function to save hidden cards to UserDefaults
@@ -509,10 +544,9 @@ struct DashboardView: View {
     }
     
     // Function to remove a widget from the dashboard
-    private func removeWidget(cardId: UUID) {
+    private func removeWidget(cardType: CardType) {
         // Find the card to remove
-        guard let cardIndex = cards.firstIndex(where: { $0.id == cardId }) else { return }
-        let cardType = cards[cardIndex].cardType
+        guard let cardIndex = cards.firstIndex(where: { $0.cardType == cardType }) else { return }
         
         // Add to hidden cards if not already there
         if !hiddenCards.contains(cardType) {

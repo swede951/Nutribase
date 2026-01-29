@@ -1357,11 +1357,12 @@ struct TestPhaseWeightChartView: View {
     
     private func drawGoalLine(in context: GraphicsContext, size: CGSize, goal: Double) {
         let y = yPosition(for: goal, in: size)
+        let goalColor = Color(white: 0.4) // Dark grey color
         
         // Draw "Goal" text centered on the line
         let text = Text("Goal")
             .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(colorScheme == .dark ? .white : .black)
+            .foregroundColor(goalColor)
         
         let textSize = context.resolve(text).measure(in: size)
         let centerX = size.width / 2
@@ -1371,20 +1372,20 @@ struct TestPhaseWeightChartView: View {
         let leftEnd = centerX - textSize.width / 2 - gap
         let rightStart = centerX + textSize.width / 2 + gap
         
-        // Left segment
+        // Left segment - match prediction line style with rounded caps
         if leftEnd > 0 {
             var leftPath = Path()
             leftPath.move(to: CGPoint(x: 0, y: y))
             leftPath.addLine(to: CGPoint(x: leftEnd, y: y))
-            context.stroke(leftPath, with: .color(colorScheme == .dark ? .white : .black), style: StrokeStyle(lineWidth: 3, dash: [5, 5]))
+            context.stroke(leftPath, with: .color(goalColor), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round, dash: [8, 4]))
         }
         
-        // Right segment
+        // Right segment - match prediction line style with rounded caps
         if rightStart < size.width {
             var rightPath = Path()
             rightPath.move(to: CGPoint(x: rightStart, y: y))
             rightPath.addLine(to: CGPoint(x: size.width, y: y))
-            context.stroke(rightPath, with: .color(colorScheme == .dark ? .white : .black), style: StrokeStyle(lineWidth: 3, dash: [5, 5]))
+            context.stroke(rightPath, with: .color(goalColor), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round, dash: [8, 4]))
         }
         
         // Draw text centered both horizontally and vertically on the line

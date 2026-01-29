@@ -150,6 +150,7 @@ struct FoodSearchView: View {
     
     @StateObject private var typesenseService = TypesenseDirectService.shared
     @StateObject private var suggestionService = SearchSuggestionService.shared
+    @StateObject private var verifiedFoodsService = VerifiedFoodsService.shared
     @StateObject private var analyticsService = AnalyticsService.shared
     @ObservedObject private var mealsManager = SavedMealsManager.shared
     @State private var searchText = ""
@@ -160,6 +161,7 @@ struct FoodSearchView: View {
     
     // State for search results
     @State private var foodItems: [FoodItem] = []
+    @State private var verifiedFoodResults: [FoodItem] = []
     @State private var isLoading = false
     
     // State for barcode scanner sheet
@@ -553,6 +555,9 @@ struct FoodSearchView: View {
                                     // Provide haptic feedback when typing
                                     HapticFeedback.shared.lightFeedback()
                                     
+                                    // Search verified foods immediately (local, fast)
+                                    verifiedFoodResults = verifiedFoodsService.searchVerifiedFoods(query: newValue)
+                                    
                                     // Don't reset if user just submitted via suggestion tap
                                     // (wait a moment to check if submission happened)
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
@@ -577,6 +582,7 @@ struct FoodSearchView: View {
                                         showSuggestions = false
                                         hasSubmittedSearch = false
                                         foodItems = []
+                                        verifiedFoodResults = []
                                         cachedHistoryFoods = []
                                         lastHistorySearchText = ""
                                         initialHistoryLoaded = false
@@ -952,13 +958,44 @@ struct FoodSearchView: View {
                                                 .foregroundColor(.secondary)
                                             Spacer()
                                         }
-                                    } else if !filteredFoods.isEmpty {
+                                    } else if !filteredFoods.isEmpty || !verifiedFoodResults.isEmpty {
                                         Text("Search Results")
                                             .font(.headline)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .padding(.horizontal)
                                             .padding(.top, historyFoods.isEmpty ? 8 : 0)
                                         
+                                        // Show verified foods at the top of search results
+                                        ForEach(verifiedFoodResults) { food in
+                                            FoodItemCard(
+                                                food: food,
+                                                mealType: mealType,
+                                                selectedDate: selectedDate,
+                                                onQuickAdd: {
+                                                    // Add to recent foods when quick added
+                                                    addToRecentFoods(food)
+                                                    
+                                                    // Show toast notification
+                                                    toastMessage = "\(food.name) added to \(mealType)"
+                                                    showToast = true
+                                                    
+                                                    // Hide toast after 2 seconds
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                        showToast = false
+                                                    }
+                                                },
+                                                isCreatingMeal: isCreatingMeal,
+                                                onFoodSelectedForMeal: onFoodSelectedForMeal
+                                            )
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                HapticFeedback.shared.selectionFeedback()
+                                                selectedFood = food
+                                                showingFoodEntry = true
+                                            }
+                                        }
+                                        
+                                        // Then show regular search results
                                         ForEach(filteredFoods) { food in
                                             FoodItemCard(
                                                 food: food,
@@ -1264,9 +1301,18 @@ struct FoodItemCard: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(food.name)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(food.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    
+                    // Verified badge for curated foods
+                    if food.isVerified {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 12))
+                    }
+                }
                 
                 HStack(spacing: 4) {
                     // Brand name if available
@@ -1641,7 +1687,10 @@ public struct FoodItem: Identifiable, Codable, Equatable {
     // Flag to identify if this is a saved meal (not a regular food item)
     public let isMeal: Bool
     
-    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, novaScoreIsEstimated: Bool = false, nutriScoreGrade: String? = nil, nutriScoreIsEstimated: Bool = false, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, fiber: Double? = nil, sugar: Double? = nil, sodium: Double? = nil, saturatedFat: Double? = nil, ingredients: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil, countries: [String]? = nil, purchasePlaces: String? = nil, origins: String? = nil, isMeal: Bool = false) {
+    // Flag to identify if this is a verified food with curated nutrition data
+    public let isVerified: Bool
+    
+    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, novaScoreIsEstimated: Bool = false, nutriScoreGrade: String? = nil, nutriScoreIsEstimated: Bool = false, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, fiber: Double? = nil, sugar: Double? = nil, sodium: Double? = nil, saturatedFat: Double? = nil, ingredients: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil, countries: [String]? = nil, purchasePlaces: String? = nil, origins: String? = nil, isMeal: Bool = false, isVerified: Bool = false) {
         self.id = UUID()
         self.name = name
         self.brandName = brandName
@@ -1670,11 +1719,12 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         self.purchasePlaces = purchasePlaces
         self.origins = origins
         self.isMeal = isMeal
+        self.isVerified = isVerified
     }
     
     // Codable implementation
     enum CodingKeys: String, CodingKey {
-        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, novaScoreIsEstimated, nutriScoreGrade, nutriScoreIsEstimated, servingSize, servingsPerPackage, servingType, fiber, sugar, sodium, saturatedFat, ingredients, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption, countries, purchasePlaces, origins, isMeal
+        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, novaScoreIsEstimated, nutriScoreGrade, nutriScoreIsEstimated, servingSize, servingsPerPackage, servingType, fiber, sugar, sodium, saturatedFat, ingredients, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption, countries, purchasePlaces, origins, isMeal, isVerified
     }
     
     public init(from decoder: Decoder) throws {
@@ -1707,6 +1757,7 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         purchasePlaces = try container.decodeIfPresent(String.self, forKey: .purchasePlaces)
         origins = try container.decodeIfPresent(String.self, forKey: .origins)
         isMeal = try container.decodeIfPresent(Bool.self, forKey: .isMeal) ?? false
+        isVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -1739,6 +1790,7 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(purchasePlaces, forKey: .purchasePlaces)
         try container.encodeIfPresent(origins, forKey: .origins)
         try container.encode(isMeal, forKey: .isMeal)
+        try container.encode(isVerified, forKey: .isVerified)
     }
 }
 
@@ -1819,8 +1871,17 @@ struct FoodItemRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(food.name)
-                    .font(.headline)
+                HStack(spacing: 4) {
+                    Text(food.name)
+                        .font(.headline)
+                    
+                    // Verified badge for curated foods
+                    if food.isVerified {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 12))
+                    }
+                }
                 
                 HStack(spacing: 4) {
                     // Brand name if available

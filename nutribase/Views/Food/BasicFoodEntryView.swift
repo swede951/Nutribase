@@ -127,36 +127,61 @@ struct BasicFoodEntryView: View {
         }
     }
     
-    // Calculate proportional fill for macronutrient circles
+    // Calculate proportional fill for individual macronutrient circles
+    // Returns 0 if the gram value is 0 (empty circle)
     private func proteinProportion(_ refreshID: UUID) -> Double {
-        let proteinCalories = totalProtein(refreshID) * 4
+        let protein = totalProtein(refreshID)
+        if protein <= 0 { return 0.0 }
+        let proteinCalories = protein * 4
         let totalCals = Double(totalCalories(refreshID))
         return totalCals > 0 ? min(proteinCalories / totalCals, 1.0) : 0.0
     }
     
     private func carbsProportion(_ refreshID: UUID) -> Double {
-        let carbsCalories = totalCarbs(refreshID) * 4
+        let carbs = totalCarbs(refreshID)
+        if carbs <= 0 { return 0.0 }
+        let carbsCalories = carbs * 4
         let totalCals = Double(totalCalories(refreshID))
         return totalCals > 0 ? min(carbsCalories / totalCals, 1.0) : 0.0
     }
     
     private func fatProportion(_ refreshID: UUID) -> Double {
-        let fatCalories = totalFat(refreshID) * 9
+        let fat = totalFat(refreshID)
+        if fat <= 0 { return 0.0 }
+        let fatCalories = fat * 9
         let totalCals = Double(totalCalories(refreshID))
         return totalCals > 0 ? min(fatCalories / totalCals, 1.0) : 0.0
     }
     
     // Helper functions for segmented calories circle
+    // Normalized to always fill the entire circle (no gaps)
+    private func totalMacroCalories(_ refreshID: UUID) -> Double {
+        let proteinCals = totalProtein(refreshID) * 4
+        let carbsCals = totalCarbs(refreshID) * 4
+        let fatCals = totalFat(refreshID) * 9
+        return proteinCals + carbsCals + fatCals
+    }
+    
     private func proteinCaloriesEnd(_ refreshID: UUID) -> Double {
-        return proteinProportion(refreshID)
+        let total = totalMacroCalories(refreshID)
+        if total <= 0 { return 0.0 }
+        let proteinCals = totalProtein(refreshID) * 4
+        return proteinCals / total
     }
     
     private func carbsCaloriesEnd(_ refreshID: UUID) -> Double {
-        return proteinProportion(refreshID) + carbsProportion(refreshID)
+        let total = totalMacroCalories(refreshID)
+        if total <= 0 { return 0.0 }
+        let proteinCals = totalProtein(refreshID) * 4
+        let carbsCals = totalCarbs(refreshID) * 4
+        return (proteinCals + carbsCals) / total
     }
     
     private func fatCaloriesEnd(_ refreshID: UUID) -> Double {
-        return proteinProportion(refreshID) + carbsProportion(refreshID) + fatProportion(refreshID)
+        // Always returns 1.0 to fill the circle completely
+        // (or 0 if no macros at all)
+        let total = totalMacroCalories(refreshID)
+        return total > 0 ? 1.0 : 0.0
     }
 
     // Get color for the NOVA score

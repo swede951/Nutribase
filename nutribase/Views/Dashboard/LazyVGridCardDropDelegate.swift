@@ -20,9 +20,9 @@ struct LazyVGridCardDropDelegate: DropDelegate {
         item.loadItem(forTypeIdentifier: UTType.text.identifier as String, options: nil) { (data, error) in
             DispatchQueue.main.async {
                 guard let data = data as? Data,
-                      let idString = String(data: data, encoding: .utf8),
-                      let draggedUUID = UUID(uuidString: idString),
-                      let draggedCard = cards.first(where: { $0.id == draggedUUID }),
+                      let cardTypeRawValue = String(data: data, encoding: .utf8),
+                      let draggedCardType = CardType(rawValue: cardTypeRawValue),
+                      let draggedCard = cards.first(where: { $0.cardType == draggedCardType }),
                       let fromIndex = cards.firstIndex(of: draggedCard),
                       let toIndex = cards.firstIndex(of: card) else { return }
                 

@@ -9,42 +9,47 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct GridEmptySpaceDropDelegate: DropDelegate {
-    @Binding var cards: [DashboardCard]
     let insertionIndex: Int
-    
+    @Binding var cards: [DashboardCard]
+    @Binding var dragged: CardType?
+    @Binding var isDragging: Bool
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = dragged,
+              let fromIndex = cards.firstIndex(where: { $0.cardType == dragged })
+        else { return }
+
+        // Prevent churn if already at or adjacent to insertion point
+        if fromIndex == insertionIndex || fromIndex + 1 == insertionIndex { return }
+
+        // Reorder preview animation only (no saving here)
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            cards.move(
+                fromOffsets: IndexSet(integer: fromIndex),
+                toOffset: insertionIndex > fromIndex ? insertionIndex : insertionIndex
+            )
+        }
+    }
+
     func performDrop(info: DropInfo) -> Bool {
-        guard let item = info.itemProviders(for: [.text]).first else {
-            return false
+        // End drag with NO animation to prevent minus-button flicker
+        withTransaction(Transaction(animation: nil)) {
+            dragged = nil
+            isDragging = false
         }
-        
-        item.loadItem(forTypeIdentifier: UTType.text.identifier as String, options: nil) { (data, error) in
-            DispatchQueue.main.async {
-                guard let data = data as? Data,
-                      let idString = String(data: data, encoding: .utf8),
-                      let draggedUUID = UUID(uuidString: idString),
-                      let draggedCard = cards.first(where: { $0.id == draggedUUID }),
-                      let fromIndex = cards.firstIndex(of: draggedCard) else { return }
-                
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    // Remove the card from its current position
-                    let movedCard = cards.remove(at: fromIndex)
-                    
-                    // Calculate the correct insertion index after removal
-                    let adjustedInsertionIndex = insertionIndex > fromIndex ? insertionIndex - 1 : insertionIndex
-                    let finalInsertionIndex = min(adjustedInsertionIndex, cards.count)
-                    
-                    // Insert the card at the new position
-                    cards.insert(movedCard, at: finalInsertionIndex)
-                    
-                    // Save the updated card order
-                    saveCardOrder()
-                }
-            }
-        }
-        
+
+        saveCardOrder()
         return true
     }
-    
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        // Don't clear dragged - still dragging, just left this zone
+    }
+
     private func saveCardOrder() {
         let cardTypes = cards.map { $0.cardType }
         if let encodedData = try? JSONEncoder().encode(cardTypes) {
