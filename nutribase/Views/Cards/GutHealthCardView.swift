@@ -19,7 +19,7 @@ struct GutHealthCardView: View {
     @State private var currentMetrics: GutHealthScoreService.GutHealthMetrics?
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Preview data
@@ -61,9 +61,7 @@ struct GutHealthCardView: View {
     }
     
     var body: some View {
-        FixedSizeCard(title: "Gut Health", showInfoButton: true, onInfoTap: {
-            showingInfo = true
-        }, onCardTap: {
+        FixedSizeCard(title: "Gut Health", showInfoButton: false, onCardTap: {
             showingDetailView = true
         }) {
             HStack(spacing: 16) {
@@ -225,7 +223,7 @@ struct CategoryMiniBar: View {
                 ZStack(alignment: .leading) {
                     // Background
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(.systemGray5))
+                        .fill(Color.appInsetBackground)
                         .frame(height: 8)
                     
                     // Fill

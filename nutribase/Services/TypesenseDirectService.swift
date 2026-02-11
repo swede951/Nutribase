@@ -68,94 +68,80 @@ class TypesenseDirectService: ObservableObject {
         return mapping[region, default: region.lowercased()]
     }
     
-    // MARK: - UK/US Food Synonyms
+    // MARK: - Script/Alphabet Filtering
     
-    /// Bidirectional synonym groups - searching for any term finds all related terms
-    private let foodSynonyms: [[String]] = [
-        // Proteins
-        ["mince", "ground beef", "minced beef", "ground meat"],
-        ["prawns", "shrimp", "king prawns"],
-        ["gammon", "ham steak"],
-        
-        // Vegetables
-        ["courgette", "zucchini", "courgettes", "zucchinis"],
-        ["aubergine", "eggplant", "aubergines", "eggplants"],
-        ["rocket", "arugula", "rocket salad", "arugula salad"],
-        ["coriander", "cilantro", "fresh coriander", "fresh cilantro"],
-        ["spring onion", "spring onions", "scallion", "scallions", "green onion", "green onions"],
-        ["bell pepper", "capsicum", "sweet pepper"],
-        ["swede", "rutabaga", "yellow turnip"],
-        ["mangetout", "mange tout", "snow peas", "sugar snap peas"],
-        ["beetroot", "beet", "beets", "red beet"],
-        ["broad beans", "fava beans", "fava"],
-        ["sweetcorn", "sweet corn", "corn on the cob"],
-        ["chips", "fries", "french fries", "oven chips"],
-        
-        // Snacks
-        ["crisps", "potato chips", "potato crisps"],
-        ["biscuit", "biscuits", "cookie", "cookies"],
-        ["sweets", "candy", "candies"],
-        
-        // Dairy
-        ["single cream", "light cream", "pouring cream"],
-        ["double cream", "heavy cream", "heavy whipping cream", "whipping cream"],
-        ["full fat milk", "whole milk", "full cream milk"],
-        ["semi skimmed", "semi-skimmed milk", "2% milk", "reduced fat milk"],
-        ["skimmed milk", "skim milk", "fat free milk", "nonfat milk"],
-        
-        // Baking/Pantry
-        ["plain flour", "all purpose flour", "all-purpose flour"],
-        ["strong flour", "bread flour", "strong bread flour"],
-        ["caster sugar", "castor sugar", "superfine sugar"],
-        ["icing sugar", "powdered sugar", "confectioners sugar"],
-        ["bicarbonate of soda", "bicarb", "baking soda"],
-        ["cornflour", "corn flour", "cornstarch", "corn starch"],
-        ["treacle", "black treacle", "molasses"],
-        ["golden syrup", "light treacle"],
-        
-        // Grains
-        ["porridge", "porridge oats", "oatmeal", "oat porridge"],
-        ["wholemeal", "whole meal", "wholewheat", "whole wheat"],
-        
-        // Misc
-        ["jam", "fruit preserve", "preserves"],
-        ["stock cube", "stock cubes", "bouillon cube", "bouillon"],
-        ["tomato puree", "tomato purée", "tomato paste", "tomato concentrate"],
-        ["muesli", "granola", "bircher muesli"],
-    ]
+    /// Check if a region uses Latin alphabet
+    private func regionUsesLatinAlphabet(_ region: String) -> Bool {
+        let latinRegions = [
+            "United Kingdom", "United States", "Ireland", "France", "Germany",
+            "Spain", "Italy", "Netherlands", "Belgium", "Sweden", "Norway",
+            "Denmark", "Poland", "Portugal", "Switzerland", "Austria",
+            "Australia", "Canada", "New Zealand"
+        ]
+        return latinRegions.contains(region)
+    }
     
-    /// Expand a search query with synonyms for better matching
-    private func expandQueryWithSynonyms(_ query: String) -> String {
-        let queryLower = query.lowercased()
-        var expandedTerms: Set<String> = [query] // Always include original
+    /// Check if text contains primarily non-Latin characters (Cyrillic, Chinese, Arabic, etc.)
+    private func containsNonLatinCharacters(_ text: String) -> Bool {
+        // Count Latin vs non-Latin alphabetic characters
+        var latinCount = 0
+        var nonLatinCount = 0
         
-        for synonymGroup in foodSynonyms {
-            // Check if any synonym in this group matches part of the query
-            for synonym in synonymGroup {
-                if queryLower.contains(synonym.lowercased()) {
-                    // Add all synonyms from this group as alternatives
-                    for alt in synonymGroup where alt.lowercased() != synonym.lowercased() {
-                        // Replace the matched term with the alternative
-                        let replacement = queryLower.replacingOccurrences(of: synonym.lowercased(), with: alt.lowercased())
-                        if replacement != queryLower {
-                            expandedTerms.insert(replacement)
-                        }
-                    }
-                    break // Only match one synonym group per query
+        for scalar in text.unicodeScalars {
+            if CharacterSet.letters.contains(scalar) {
+                // Check if it's a basic Latin letter (A-Z, a-z) or extended Latin (accented chars)
+                if (scalar.value >= 0x0041 && scalar.value <= 0x007A) ||  // Basic Latin
+                   (scalar.value >= 0x00C0 && scalar.value <= 0x024F) ||  // Latin Extended
+                   (scalar.value >= 0x1E00 && scalar.value <= 0x1EFF) {   // Latin Extended Additional
+                    latinCount += 1
+                } else {
+                    nonLatinCount += 1
                 }
             }
         }
         
-        if expandedTerms.count > 1 {
-            print("🔤 Synonym expansion: '\(query)' → \(expandedTerms.count) variants")
+        // If more than 30% of alphabetic characters are non-Latin, filter it out
+        let totalLetters = latinCount + nonLatinCount
+        guard totalLetters > 0 else { return false }
+        
+        return Double(nonLatinCount) / Double(totalLetters) > 0.3
+    }
+    
+    /// Filter out foods with non-Latin names for Latin-alphabet regions
+    private func filterByRegionScript(_ foods: [FoodItem]) -> [FoodItem] {
+        let preferredRegion = UserDefaults.standard.string(forKey: "preferredFoodRegion") ?? "All Regions"
+        
+        // Only filter if user has selected a Latin-alphabet region
+        guard preferredRegion != "All Regions" && regionUsesLatinAlphabet(preferredRegion) else {
+            return foods
         }
         
-        // Return as comma-separated for multi-search, or just the first few
-        // For Typesense, we'll use the original + primary synonym
-        return Array(expandedTerms).prefix(3).joined(separator: " ")
+        let filtered = foods.filter { food in
+            // Check food name for non-Latin characters
+            if containsNonLatinCharacters(food.name) {
+                print("🔤 Filtered out non-Latin food: \(food.name)")
+                return false
+            }
+            
+            // Also check brand name if present
+            if let brandName = food.brandName, containsNonLatinCharacters(brandName) {
+                print("🔤 Filtered out non-Latin brand: \(brandName) - \(food.name)")
+                return false
+            }
+            
+            return true
+        }
+        
+        if filtered.count < foods.count {
+            print("🔤 Script filter removed \(foods.count - filtered.count) non-Latin results")
+        }
+        
+        return filtered
     }
     
     // MARK: - Search Result Caching
+    // NOTE: UK/US food synonyms are now configured server-side in Typesense
+    // via the typesenseManageSynonyms Firebase Function (see setup-synonyms.js)
     
     private var searchCache: [String: CachedSearchResult] = [:]
     private let cacheExpirationTime: TimeInterval = 300 // 5 minutes
@@ -261,13 +247,17 @@ class TypesenseDirectService: ObservableObject {
             return
         }
         
-        // Expand query with UK/US synonyms for human-like matching
-        let expandedQuery = expandQueryWithSynonyms(query)
+        // NOTE: Synonyms are now handled server-side by Typesense (see setup-synonyms.js)
+        // Strip % from query for Typesense (non-word character that pollutes results)
+        // Client-side ranking still uses the original query for contextual matching
+        let typesenseQuery = query.replacingOccurrences(of: "%", with: "")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespaces)
         
         // SECURE MODE: Route through Firebase Functions (API keys stay on server)
         if TypesenseConfig.useSecureCloudMode {
             print("🔒 Secure search via Firebase Functions for: \(query)")
-            performSecureCloudSearch(query: expandedQuery, cacheKey: cacheKey, completion: completion)
+            performSecureCloudSearch(query: typesenseQuery, cacheKey: cacheKey, originalQuery: query, completion: completion)
             return
         }
         
@@ -289,12 +279,17 @@ class TypesenseDirectService: ObservableObject {
         // Detect search intent (use original query for intent detection)
         let intent = detectSearchIntent(query)
         
-        // Perform two-lane search based on intent (use expanded query for actual search)
-        performTwoLaneSearch(query: expandedQuery, intent: intent, cacheKey: cacheKey, completion: completion)
+        // Perform two-lane search based on intent
+        performTwoLaneSearch(query: query, intent: intent, cacheKey: cacheKey, completion: completion)
     }
     
     /// Perform search via Firebase Functions (secure - API keys stay on server)
-    private func performSecureCloudSearch(query: String, cacheKey: String, completion: @escaping ([FoodItem]?, Error?) -> Void) {
+    /// - Parameters:
+    ///   - query: Cleaned query sent to Typesense (% stripped)
+    ///   - cacheKey: Cache key for storing results
+    ///   - originalQuery: Original user query used for client-side ranking (preserves % tokens)
+    ///   - completion: Results callback
+    private func performSecureCloudSearch(query: String, cacheKey: String, originalQuery: String? = nil, completion: @escaping ([FoodItem]?, Error?) -> Void) {
         // Build multi-search request for two-lane search
         let searches: [[String: Any]] = [
             // Ingredients collection
@@ -326,18 +321,22 @@ class TypesenseDirectService: ObservableObject {
             case .success(let searchResults):
                 var allFoods: [FoodItem] = []
                 
-                // Parse results from both collections
-                for searchResult in searchResults {
+                // Parse results from both collections, tagging each with its data source
+                // searchResults[0] = ingredients (USDA), searchResults[1] = products (branded)
+                let dataSources = ["usda", "brand"]
+                for (index, searchResult) in searchResults.enumerated() {
+                    let source = index < dataSources.count ? dataSources[index] : "unknown"
                     for hit in searchResult.hits {
                         if let document = hit["document"] as? [String: Any],
-                           let food = self?.parseFoodDocument(document) {
+                           let food = self?.parseFoodDocument(document, dataSource: source) {
                             allFoods.append(food)
                         }
                     }
                 }
                 
-                // Deduplicate and rank
-                let rankedFoods = self?.rankFoodsByRelevanceAndQuality(allFoods, query: query) ?? allFoods
+                // Deduplicate and rank (use original query for ranking to preserve % tokens)
+                let rankingQuery = originalQuery ?? query
+                let rankedFoods = self?.rankFoodsByRelevanceAndQuality(allFoods, query: rankingQuery) ?? allFoods
                 let uniqueFoods = self?.deduplicateFoods(rankedFoods) ?? rankedFoods
                 let topResults = Array(uniqueFoods.prefix(50))
                 
@@ -361,7 +360,7 @@ class TypesenseDirectService: ObservableObject {
     }
     
     /// Parse a Typesense document into a FoodItem
-    private func parseFoodDocument(_ doc: [String: Any]) -> FoodItem? {
+    private func parseFoodDocument(_ doc: [String: Any], dataSource: String = "unknown") -> FoodItem? {
         guard let name = doc["name"] as? String else { return nil }
         
         let calories = doc["calories"] as? Int ?? Int(doc["calories"] as? Double ?? 0)
@@ -396,7 +395,8 @@ class TypesenseDirectService: ObservableObject {
             sodium: doc["sodium"] as? Double,
             saturatedFat: doc["saturated_fat"] as? Double,
             ingredients: doc["ingredients_text"] as? String,
-            countries: doc["countries"] as? [String]
+            countries: doc["countries"] as? [String],
+            dataSource: dataSource
         )
     }
     
@@ -865,8 +865,11 @@ class TypesenseDirectService: ObservableObject {
                 let filteredFoods = self.filterZeroCalorieEntries(foods)
                 print("📊 After 0-calorie filtering: \(filteredFoods.count) foods remain")
                 
+                // Filter out non-Latin script foods for Latin-alphabet regions
+                let scriptFilteredFoods = self.filterByRegionScript(filteredFoods)
+                
                 // Apply MyFitnessPal-style semantic relevance ranking + nutritional completeness
-                let semanticallyRankedFoods = self.rankFoodsByRelevanceAndQuality(filteredFoods, query: query)
+                let semanticallyRankedFoods = self.rankFoodsByRelevanceAndQuality(scriptFilteredFoods, query: query)
                 
                 // DISABLED: SearchRankingService was overwriting our semantic scores
                 // Instead, semantic relevance is the primary ranking factor
@@ -1134,8 +1137,11 @@ class TypesenseDirectService: ObservableObject {
                 // Apply smart 0-calorie filtering
                 let filteredFoods = self.filterZeroCalorieEntries(foods)
                 
+                // Filter out non-Latin script foods for Latin-alphabet regions
+                let scriptFilteredFoods = self.filterByRegionScript(filteredFoods)
+                
                 // Apply ranking
-                let rankedFoods = self.rankFoodsByRelevanceAndQuality(filteredFoods, query: query)
+                let rankedFoods = self.rankFoodsByRelevanceAndQuality(scriptFilteredFoods, query: query)
                 
                 DispatchQueue.main.async {
                     completion(rankedFoods, nil)
@@ -1274,6 +1280,16 @@ class TypesenseDirectService: ObservableObject {
             print("⚠️ Failed to encode food history: \(error)")
         }
         
+        // Record meal-type preference for personalized ranking
+        let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") ?? ""
+        if !currentMealType.isEmpty {
+            SearchRankingService.shared.recordFoodSelection(
+                foodId: food.id.uuidString,
+                foodName: food.name,
+                mealType: currentMealType
+            )
+        }
+        
         // Increment global popularity in Typesense (the flywheel)
         incrementPopularity(for: food)
     }
@@ -1307,7 +1323,6 @@ class TypesenseDirectService: ObservableObject {
         
         // Check if food has a custom serving size (not just generic 100g)
         if let servingSize = food.servingSize, !servingSize.isEmpty {
-            print("  🎯 Serving size boost for '\(food.name)': serving_size='\(servingSize)'")
             let servingSizeLower = servingSize.lowercased()
             
             // HIGH BOOST: Individual portions (bars, pieces, cups, etc.)
@@ -1320,7 +1335,6 @@ class TypesenseDirectService: ObservableObject {
             for keyword in individualPortionKeywords {
                 if servingSizeLower.contains(keyword) {
                     score += 30.0 // Strong boost for practical individual portions
-                    print("    ✅ HIGH boost (+30) for individual portion keyword: '\(keyword)'")
                     break
                 }
             }
@@ -1352,12 +1366,7 @@ class TypesenseDirectService: ObservableObject {
             // SMALL BOOST: Any custom serving size is better than generic 100g
             if score == 0.0 {
                 score += 10.0 // Fallback boost for any custom serving size
-                print("    ✅ FALLBACK boost (+10) for any custom serving size")
             }
-            
-            print("    📊 Total serving size boost: +\(score)")
-        } else {
-            print("  ❌ No serving size data for '\(food.name)' - no boost applied")
         }
         
         return score
@@ -1390,21 +1399,18 @@ class TypesenseDirectService: ObservableObject {
         
         for brand in globalBrands {
             if brandLower.contains(brand) {
-                print("  🌟 GLOBAL brand boost (+25) for '\(brandName)'")
                 return 25.0
             }
         }
         
         for brand in majorBrands {
             if brandLower.contains(brand) {
-                print("  ⭐ MAJOR brand boost (+15) for '\(brandName)'")
                 return 15.0
             }
         }
         
         for brand in wellKnownBrands {
             if brandLower.contains(brand) {
-                print("  📈 KNOWN brand boost (+10) for '\(brandName)'")
                 return 10.0
             }
         }
@@ -1422,17 +1428,12 @@ class TypesenseDirectService: ObservableObject {
         if hasNovaScore && hasNutriScore {
             // HIGHEST BOOST: Foods with both NOVA and Nutri-Score data
             score += 40.0
-            print("  🏆 PREMIUM boost (+40) for '\(food.name)' - has both NOVA (\(food.novaScore)) and Nutri-Score (\(food.nutriScoreGrade!))")
         } else if hasNovaScore {
             // MEDIUM BOOST: Foods with NOVA score only
             score += 20.0
-            print("  📊 NOVA boost (+20) for '\(food.name)' - has NOVA score: \(food.novaScore)")
         } else if hasNutriScore {
             // MEDIUM BOOST: Foods with Nutri-Score only
             score += 20.0
-            print("  🎯 Nutri-Score boost (+20) for '\(food.name)' - has Nutri-Score: \(food.nutriScoreGrade!)")
-        } else {
-            print("  ❌ No nutritional quality data for '\(food.name)' - no boost applied")
         }
         
         return score
@@ -1452,7 +1453,6 @@ class TypesenseDirectService: ObservableObject {
         
         // Use a lower relevance threshold for all previously eaten foods
         if relevanceScore < 0.1 {
-            print("  ❌ Previously eaten '\(food.name)' not relevant to query '\(query)' - no personal boost")
             return 0.0
         }
         
@@ -1479,10 +1479,6 @@ class TypesenseDirectService: ObservableObject {
             personalizedScore += 40.0 * relevanceMultiplier // Eaten in last week
         } else if daysSinceLastEaten <= 30 {
             personalizedScore += 20.0 * relevanceMultiplier // Eaten in last month
-        }
-        
-        if personalizedScore > 0 {
-            print("  🎯 PERSONAL boost (+\(String(format: "%.1f", personalizedScore))) for '\(food.name)' - eaten \(foodData.frequency) times, relevance: \(String(format: "%.2f", relevanceScore))")
         }
         
         return personalizedScore
@@ -1545,73 +1541,86 @@ class TypesenseDirectService: ObservableObject {
     private func calculateSemanticRelevanceScore(_ food: FoodItem, query: String) -> Double {
         let queryLower = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let nameLower = food.name.lowercased()
-        let _ = food.brandName?.lowercased() ?? "" // brandLower not used in current implementation
         
         var score: Double = 0.0
         
+        // Normalize % tokens for matching: "5%" → "5" for word matching
+        // but keep original for contextual scoring (e.g. "5% fat")
+        let queryWords = queryLower.split(separator: " ").map(String.init)
+        let normalizedQueryWords = queryWords.map { $0.replacingOccurrences(of: "%", with: "") }.filter { !$0.isEmpty }
+        let nameWords = nameLower.split(separator: " ").map(String.init)
+        let normalizedNameWords = nameWords.map { $0.replacingOccurrences(of: "%", with: "") }
+        
         // 1. EXACT MATCH BONUS (highest priority)
         if nameLower == queryLower {
-            score += 500.0  // Massively boost exact matches
+            score += 500.0
         }
         
         // 2. SINGLE WORD MATCH (e.g., "pasta" query matching "pasta" name)
-        let queryWords = queryLower.split(separator: " ").map(String.init)
-        let nameWords = nameLower.split(separator: " ").map(String.init)
-        
-        // If query is single word and name is single word and they match
         if queryWords.count == 1 && nameWords.count == 1 && queryWords[0] == nameWords[0] {
-            score += 400.0  // Huge boost for single-word exact matches
+            score += 400.0
         }
         
-        // 3. SIMPLICITY BONUS (fewer words = more basic ingredient) - MOVED UP
+        // 3. SIMPLICITY BONUS — scaled by query length
+        // For single-word queries, simple names are better ("pasta" → "Pasta")
+        // For multi-word queries (3+), the user wants something specific — reduce simplicity bias
         let wordCount = nameWords.count
+        let isSpecificQuery = queryWords.count >= 3
+        
         if wordCount == 1 {
-            score += 200.0  // Massively boost single-word foods
+            score += isSpecificQuery ? 50.0 : 200.0
         } else if wordCount == 2 {
-            score += 100.0  // "Pasta shells" > "Tuna pasta bake"
+            score += isSpecificQuery ? 40.0 : 100.0
         } else if wordCount == 3 {
-            score += 50.0
+            score += isSpecificQuery ? 30.0 : 50.0
         } else if wordCount <= 5 {
             score += 20.0
         }
         
         // 4. SIMPLE/GENERIC FOOD PRIORITIZATION (MyFitnessPal's key strategy)
-        // Prioritize foods without brand names (generic/USDA foods)
         if food.brandName == nil || food.brandName?.isEmpty == true {
-            score += 80.0  // Increased from 50
+            score += 80.0
         }
         
-        // 5. SEMANTIC WORD MATCHING
-        // Bonus for each query word found in food name
-        for queryWord in queryWords {
-            for nameWord in nameWords {
+        // 5. SEMANTIC WORD MATCHING + QUERY COVERAGE REWARD
+        var matchedQueryWords = 0
+        for queryWord in normalizedQueryWords {
+            var wordMatched = false
+            for nameWord in normalizedNameWords {
                 if nameWord.contains(queryWord) {
                     score += 20.0
+                    wordMatched = true
                     
-                    // Extra bonus if word starts with query (prefix match)
                     if nameWord.hasPrefix(queryWord) {
                         score += 10.0
                     }
-                    
-                    // Extra bonus for exact word match
                     if nameWord == queryWord {
                         score += 15.0
                     }
+                    break // Only count best match per query word
                 }
             }
+            if wordMatched { matchedQueryWords += 1 }
         }
         
-        // 6. HEAVILY PENALIZE PROCESSED/PREPARED FOODS (this is key!)
+        // QUERY COVERAGE BONUS: reward results that match a high % of query words
+        // A result matching 3/3 query words gets +150; matching 1/3 gets +50
+        if normalizedQueryWords.count > 0 {
+            let coverage = Double(matchedQueryWords) / Double(normalizedQueryWords.count)
+            score += coverage * 150.0
+        }
+        
+        // 6. PENALIZE PROCESSED/PREPARED FOODS — but only if keyword is NOT in user's query
         let processedKeywords = ["bake", "stuffed", "filled", "strips", "fajita", "seasoned", "marinated", "breaded", "fried", "cooked", "prepared", "florentine", "parmesan", "swiss", "grilled", "boneless", "meal", "ready"]
         for keyword in processedKeywords {
-            if nameLower.contains(keyword) {
-                score -= 100.0 // Doubled penalty for processed foods
+            if nameLower.contains(keyword) && !queryLower.contains(keyword) {
+                score -= 50.0 // Reduced from -100 and now context-aware
             }
         }
         
-        // 6. LIGHTLY PENALIZE BRANDED FOODS (but don't eliminate them)
+        // 6b. LIGHTLY PENALIZE BRANDED FOODS (but don't eliminate them)
         if food.brandName != nil && !food.brandName!.isEmpty {
-            score -= 5.0 // Reduced penalty
+            score -= 5.0
         }
         
         // 7. BOOST RAW/FRESH INGREDIENTS
@@ -1648,7 +1657,6 @@ class TypesenseDirectService: ObservableObject {
                 for regionalBrand in regionalBrandList {
                     if brandLower.contains(regionalBrand) {
                         score += 40.0 // Strong boost for regional brands (doubled from 20)
-                        print("  🏪 REGIONAL brand boost (+40) for '\(brandName)' in \(userCountry)")
                         break
                     }
                 }
@@ -1670,6 +1678,14 @@ class TypesenseDirectService: ObservableObject {
         // 13. PERSONALIZED RANKING (silent - based on user's food history)
         let personalizedScore = calculatePersonalizedScore(food, query: query)
         score += personalizedScore
+        
+        // 14. MEAL-TYPE PERSONALIZATION (boost foods commonly logged for this meal type)
+        let currentMealType = UserDefaults.standard.string(forKey: "currentMealType") ?? ""
+        if !currentMealType.isEmpty {
+            let mealPrefs = SearchRankingService.shared.getMealTypePreference(for: food.id.uuidString, mealType: currentMealType)
+            let mealTypeBonus = min(Double(mealPrefs) * 15.0, 60.0) // Cap at +60
+            score += mealTypeBonus
+        }
         
         return max(0, score) // Ensure non-negative score
     }

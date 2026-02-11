@@ -9,11 +9,19 @@ struct HealthKitConnectionView: View {
     @State private var alertTitle = ""
     @State private var alertMessage = ""
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         VStack(spacing: 20) {
             Image(systemName: "heart.circle.fill")
                 .resizable()
@@ -100,6 +108,7 @@ struct HealthKitConnectionView: View {
             }
         }
         .padding()
+        }
         .onAppear {
             if healthKitManager.isAuthorized {
                 refreshHealthData()
@@ -113,6 +122,8 @@ struct HealthKitConnectionView: View {
             )
         }
         .navigationTitle("Health Connection")
+        .toolbarBackground(viewBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
     
     private func connectToHealthKit() {

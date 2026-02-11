@@ -21,11 +21,11 @@ public struct YearCalendarView: View {
     
     // Dashboard-matching colors
     private var scrollBackground: Color {
-        colorScheme == .dark ? Color(.systemBackground) : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // MARK: - Cached Data for Performance
@@ -217,62 +217,182 @@ public struct YearCalendarView: View {
             .background(scrollBackground.ignoresSafeArea())
             .navigationBarHidden(true)
             .task {
-                // Build phase lookup cache on background thread
-                await MainActor.run {
-                    buildPhaseLookup()
-                    buildMonthGridCache()
-                }
-                
-                // Pre-compute chart data
+                // Build caches on background, assign on main
+                await buildCachesAsync()
                 await prepareChartData()
             }
             .onChange(of: currentYear) { oldValue, newValue in
-                // Reset chart data ready flag to show loading state
                 chartDataReady = false
                 monthGridsReady = false
                 
-                // Rebuild phase lookup, month grids, and chart data for new year
                 Task {
-                    await MainActor.run {
-                        buildPhaseLookup()
-                        buildMonthGridCache()
-                    }
+                    await buildCachesAsync()
                     await prepareChartData()
                 }
             }
         }
     }
     
+    // Build phase lookup and month grid caches on background thread
+    private func buildCachesAsync() async {
+        let year = currentYear
+        let phases = phaseManager.phases
+        let cal = performanceCache.calendar
+        
+        // Compute on background
+        let (lookup, grids) = await Task.detached(priority: .userInitiated) {
+            // Phase lookup
+            var lookup: [String: WeightPhase?] = [:]
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd"
+            
+            guard let yearStart = cal.date(from: DateComponents(year: year, month: 1, day: 1)),
+                  let yearEnd = cal.date(from: DateComponents(year: year, month: 12, day: 31)) else {
+                return (lookup, [Int: MonthGridData]())
+            }
+            
+            var current = yearStart
+            while current <= yearEnd {
+                let key = fmt.string(from: current)
+                lookup[key] = phases.first { phase in
+                    current >= phase.startDate && current <= phase.effectiveEndDate
+                }
+                current = cal.date(byAdding: .day, value: 1, to: current)!
+            }
+            
+            // Month grids
+            var grids: [Int: MonthGridData] = [:]
+            for monthIndex in 0..<12 {
+                guard let monthDate = cal.date(from: DateComponents(year: year, month: monthIndex + 1, day: 1)) else { continue }
+                let daysInMonth = cal.range(of: .day, in: .month, for: monthDate)?.count ?? 30
+                let firstWeekday = cal.component(.weekday, from: monthDate)
+                let startingSpaces = (firstWeekday == 1) ? 6 : firstWeekday - 2
+                let totalCells = startingSpaces + daysInMonth
+                let rows = (totalCells + 6) / 7
+                
+                var dates: [Date?] = []
+                var phaseColors: [Color] = []
+                
+                for row in 0..<rows {
+                    for col in 0..<7 {
+                        let cellIndex = row * 7 + col
+                        let dayNumber = cellIndex - startingSpaces + 1
+                        if cellIndex < startingSpaces || dayNumber > daysInMonth {
+                            dates.append(nil)
+                            phaseColors.append(.clear)
+                        } else {
+                            let dayDate = cal.date(from: DateComponents(year: year, month: monthIndex + 1, day: dayNumber))
+                            dates.append(dayDate)
+                            if let date = dayDate {
+                                let key = fmt.string(from: date)
+                                let phase = lookup[key] ?? nil
+                                let isToday = cal.isDateInToday(date)
+                                let color = isToday ? Color.red.opacity(0.1) : (phase?.color.swiftUIColor.opacity(0.6) ?? Color.clear)
+                                phaseColors.append(color)
+                            } else {
+                                phaseColors.append(.clear)
+                            }
+                        }
+                    }
+                }
+                
+                grids[monthIndex] = MonthGridData(
+                    daysInMonth: daysInMonth, startingSpaces: startingSpaces,
+                    rows: rows, dates: dates, phaseColors: phaseColors
+                )
+            }
+            
+            return (lookup, grids)
+        }.value
+        
+        await MainActor.run {
+            phaseLookup = lookup
+            cachedMonthGrids = grids
+            monthGridsReady = true
+        }
+    }
+    
+    // Determine smoothing timeframe based on actual data duration in the year
+    private func effectiveTimeframe(yearStart: Date, yearEnd: Date) -> TimeFrame {
+        let effectiveEnd = min(yearEnd, Date())
+        let days = calendar.dateComponents([.day], from: yearStart, to: effectiveEnd).day ?? 0
+        if days <= 7 { return .oneWeek }
+        else if days <= 30 { return .oneMonth }
+        else if days <= 90 { return .threeMonths }
+        else if days <= 365 { return .oneYear }
+        else { return .allTime }
+    }
+    
     // MARK: - Async Data Preparation
     private func prepareChartData() async {
         let yearStart = calendar.date(from: DateComponents(year: currentYear, month: 1, day: 1)) ?? Date()
         let yearEnd = calendar.date(from: DateComponents(year: currentYear, month: 12, day: 31)) ?? Date()
+        let effectiveEnd = min(yearEnd, Date())
         
-        // Filter entries on background
-        let entries = weightManager.weightEntries.filter { entry in
-            entry.date >= yearStart && entry.date <= yearEnd
-        }.sorted { $0.date < $1.date }
+        // Capture data needed for background computation
+        let allWeightEntries = weightManager.allEntries
+        let allPhases = phaseManager.phases
+        let timeframe = effectiveTimeframe(yearStart: yearStart, yearEnd: yearEnd)
         
-        let phases = phaseManager.phases.filter { phase in
-            phase.startDate <= yearEnd && phase.effectiveEndDate >= yearStart
-        }.sorted { $0.startDate < $1.startDate }
-        
-        // Compute smoothed data (heavy operation)
-        let smoothed = entries.count >= 2 ? smoothedTrend(from: entries) : entries
-        let weights = smoothed.map { $0.weight }
-        let rawMin = weights.min() ?? 60
-        let rawMax = weights.max() ?? 80
-        let range = rawMax - rawMin
-        let padding = max(range * 0.15, 0.5)
+        // Run heavy computation on background thread
+        let result = await Task.detached(priority: .userInitiated) { [self] () -> (entries: [WeightLogEntry], phases: [WeightPhase], smoothed: [WeightLogEntry], minW: Double, maxW: Double) in
+            let entries = allWeightEntries.filter { entry in
+                entry.date >= yearStart && entry.date <= effectiveEnd
+            }.sorted { $0.date < $1.date }
+            
+            let phases = allPhases.filter { phase in
+                phase.startDate <= yearEnd && phase.effectiveEndDate >= yearStart
+            }.sorted { $0.startDate < $1.startDate }
+            
+            // Use ALL entries for smoothing (full history context), then trim
+            let sorted = allWeightEntries.sorted { $0.date < $1.date }
+            let fullSmoothed = sorted.count >= 2 ? self.smoothedTrend(from: sorted, timeframe: timeframe) : []
+            
+            var smoothed = fullSmoothed.filter { $0.date >= yearStart && $0.date <= effectiveEnd }
+            
+            // Interpolate at start boundary so line continues from previous year
+            if let firstDate = smoothed.first?.date, firstDate > yearStart, !fullSmoothed.isEmpty {
+                if let startWeight = self.interpolateWeight(at: yearStart, from: fullSmoothed) {
+                    smoothed.insert(WeightLogEntry(
+                        id: UUID(), date: yearStart, weight: startWeight, movingAverage: startWeight
+                    ), at: 0)
+                }
+            }
+            
+            let weights = smoothed.map { $0.weight }
+            let rawMin = weights.min() ?? 60
+            let rawMax = weights.max() ?? 80
+            let range = rawMax - rawMin
+            let padding = max(range * 0.15, 0.5)
+            
+            return (entries, phases, smoothed, rawMin - padding, rawMax + padding)
+        }.value
         
         await MainActor.run {
-            cachedYearEntries = entries
-            cachedYearPhases = phases
-            cachedSmoothedEntries = smoothed
-            cachedMinWeight = rawMin - padding
-            cachedMaxWeight = rawMax + padding
+            cachedYearEntries = result.entries
+            cachedYearPhases = result.phases
+            cachedSmoothedEntries = result.smoothed
+            cachedMinWeight = result.minW
+            cachedMaxWeight = result.maxW
             chartDataReady = true
         }
+    }
+    
+    // Interpolate a weight value at a target date from sorted entries
+    private func interpolateWeight(at targetDate: Date, from entries: [WeightLogEntry]) -> Double? {
+        guard !entries.isEmpty else { return nil }
+        if targetDate <= entries.first!.date { return entries.first!.weight }
+        if targetDate >= entries.last!.date { return entries.last!.weight }
+        for i in 0..<(entries.count - 1) {
+            let before = entries[i], after = entries[i + 1]
+            if before.date <= targetDate && after.date >= targetDate {
+                let total = after.date.timeIntervalSince(before.date)
+                guard total > 0 else { return before.weight }
+                let t = targetDate.timeIntervalSince(before.date) / total
+                return before.weight + t * (after.weight - before.weight)
+            }
+        }
+        return entries.last!.weight
     }
     
     private func monthView(for monthIndex: Int) -> some View {
@@ -680,19 +800,20 @@ public struct YearCalendarView: View {
         context.stroke(path, with: .color(.blue), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
     }
     
-    // MARK: - Smoothing Algorithm (matching WeightChartCardView 1Y parameters)
+    // MARK: - Smoothing Algorithm (matching WeightChartCardView parameters)
     
     /// Build smooth trend using same 4-stage algorithm as WeightChartCardView
-    private func smoothedTrend(from entries: [WeightLogEntry]) -> [WeightLogEntry] {
+    private func smoothedTrend(from entries: [WeightLogEntry], timeframe: TimeFrame = .oneYear) -> [WeightLogEntry] {
         guard !entries.isEmpty else { return [] }
         
         let sorted = entries.sorted { $0.date < $1.date }
         
-        // 1Y timeframe parameters from WeightChartCardView
-        let alpha = 0.26
-        let beta = 0.11
-        let windowSize = 31
-        let turning = 0.55
+        // Use timeframe-specific smoothing parameters
+        let params = timeframe.smoothingParameters
+        let alpha = params.alpha
+        let beta = params.beta
+        let windowSize = params.windowSize
+        let turning = params.turning
         
         // STAGE 0: Build daily series with gap filling
         let daily = buildDailySeries(from: sorted)
@@ -1021,7 +1142,7 @@ public struct YearCalendarView: View {
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(.systemBackground))
+                        .fill(Color.appCardBackground)
                         .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1)
                 )
                 .position(x: x, y: max(28, y - 36))

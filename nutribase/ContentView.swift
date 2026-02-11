@@ -30,7 +30,7 @@ struct iOS26TabBarModifier: ViewModifier {
 
 struct ContentView: View {
     @State private var selectedTab: AppTab = .dashboard
-    @State private var isDashboardLoaded = false
+    @State private var isDashboardLoaded = true
     
     // Setup notification observer for tab navigation
     init() {
@@ -44,9 +44,9 @@ struct ContentView: View {
             let appearance = UITabBarAppearance()
             appearance.configureWithDefaultBackground()
             
-            // Set unselected item color to black
-            appearance.stackedLayoutAppearance.normal.iconColor = .black
-            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.black]
+            // Set unselected item color to adaptive label (black in light, white in dark)
+            appearance.stackedLayoutAppearance.normal.iconColor = .label
+            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.label]
             
             // Set selected item color to blue
             let selectedColor = UIColor(red: 0.21, green: 0.72, blue: 1.0, alpha: 1.0) // #35b8ff
@@ -73,7 +73,7 @@ struct ContentView: View {
                 // Dashboard Tab
                 Tab("Dashboard", systemImage: "square.grid.2x2", value: .dashboard) {
                     NavigationStack {
-                        DashboardView(onLoaded: { isDashboardLoaded = true })
+                        DashboardView()
                             .navigationBarHidden(true)
                     }
                 }

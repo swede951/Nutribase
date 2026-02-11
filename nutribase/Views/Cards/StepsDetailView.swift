@@ -8,11 +8,11 @@ struct StepsDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @State private var currentWeekOffset: Int = 0
@@ -210,7 +210,7 @@ struct StepsDetailView: View {
                     }
                 }
             }
-            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(Color.appBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .onChange(of: viewMode) { oldMode, newMode in
                 // Pre-cache monthly data when switching to monthly view
@@ -425,7 +425,7 @@ struct StepsDetailView: View {
         let chartData = getWeeklyChartData(for: offset)
         let maxValue = stepsGoal * 12 / 10
         let roundedMax = Int(ceil(Double(maxValue) / 1000.0) * 1000)
-        let barEmptyBackground = Color(.systemGray5).opacity(0.5)
+        let barEmptyBackground = Color.appInsetBackground
         
         return VStack(spacing: 20) {
             GeometryReader { geometry in
@@ -525,7 +525,7 @@ struct StepsDetailView: View {
                     // Target line
                     let targetY = geometry.size.height * 0.8 * (1 - CGFloat(stepsGoal) / CGFloat(roundedMax)) + 19
                     Rectangle()
-                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                        .fill(Color.primary)
                         .frame(height: 2)
                         .offset(y: targetY)
                         .allowsHitTesting(false)
@@ -549,7 +549,7 @@ struct StepsDetailView: View {
                 
                 HStack(spacing: 4) {
                     Rectangle()
-                        .fill(Color.black)
+                        .fill(Color.primary)
                         .frame(width: 12, height: 2)
                     
                     Text("Target (\(formatSteps(stepsGoal)))")
@@ -731,7 +731,7 @@ struct StepsDetailView: View {
                         yStart: .value("Start", 0),
                         yEnd: .value("End", roundedMax)
                     )
-                    .foregroundStyle(Color(.systemGray5).opacity(0.5))
+                    .foregroundStyle(Color.appInsetBackground)
                     
                     // Data bar (colored, actual value) - drawn on top
                     if item.hasData {
@@ -746,7 +746,7 @@ struct StepsDetailView: View {
                 
                 // Target line
                 RuleMark(y: .value("Target", stepsGoal))
-                    .foregroundStyle(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                    .foregroundStyle(Color.primary)
                     .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
             }
             .chartYScale(domain: 0...roundedMax)
@@ -790,7 +790,7 @@ struct StepsDetailView: View {
                 
                 HStack(spacing: 4) {
                     Rectangle()
-                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                        .fill(Color.primary)
                         .frame(width: 20, height: 2)
                     Text("Target (\(formatSteps(stepsGoal)))")
                         .font(.caption)
@@ -1025,7 +1025,7 @@ struct StepsTooltip: View {
     let target: Int
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var percentage: Int {

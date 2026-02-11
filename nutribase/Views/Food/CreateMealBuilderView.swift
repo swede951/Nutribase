@@ -1,44 +1,55 @@
 import SwiftUI
 
-struct CreateMealBuilderView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var mealName = ""
-    @State private var numberOfServings: Double = 1.0
-    @State private var selectedFoods: [FoodEntry] = []
-    @State private var showingFoodSearch = false
+// ViewModel to hold meal creation state on the heap.
+// Using @StateObject ensures this survives parent view re-renders
+// and nested sheet lifecycle events that would reset @State properties.
+class CreateMealViewModel: ObservableObject {
+    @Published var mealName = ""
+    @Published var numberOfServings: Double = 1.0
+    @Published var selectedFoods: [FoodEntry] = []
+    @Published var showingFoodSearch = false
     
-    let mealType: String
-    let selectedDate: Date
-    
-    // NumberFormatter for servings input
-    private var decimalFormatter: NumberFormatter {
+    // Stable NumberFormatter instance (avoids TextField reset from recreated formatters)
+    let decimalFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 0
         formatter.maximumFractionDigits = 2
         formatter.allowsFloats = true
         return formatter
-    }
+    }()
     
     var totalCalories: Int {
         let total = selectedFoods.reduce(0) { $0 + $1.totalCalories }
+        guard numberOfServings > 0 else { return total }
         return Int(Double(total) / numberOfServings)
     }
     
     var totalProtein: Double {
         let total = selectedFoods.reduce(into: 0.0) { $0 += $1.totalProtein }
+        guard numberOfServings > 0 else { return total }
         return total / numberOfServings
     }
     
     var totalCarbs: Double {
         let total = selectedFoods.reduce(into: 0.0) { $0 += $1.totalCarbs }
+        guard numberOfServings > 0 else { return total }
         return total / numberOfServings
     }
     
     var totalFat: Double {
         let total = selectedFoods.reduce(into: 0.0) { $0 += $1.totalFat }
+        guard numberOfServings > 0 else { return total }
         return total / numberOfServings
     }
+}
+
+struct CreateMealBuilderView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var viewModel = CreateMealViewModel()
+    
+    let mealType: String
+    let selectedDate: Date
     
     var body: some View {
         NavigationView {
@@ -51,10 +62,10 @@ struct CreateMealBuilderView: View {
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(.secondary)
                             
-                            TextField("Enter meal name", text: $mealName)
+                            TextField("Enter meal name", text: $viewModel.mealName)
                                 .font(.system(size: 17))
                                 .padding()
-                                .background(Color.white)
+                                .background(Color.appCardBackground)
                                 .cornerRadius(10)
                         }
                         .padding(.horizontal)
@@ -67,11 +78,11 @@ struct CreateMealBuilderView: View {
                                 .foregroundColor(.secondary)
                             
                             HStack {
-                                TextField("1.00", value: $numberOfServings, formatter: decimalFormatter)
+                                TextField("1.00", value: $viewModel.numberOfServings, formatter: viewModel.decimalFormatter)
                                     .keyboardType(.decimalPad)
                                     .font(.system(size: 17))
                                     .padding()
-                                    .background(Color.white)
+                                    .background(Color.appCardBackground)
                                     .cornerRadius(10)
                                     .toolbar {
                                         ToolbarItemGroup(placement: .keyboard) {
@@ -90,7 +101,7 @@ struct CreateMealBuilderView: View {
                         .padding(.horizontal)
                         
                         // Nutrition card (only show if there are foods)
-                        if !selectedFoods.isEmpty {
+                        if !viewModel.selectedFoods.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Nutrition per Serving")
                                     .font(.system(size: 14, weight: .medium))
@@ -99,7 +110,7 @@ struct CreateMealBuilderView: View {
                                 // All macros in one row
                                 HStack(spacing: 12) {
                                     MacroCircleSmall(
-                                        value: Double(totalCalories),
+                                        value: Double(viewModel.totalCalories),
                                         label: "Calories",
                                         color: LinearGradient(
                                             gradient: Gradient(colors: [CardType.calorieTarget.color, CardType.calorieTarget.color]),
@@ -109,7 +120,7 @@ struct CreateMealBuilderView: View {
                                         unit: ""
                                     )
                                     MacroCircleSmall(
-                                        value: totalProtein,
+                                        value: viewModel.totalProtein,
                                         label: "Protein",
                                         color: LinearGradient(
                                             gradient: Gradient(colors: [CardType.protein.color, CardType.protein.color]),
@@ -119,7 +130,7 @@ struct CreateMealBuilderView: View {
                                         unit: "g"
                                     )
                                     MacroCircleSmall(
-                                        value: totalCarbs,
+                                        value: viewModel.totalCarbs,
                                         label: "Carbs",
                                         color: LinearGradient(
                                             gradient: Gradient(colors: [CardType.carbs.color, CardType.carbs.color]),
@@ -129,7 +140,7 @@ struct CreateMealBuilderView: View {
                                         unit: "g"
                                     )
                                     MacroCircleSmall(
-                                        value: totalFat,
+                                        value: viewModel.totalFat,
                                         label: "Fats",
                                         color: LinearGradient(
                                             gradient: Gradient(colors: [CardType.fat.color, CardType.fat.color]),
@@ -140,7 +151,7 @@ struct CreateMealBuilderView: View {
                                     )
                                 }
                                 .padding()
-                                .background(Color.white)
+                                .background(Color.appCardBackground)
                                 .cornerRadius(10)
                             }
                             .padding(.horizontal)
@@ -149,21 +160,21 @@ struct CreateMealBuilderView: View {
                         // Foods section
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Text("Foods: \(selectedFoods.count)")
+                                Text("Foods: \(viewModel.selectedFoods.count)")
                                     .font(.system(size: 17, weight: .semibold))
                                 
                                 Spacer()
                                 
-                                Text("\(totalCalories) kcal")
+                                Text("\(viewModel.totalCalories) kcal")
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundColor(.secondary)
                             }
                             .padding(.horizontal)
                             
-                            if selectedFoods.isEmpty {
+                            if viewModel.selectedFoods.isEmpty {
                                 // Empty state
                                 Button(action: {
-                                    showingFoodSearch = true
+                                    viewModel.showingFoodSearch = true
                                 }) {
                                     VStack(spacing: 12) {
                                         Image(systemName: "fork.knife.circle")
@@ -180,10 +191,10 @@ struct CreateMealBuilderView: View {
                             } else {
                                 // List of foods
                                 VStack(spacing: 8) {
-                                    ForEach(selectedFoods) { foodEntry in
+                                    ForEach(viewModel.selectedFoods) { foodEntry in
                                         MealFoodCard(foodEntry: foodEntry, onDelete: {
-                                            if let index = selectedFoods.firstIndex(where: { $0.id == foodEntry.id }) {
-                                                selectedFoods.remove(at: index)
+                                            if let index = viewModel.selectedFoods.firstIndex(where: { $0.id == foodEntry.id }) {
+                                                viewModel.selectedFoods.remove(at: index)
                                             }
                                         })
                                     }
@@ -191,7 +202,7 @@ struct CreateMealBuilderView: View {
                                 
                                 // Add more foods button
                                 Button(action: {
-                                    showingFoodSearch = true
+                                    viewModel.showingFoodSearch = true
                                 }) {
                                     HStack {
                                         Image(systemName: "plus.circle")
@@ -201,7 +212,7 @@ struct CreateMealBuilderView: View {
                                     .foregroundColor(.blue)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
-                                    .background(Color(.systemGray6))
+                                    .background(Color.appInsetBackground)
                                     .cornerRadius(10)
                                 }
                                 .padding(.horizontal)
@@ -211,26 +222,28 @@ struct CreateMealBuilderView: View {
                     }
                 }
             }
-            .background(Color(.systemGray6))
+            .background(Color.appBackground)
             .navigationTitle("Create Meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
+                        .foregroundColor(.primary)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") { saveMeal() }
-                        .disabled(mealName.isEmpty || selectedFoods.isEmpty)
+                        .foregroundColor(.primary)
+                        .disabled(viewModel.mealName.isEmpty || viewModel.selectedFoods.isEmpty)
                 }
             }
-            .sheet(isPresented: $showingFoodSearch) {
-                MealFoodPickerView(selectedFoods: $selectedFoods, mealType: mealType, selectedDate: selectedDate)
+            .sheet(isPresented: $viewModel.showingFoodSearch) {
+                MealFoodPickerView(selectedFoods: $viewModel.selectedFoods, mealType: mealType, selectedDate: selectedDate)
             }
         }
     }
     
     private func saveMeal() {
-        let meal = SavedMeal.from(name: mealName, foodEntries: selectedFoods)
+        let meal = SavedMeal.from(name: viewModel.mealName, foodEntries: viewModel.selectedFoods, numberOfServings: viewModel.numberOfServings)
         SavedMealsManager.shared.saveMeal(meal)
         dismiss()
     }
@@ -321,7 +334,7 @@ struct MealFoodCard: View {
             }
         }
         .padding()
-        .background(Color.white)
+        .background(Color.appCardBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         .padding(.horizontal)
@@ -404,6 +417,33 @@ struct MealFoodPickerView: View {
             }
             .padding(.top, 60)
         )
+    }
+}
+
+// Self-contained button that owns its own sheet state.
+// Isolating the sheet here prevents the massive FoodSearchView body
+// from being re-evaluated when the sheet opens/closes.
+struct CreateMealButton: View {
+    let mealType: String
+    let selectedDate: Date
+    @State private var showingCreateMeal = false
+    
+    var body: some View {
+        Button(action: {
+            HapticManager.shared.lightFeedback()
+            showingCreateMeal = true
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Create Meal")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .foregroundColor(.blue)
+        }
+        .sheet(isPresented: $showingCreateMeal) {
+            CreateMealBuilderView(mealType: mealType, selectedDate: selectedDate)
+        }
     }
 }
 

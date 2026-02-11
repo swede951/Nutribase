@@ -4,7 +4,7 @@ struct GoalsMenuView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -36,6 +36,7 @@ struct GoalsMenuView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     NavigationLink(destination: StepsGoalView()) {
                         HStack(spacing: 15) {
@@ -58,6 +59,7 @@ struct GoalsMenuView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     NavigationLink(destination: NovaScoreGoalView()) {
                         HStack(spacing: 15) {
@@ -80,6 +82,7 @@ struct GoalsMenuView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -97,7 +100,7 @@ struct StepsGoalView: View {
     @State private var stepsGoal: Int = 10000
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -174,7 +177,7 @@ struct NovaScoreGoalView: View {
     @State private var nova4Limit: Int = 20
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {

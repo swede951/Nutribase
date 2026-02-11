@@ -149,7 +149,7 @@ struct LazyCardModifier: ViewModifier {
                         if !shouldRender {
                             // Placeholder while not rendered
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(Color(.systemGray6))
+                                .fill(Color.appInsetBackground)
                                 .overlay(
                                     ProgressView()
                                         .scaleEffect(0.8)
@@ -251,7 +251,7 @@ struct DeferredView<Content: View>: View {
     
     private var placeholderView: some View {
         RoundedRectangle(cornerRadius: 16)
-            .fill(Color(.systemGray6))
+            .fill(Color.appInsetBackground)
             .frame(height: 120)
     }
 }

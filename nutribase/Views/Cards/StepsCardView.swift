@@ -119,7 +119,7 @@ struct StepsCardView: View {
                                 VStack(spacing: 4) {
                                     // Grey background bar (full height)
                                     RoundedRectangle(cornerRadius: 3)
-                                        .fill(Color(.systemGray5))
+                                        .fill(Color.appInsetBackground)
                                         .frame(width: 12, height: barHeight)
                                         .overlay(
                                             GeometryReader { geometry in
@@ -147,7 +147,7 @@ struct StepsCardView: View {
                         
                         // Target line at correct position (100% of target = 83.3% up from bottom)
                         Rectangle()
-                            .fill(colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground))
+                            .fill(Color.appCardBackground)
                             .frame(height: 2)
                             .offset(y: targetLineOffset)
                     }
@@ -185,6 +185,7 @@ struct StepsCardView: View {
                         .font(.system(size: 16))
                         .padding(.horizontal, 16)
                         .padding(.top, 20)
+                        .padding(.bottom, 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())

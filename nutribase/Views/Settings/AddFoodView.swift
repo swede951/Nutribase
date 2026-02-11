@@ -116,6 +116,10 @@ struct AddFoodView: View {
     }
     
     var body: some View {
+        ZStack {
+            Color.appBackground
+                .ignoresSafeArea()
+            
         VStack(spacing: 0) {
             // Custom navigation bar (only show when presented as sheet)
             if isPresentedAsSheet {
@@ -161,6 +165,7 @@ struct AddFoodView: View {
                     ingredientsSection()
                 }
             }
+            .scrollContentBackground(.hidden)
             
             // Navigation buttons
             HStack {
@@ -194,6 +199,7 @@ struct AddFoodView: View {
                 }
             }
             .padding()
+        }
         }
         .navigationTitle(isPresentedAsSheet ? "" : currentStep.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -924,6 +930,7 @@ struct AddFoodView: View {
             // .accessibilityLabel("AI Autofill")
             // .accessibilityHint("Uses AI to automatically fill in nutrition information based on the food name and brand")
         }
+        .listRowBackground(Color.appCardBackground)
         
         Section("Serving Information") {
             TextField("Serving Size", text: $servingSize)
@@ -947,6 +954,7 @@ struct AddFoodView: View {
             TextField("Servings per Container", text: $servingsPerContainer)
                 .keyboardType(.decimalPad)
         }
+        .listRowBackground(Color.appCardBackground)
     }
     
     @ViewBuilder
@@ -975,6 +983,7 @@ struct AddFoodView: View {
             TextField("Fiber (g)", text: $fiber).keyboardType(.decimalPad)
             TextField("Sugar (g)", text: $sugar).keyboardType(.decimalPad)
         }
+        .listRowBackground(Color.appCardBackground)
         
         Section(header: 
             HStack {
@@ -1005,6 +1014,7 @@ struct AddFoodView: View {
                 .keyboardType(.decimalPad)
                 .accessibilityLabel("Iron in milligrams")
         }
+        .listRowBackground(Color.appCardBackground)
     }
     
     @ViewBuilder
@@ -1036,6 +1046,7 @@ struct AddFoodView: View {
                 .accessibilityLabel("Ingredients list")
                 .accessibilityHint("Enter ingredients separated by commas or use camera to scan")
         }
+        .listRowBackground(Color.appCardBackground)
         
         Section("Review") {
             VStack(alignment: .leading, spacing: 4) {
@@ -1063,6 +1074,7 @@ struct AddFoodView: View {
                 }
             }
         }
+        .listRowBackground(Color.appCardBackground)
     }
 }
 

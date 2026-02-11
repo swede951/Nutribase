@@ -1084,3 +1084,147 @@ exports.typesenseBarcodeLookup = functions
     );
   }
 });
+
+// ============================================================================
+// TYPESENSE SYNONYM MANAGEMENT - Server-side synonym configuration
+// ============================================================================
+
+/**
+ * Typesense Manage Synonyms - Create, list, or delete synonym groups
+ * 
+ * Configures Typesense's native multi-way synonyms so the search engine
+ * automatically expands queries server-side (e.g. "mince" also matches "ground beef").
+ * This replaces the broken client-side synonym expansion.
+ */
+exports.typesenseManageSynonyms = functions
+  .runWith({ secrets: [typesenseAdminKey] })
+  .https.onCall(async (data, context) => {
+  // Require authentication
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      'unauthenticated',
+      'User must be authenticated'
+    );
+  }
+
+  const { action, collection, synonymId, synonyms } = data;
+
+  if (!action || !['create', 'list', 'delete', 'createBatch'].includes(action)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Action must be one of: create, list, delete, createBatch'
+    );
+  }
+
+  try {
+    const apiKey = typesenseAdminKey.value();
+    const baseUrl = `${TYPESENSE_CONFIG.protocol}://${TYPESENSE_CONFIG.host}:${TYPESENSE_CONFIG.port}`;
+
+    if (action === 'list') {
+      // List all synonyms for a collection
+      const targetCollection = collection || TYPESENSE_CONFIG.productsCollection;
+      const response = await axios.get(
+        `${baseUrl}/collections/${targetCollection}/synonyms`,
+        {
+          headers: { 'X-TYPESENSE-API-KEY': apiKey },
+          timeout: 10000
+        }
+      );
+
+      console.log(`✅ Listed synonyms for ${targetCollection}: ${response.data.synonyms?.length || 0} groups`);
+      return { success: true, synonyms: response.data.synonyms || [] };
+    }
+
+    if (action === 'delete') {
+      if (!synonymId) {
+        throw new functions.https.HttpsError('invalid-argument', 'synonymId is required for delete');
+      }
+
+      const targetCollection = collection || TYPESENSE_CONFIG.productsCollection;
+      await axios.delete(
+        `${baseUrl}/collections/${targetCollection}/synonyms/${synonymId}`,
+        {
+          headers: { 'X-TYPESENSE-API-KEY': apiKey },
+          timeout: 10000
+        }
+      );
+
+      console.log(`✅ Deleted synonym ${synonymId} from ${targetCollection}`);
+      return { success: true, deleted: synonymId };
+    }
+
+    if (action === 'create') {
+      if (!synonyms || !Array.isArray(synonyms) || synonyms.length < 2) {
+        throw new functions.https.HttpsError('invalid-argument', 'synonyms must be an array with at least 2 terms');
+      }
+
+      const id = synonymId || `syn_${Date.now()}`;
+      const targetCollection = collection || TYPESENSE_CONFIG.productsCollection;
+
+      const response = await axios.put(
+        `${baseUrl}/collections/${targetCollection}/synonyms/${id}`,
+        { synonyms: synonyms },
+        {
+          headers: {
+            'X-TYPESENSE-API-KEY': apiKey,
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        }
+      );
+
+      console.log(`✅ Created synonym ${id} in ${targetCollection}: ${synonyms.join(', ')}`);
+      return { success: true, id, synonyms };
+    }
+
+    if (action === 'createBatch') {
+      // Create multiple synonym groups across one or more collections
+      if (!data.synonymGroups || !Array.isArray(data.synonymGroups)) {
+        throw new functions.https.HttpsError('invalid-argument', 'synonymGroups array is required');
+      }
+
+      const collections = data.collections || [
+        TYPESENSE_CONFIG.productsCollection,
+        TYPESENSE_CONFIG.ingredientsCollection
+      ];
+
+      let created = 0;
+      let errors = [];
+
+      for (const col of collections) {
+        for (let i = 0; i < data.synonymGroups.length; i++) {
+          const group = data.synonymGroups[i];
+          const id = `syn_${i}_${group[0].replace(/\s+/g, '_').toLowerCase()}`;
+
+          try {
+            await axios.put(
+              `${baseUrl}/collections/${col}/synonyms/${id}`,
+              { synonyms: group },
+              {
+                headers: {
+                  'X-TYPESENSE-API-KEY': apiKey,
+                  'Content-Type': 'application/json'
+                },
+                timeout: 10000
+              }
+            );
+            created++;
+          } catch (err) {
+            errors.push(`${col}/${id}: ${err.message}`);
+          }
+        }
+      }
+
+      console.log(`✅ Batch synonym creation: ${created} created, ${errors.length} errors`);
+      return { success: true, created, errors };
+    }
+
+  } catch (error) {
+    console.error('❌ Synonym management error:', error.message);
+    throw new functions.https.HttpsError(
+      'internal',
+      'Synonym management failed',
+      error.message
+    );
+  }
+});

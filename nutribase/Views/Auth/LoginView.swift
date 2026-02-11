@@ -2,10 +2,20 @@ import SwiftUI
 import AuthenticationServices
 
 struct LoginView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var authService = FirebaseAuthService.shared
     @StateObject private var analyticsService = AnalyticsService.shared
     @State private var email = ""
     @State private var password = ""
+    
+    // Adaptive colors for dark/light mode
+    private var backgroundColor: Color {
+        Color.appBackground
+    }
+    
+    private var inputFieldBackground: Color {
+        Color.appCardBackground
+    }
     @State private var isLoggingIn = false
     @State private var showingSignUp = false
     @State private var showingForgotPassword = false
@@ -15,9 +25,20 @@ struct LoginView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background that extends to all edges including safe area
-                Color(hex: "35b8ff")
+                // Adaptive background that extends to all edges
+                backgroundColor
                     .ignoresSafeArea()
+                
+                // Blue gradient fade at top (like dashboard)
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "#35b8ff"),
+                        backgroundColor
+                    ]),
+                    startPoint: .top,
+                    endPoint: UnitPoint(x: 0.5, y: 0.55)
+                )
+                .ignoresSafeArea()
                 
                 VStack(spacing: 40) {
                     // Logo and app name
@@ -41,14 +62,16 @@ struct LoginView: View {
                             .autocapitalization(.none)
                             .keyboardType(.emailAddress)
                             .padding()
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
+                            .background(inputFieldBackground)
+                            .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                         
                         // Password field
                         SecureField("Password", text: $password)
                             .padding()
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
+                            .background(inputFieldBackground)
+                            .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                         
                         // Forgot Password link
                         HStack {
@@ -56,7 +79,7 @@ struct LoginView: View {
                             Button(action: { showingForgotPassword = true }) {
                                 Text("Forgot Password?")
                                     .font(.subheadline)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(Color(hex: "#35b8ff"))
                             }
                         }
                         .padding(.top, -8)
@@ -65,7 +88,7 @@ struct LoginView: View {
                         Button(action: login) {
                             if isLoggingIn {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             } else {
                                 Text("Log In")
                                     .fontWeight(.semibold)
@@ -76,10 +99,11 @@ struct LoginView: View {
                         .padding()
                         .background(
                             (email.isEmpty || password.isEmpty || isLoggingIn) ?
-                                Color(UIColor.black).opacity(0.8) : Color(UIColor.black)
+                                Color(hex: "#35b8ff").opacity(0.6) : Color(hex: "#35b8ff")
                         )
                         .foregroundColor(.white)
-                        .cornerRadius(8)
+                        .cornerRadius(12)
+                        .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
                         
                         // Inline error message
                         if let error = errorMessage {
@@ -88,25 +112,25 @@ struct LoginView: View {
                                     .foregroundColor(.red)
                                 Text(error)
                                     .font(.subheadline)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.primary)
                                     .multilineTextAlignment(.leading)
                             }
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.red.opacity(0.3))
-                            .cornerRadius(8)
+                            .background(Color.red.opacity(0.2))
+                            .cornerRadius(12)
                         }
                         
                         // Divider with "or"
                         HStack {
                             Rectangle()
-                                .fill(Color.white.opacity(0.3))
+                                .fill(Color.secondary.opacity(0.3))
                                 .frame(height: 1)
                             Text("or")
-                                .foregroundColor(.white)
+                                .foregroundColor(.secondary)
                                 .padding(.horizontal, 8)
                             Rectangle()
-                                .fill(Color.white.opacity(0.3))
+                                .fill(Color.secondary.opacity(0.3))
                                 .frame(height: 1)
                         }
                         .padding(.vertical, 8)
@@ -121,13 +145,13 @@ struct LoginView: View {
                             onCompletion: handleAppleSignIn
                         )
                         .frame(height: 50)
-                        .cornerRadius(8)
-                        .signInWithAppleButtonStyle(.black)
+                        .cornerRadius(12)
+                        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                         
                         // Sign up button
                         Button(action: { showingSignUp = true }) {
                             Text("Don't have an account? Sign Up")
-                                .foregroundColor(.white)
+                                .foregroundColor(Color(hex: "#35b8ff"))
                         }
                         .padding(.top, 8)
                     }

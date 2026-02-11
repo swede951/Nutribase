@@ -22,7 +22,7 @@ struct FixedSizeCard<Content: View>: View {
     
     /// Card background: white in light mode, grey in dark mode
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     init(title: String, showInfoButton: Bool = false, onInfoTap: (() -> Void)? = nil, onCardTap: (() -> Void)? = nil, customHeight: CGFloat? = nil, titleAction: (() -> Void)? = nil, titleActionIcon: String? = nil, @ViewBuilder content: () -> Content) {
@@ -50,14 +50,16 @@ struct FixedSizeCard<Content: View>: View {
             .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
             .overlay(
                 ZStack(alignment: .topLeading) {
-                    // CONTENT AREA - Full card space
+                    // CONTENT AREA - Full card space, clipped to prevent overflow
                     VStack {
                         Spacer(minLength: 28) // Space for title
                         content
                             .padding(.horizontal, 16)
                             .padding(.bottom, 4)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipped()
                     }
+                    .clipped()
                     
                     // TITLE - Overlaid on top with transparent background
                     HStack {

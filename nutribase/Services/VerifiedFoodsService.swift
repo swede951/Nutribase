@@ -639,6 +639,8 @@ class VerifiedFoodsService: ObservableObject {
     }
     
     /// Helper to create a verified FoodItem with all required fields
+    /// Note: Input nutrition values are per serving (servingGrams), but we normalize to per 100g
+    /// to match the app's standard calculation model where all nutrition is stored per 100g
     private func createVerifiedFood(
         name: String,
         servingSize: String,
@@ -654,14 +656,27 @@ class VerifiedFoodsService: ObservableObject {
         novaScore: Int,
         nutriScore: String
     ) -> FoodItem {
+        // Normalize all nutrition values to per 100g
+        // Input values are per serving (servingGrams), scale to 100g equivalent
+        let scaleFactor = servingGrams > 0 ? 100.0 / servingGrams : 1.0
+        
+        let caloriesPer100g = Int(round(Double(calories) * scaleFactor))
+        let proteinPer100g = protein * scaleFactor
+        let carbsPer100g = carbs * scaleFactor
+        let fatPer100g = fat * scaleFactor
+        let fiberPer100g = fiber * scaleFactor
+        let sugarPer100g = sugar * scaleFactor
+        let sodiumPer100g = sodium * scaleFactor
+        let saturatedFatPer100g = saturatedFat * scaleFactor
+        
         return FoodItem(
             name: name,
             brandName: nil,
             barcode: nil,
-            calories: calories,
-            protein: protein,
-            carbs: carbs,
-            fat: fat,
+            calories: caloriesPer100g,
+            protein: proteinPer100g,
+            carbs: carbsPer100g,
+            fat: fatPer100g,
             novaScore: novaScore,
             novaScoreIsEstimated: false,
             nutriScoreGrade: nutriScore.lowercased(),
@@ -669,10 +684,10 @@ class VerifiedFoodsService: ObservableObject {
             servingSize: servingSize,
             servingsPerPackage: nil,
             servingType: "serving",
-            fiber: fiber,
-            sugar: sugar,
-            sodium: sodium,
-            saturatedFat: saturatedFat,
+            fiber: fiberPer100g,
+            sugar: sugarPer100g,
+            sodium: sodiumPer100g,
+            saturatedFat: saturatedFatPer100g,
             ingredients: nil,
             cachedServingSize: servingGrams,
             cachedServingUnit: "g",
@@ -682,7 +697,8 @@ class VerifiedFoodsService: ObservableObject {
             purchasePlaces: nil,
             origins: nil,
             isMeal: false,
-            isVerified: true
+            isVerified: true,
+            dataSource: "verified"
         )
     }
 }

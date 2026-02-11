@@ -2,6 +2,10 @@ import SwiftUI
 
 struct TermsOfServiceView: View {
     var body: some View {
+        ZStack {
+            Color.appBackground
+                .ignoresSafeArea()
+            
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Terms of Service")
@@ -35,9 +39,10 @@ struct TermsOfServiceView: View {
             }
             .padding()
         }
+        }
         .navigationTitle("Terms of Service")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }

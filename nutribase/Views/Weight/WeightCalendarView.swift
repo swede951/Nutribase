@@ -51,6 +51,7 @@ struct WeightCalendarView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             })
         }
@@ -127,7 +128,7 @@ struct WeightEntryCardView: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
+                .fill(Color.appInsetBackground)
         )
     }
 }
@@ -458,7 +459,7 @@ struct WeightEntryLegendView: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.appInsetBackground)
             )
         }
     }

@@ -9,11 +9,11 @@ struct SettingsView: View {
     @StateObject private var analyticsService = AnalyticsService.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -189,7 +189,7 @@ struct SettingsSection<Content: View>: View {
     let content: Content
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     init(title: String, @ViewBuilder content: () -> Content) {

@@ -20,6 +20,7 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
     case protein = "Protein"
     case carbs = "Carbs"
     case fat = "Fat"
+    case fibre = "Fibre"
     // case water = "Water" // TEMPORARILY DISABLED
     case activity = "Activity"
     case dailyGoals = "Daily Goals"
@@ -46,6 +47,8 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
             return "leaf.fill"
         case .fat:
             return "drop.fill"
+        case .fibre:
+            return "bolt.fill"
         // case .water: // TEMPORARILY DISABLED
         //     return "drop.fill"
         case .activity:
@@ -75,6 +78,8 @@ enum CardType: String, CaseIterable, Identifiable, Codable {
             return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow to match daily goals
         case .fat:
             return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink to match daily goals
+        case .fibre:
+            return Color(red: 0.4, green: 0.7, blue: 0.4) // Earthy green for fibre
         // case .water: // TEMPORARILY DISABLED
         //     return .blue
         case .activity:

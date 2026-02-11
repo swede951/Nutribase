@@ -2,9 +2,19 @@ import SwiftUI
 import FirebaseAuth
 
 struct ForgotPasswordView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var email = ""
     @State private var isLoading = false
+    
+    // Adaptive colors for dark/light mode
+    private var backgroundColor: Color {
+        Color.appBackground
+    }
+    
+    private var inputFieldBackground: Color {
+        Color.appCardBackground
+    }
     @State private var showingAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -13,8 +23,20 @@ struct ForgotPasswordView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color(.systemGray6)
+                // Adaptive background
+                backgroundColor
                     .ignoresSafeArea()
+                
+                // Blue gradient fade at top
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "#35b8ff"),
+                        backgroundColor
+                    ]),
+                    startPoint: .top,
+                    endPoint: UnitPoint(x: 0.5, y: 0.4)
+                )
+                .ignoresSafeArea()
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -49,8 +71,9 @@ struct ForgotPasswordView: View {
                                 .autocapitalization(.none)
                                 .keyboardType(.emailAddress)
                                 .padding()
-                                .background(Color(.systemBackground))
+                                .background(inputFieldBackground)
                                 .cornerRadius(12)
+                                .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                         }
                         .padding(.horizontal)
                         
@@ -106,6 +129,7 @@ struct ForgotPasswordView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
             .alert(alertTitle, isPresented: $showingAlert) {

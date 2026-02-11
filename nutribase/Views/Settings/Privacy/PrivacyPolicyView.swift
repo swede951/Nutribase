@@ -2,6 +2,10 @@ import SwiftUI
 
 struct PrivacyPolicyView: View {
     var body: some View {
+        ZStack {
+            Color.appBackground
+                .ignoresSafeArea()
+            
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Privacy Policy")
@@ -40,9 +44,10 @@ struct PrivacyPolicyView: View {
             }
             .padding()
         }
+        }
         .navigationTitle("Privacy Policy")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }

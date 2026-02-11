@@ -176,6 +176,20 @@ class TypesenseService: ObservableObject {
                     
                     // Debug removed for performance
                     
+                    // Extract additional nutrients
+                    let fiber: Double? = {
+                        if let num = nutrientsText["fiber"] as? NSNumber { return num.doubleValue }
+                        if let val = nutrientsText["fiber"] as? Double { return val }
+                        if let val = document["fiber"] as? Double { return val }
+                        return nil
+                    }()
+                    let sugar: Double? = {
+                        if let num = nutrientsText["sugar"] as? NSNumber { return num.doubleValue }
+                        if let val = nutrientsText["sugar"] as? Double { return val }
+                        if let val = document["sugar"] as? Double { return val }
+                        return nil
+                    }()
+                    
                     // Create FoodItem with required parameters
                     let foodItem = FoodItem(
                         name: name,
@@ -189,7 +203,9 @@ class TypesenseService: ObservableObject {
                         nutriScoreGrade: nutriScoreGrade,
                         servingSize: servingSize,
                         servingsPerPackage: servingsPerPackage,
-                        servingType: servingType
+                        servingType: servingType,
+                        fiber: fiber,
+                        sugar: sugar
                     )
                     
                     completion(foodItem, nil)
@@ -347,7 +363,9 @@ class TypesenseService: ObservableObject {
                             nutriScoreGrade: nutriScoreGrade,
                             servingSize: servingSize,
                             servingsPerPackage: servingsPerPackage,
-                            servingType: servingType
+                            servingType: servingType,
+                            fiber: nutrients["fiber"],
+                            sugar: nutrients["sugar"]
                         )
                     }
                     
@@ -657,6 +675,20 @@ class TypesenseService: ObservableObject {
                     
                     // Debug removed for performance
                     
+                    // Extract additional nutrients
+                    let fiber: Double? = {
+                        if let num = nutrientsText["fiber"] as? NSNumber { return num.doubleValue }
+                        if let val = nutrientsText["fiber"] as? Double { return val }
+                        if let val = document["fiber"] as? Double { return val }
+                        return nil
+                    }()
+                    let sugar: Double? = {
+                        if let num = nutrientsText["sugar"] as? NSNumber { return num.doubleValue }
+                        if let val = nutrientsText["sugar"] as? Double { return val }
+                        if let val = document["sugar"] as? Double { return val }
+                        return nil
+                    }()
+                    
                     // Create FoodItem with required parameters
                     let foodItem = FoodItem(
                         name: name,
@@ -670,7 +702,9 @@ class TypesenseService: ObservableObject {
                         nutriScoreGrade: nutriScoreGrade,
                         servingSize: servingSize,
                         servingsPerPackage: servingsPerPackage,
-                        servingType: servingType
+                        servingType: servingType,
+                        fiber: fiber,
+                        sugar: sugar
                     )
                     
                     completion(foodItem, nil)

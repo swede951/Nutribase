@@ -39,6 +39,7 @@ enum AddPhaseFlowStep: Int, CaseIterable {
 // MARK: - Add Phase Flow View
 struct AddPhaseFlowView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var phaseManager = WeightPhaseManager.shared
     @StateObject private var weightManager = WeightLogManager.shared
     @ObservedObject private var userProfile = UserProfile.shared
@@ -58,11 +59,19 @@ struct AddPhaseFlowView: View {
     @State private var customGoalWeight: String = ""
     @State private var customColor: PhaseColor = .blue
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
+    
     var body: some View {
         NavigationView {
             ZStack {
                 // Background
-                Color(hex: "#F0F1F4")
+                viewBackground
                     .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
@@ -104,7 +113,7 @@ struct AddPhaseFlowView: View {
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Color(hex: "#F0F1F4"), for: .navigationBar)
+            .toolbarBackground(viewBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -112,11 +121,13 @@ struct AddPhaseFlowView: View {
                         Button("Cancel") {
                             dismiss()
                         }
+                        .foregroundColor(.primary)
                     } else {
                         Button(action: handleBack) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 16, weight: .semibold))
                         }
+                        .foregroundColor(.primary)
                     }
                 }
             }
@@ -454,7 +465,7 @@ struct AddPhaseFlowView: View {
                         .padding(16)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white)
+                                .fill(cardBackground)
                         )
                 }
                 .padding(.horizontal, 24)
@@ -505,7 +516,7 @@ struct AddPhaseFlowView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
+                            .fill(cardBackground)
                     )
                 }
                 .padding(.horizontal, 24)
@@ -537,7 +548,7 @@ struct AddPhaseFlowView: View {
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
+                            .fill(cardBackground)
                     )
                 }
                 .padding(.horizontal, 24)
@@ -570,7 +581,7 @@ struct AddPhaseFlowView: View {
                     .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
+                            .fill(cardBackground)
                     )
                 }
                 .padding(.horizontal, 24)
@@ -895,9 +906,14 @@ struct AddPhaseFlowView: View {
 
 // MARK: - Phase Goal Card
 struct PhaseGoalCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let goal: HealthGoal
     let isSelected: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var motivationalText: String {
         switch goal {
@@ -943,7 +959,7 @@ struct PhaseGoalCard: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
@@ -957,10 +973,15 @@ struct PhaseGoalCard: View {
 
 // MARK: - Phase Template Card
 struct PhaseTemplateCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let template: PhaseTemplate
     let isSelected: Bool
     let currentWeight: Double?
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var goalWeight: Double? {
         guard let current = currentWeight, template.weeklyChangeKg != 0, template.durationWeeks > 0 else {
@@ -1050,7 +1071,7 @@ struct PhaseTemplateCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
@@ -1180,7 +1201,7 @@ struct PhaseAwareCalendarView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(Color.appCardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }

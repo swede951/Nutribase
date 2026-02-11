@@ -57,11 +57,11 @@ struct BasicFoodEntryView: View {
     @StateObject private var visibilityService = MetricVisibilityService.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Optional initial values for cached serving information
@@ -128,33 +128,37 @@ struct BasicFoodEntryView: View {
     }
     
     // Calculate proportional fill for individual macronutrient circles
-    // Returns 0 if the gram value is 0 (empty circle)
+    // Uses totalMacroCalories as denominator to match the segmented calories circle
+    // This ensures the 3 macro circles visually add up to match the calories circle
     private func proteinProportion(_ refreshID: UUID) -> Double {
         let protein = totalProtein(refreshID)
         if protein <= 0 { return 0.0 }
         let proteinCalories = protein * 4
-        let totalCals = Double(totalCalories(refreshID))
-        return totalCals > 0 ? min(proteinCalories / totalCals, 1.0) : 0.0
+        let totalMacroCals = totalMacroCalories(refreshID)
+        return totalMacroCals > 0 ? proteinCalories / totalMacroCals : 0.0
     }
     
     private func carbsProportion(_ refreshID: UUID) -> Double {
         let carbs = totalCarbs(refreshID)
         if carbs <= 0 { return 0.0 }
         let carbsCalories = carbs * 4
-        let totalCals = Double(totalCalories(refreshID))
-        return totalCals > 0 ? min(carbsCalories / totalCals, 1.0) : 0.0
+        let totalMacroCals = totalMacroCalories(refreshID)
+        return totalMacroCals > 0 ? carbsCalories / totalMacroCals : 0.0
     }
     
     private func fatProportion(_ refreshID: UUID) -> Double {
         let fat = totalFat(refreshID)
         if fat <= 0 { return 0.0 }
         let fatCalories = fat * 9
-        let totalCals = Double(totalCalories(refreshID))
-        return totalCals > 0 ? min(fatCalories / totalCals, 1.0) : 0.0
+        let totalMacroCals = totalMacroCalories(refreshID)
+        return totalMacroCals > 0 ? fatCalories / totalMacroCals : 0.0
     }
     
     // Helper functions for segmented calories circle
     // Normalized to always fill the entire circle (no gaps)
+    // Cap compensation: with 6pt lineWidth on ~29.5pt radius, round cap extends ~1.6% each end
+    private let capCompensation: Double = 0.016
+    
     private func totalMacroCalories(_ refreshID: UUID) -> Double {
         let proteinCals = totalProtein(refreshID) * 4
         let carbsCals = totalCarbs(refreshID) * 4
@@ -162,11 +166,24 @@ struct BasicFoodEntryView: View {
         return proteinCals + carbsCals + fatCals
     }
     
+    // Segment start/end with compensation for round caps
+    // Each segment is shortened by capCompensation at the end to prevent overlap
+    private func proteinCaloriesStart(_ refreshID: UUID) -> Double {
+        return capCompensation // Start slightly after 0 to account for round start cap
+    }
+    
     private func proteinCaloriesEnd(_ refreshID: UUID) -> Double {
         let total = totalMacroCalories(refreshID)
         if total <= 0 { return 0.0 }
         let proteinCals = totalProtein(refreshID) * 4
-        return proteinCals / total
+        let result = proteinCals / total
+        // Subtract cap compensation so the round end doesn't extend into next segment
+        return max(capCompensation, result - capCompensation)
+    }
+    
+    private func carbsCaloriesStart(_ refreshID: UUID) -> Double {
+        // Start where protein ends, plus small gap for visual separation
+        return proteinCaloriesEnd(refreshID) + capCompensation * 2
     }
     
     private func carbsCaloriesEnd(_ refreshID: UUID) -> Double {
@@ -174,14 +191,34 @@ struct BasicFoodEntryView: View {
         if total <= 0 { return 0.0 }
         let proteinCals = totalProtein(refreshID) * 4
         let carbsCals = totalCarbs(refreshID) * 4
-        return (proteinCals + carbsCals) / total
+        let result = (proteinCals + carbsCals) / total
+        return max(carbsCaloriesStart(refreshID) + capCompensation, result - capCompensation)
+    }
+    
+    private func fatCaloriesStart(_ refreshID: UUID) -> Double {
+        return carbsCaloriesEnd(refreshID) + capCompensation * 2
     }
     
     private func fatCaloriesEnd(_ refreshID: UUID) -> Double {
-        // Always returns 1.0 to fill the circle completely
-        // (or 0 if no macros at all)
         let total = totalMacroCalories(refreshID)
-        return total > 0 ? 1.0 : 0.0
+        // End slightly before 1.0 to account for round end cap
+        return total > 0 ? (1.0 - capCompensation) : 0.0
+    }
+    
+    // Simple endpoints for calories circle (no cap compensation, uses .butt)
+    private func proteinCaloriesEndSimple(_ refreshID: UUID) -> Double {
+        let total = totalMacroCalories(refreshID)
+        if total <= 0 { return 0.0 }
+        let proteinCals = totalProtein(refreshID) * 4
+        return proteinCals / total
+    }
+    
+    private func carbsCaloriesEndSimple(_ refreshID: UUID) -> Double {
+        let total = totalMacroCalories(refreshID)
+        if total <= 0 { return 0.0 }
+        let proteinCals = totalProtein(refreshID) * 4
+        let carbsCals = totalCarbs(refreshID) * 4
+        return (proteinCals + carbsCals) / total
     }
 
     // Get color for the NOVA score
@@ -338,14 +375,76 @@ struct BasicFoodEntryView: View {
         )
     }
     
+    // Additional Information scaled values
+    private func totalFiber(_ refreshID: UUID) -> Double? {
+        guard let fiber = currentFood.fiber else { return nil }
+        return NutritionCalculator.calculateMacro(
+            macroValue: fiber,
+            servingSize: servingSize,
+            servingUnit: servingUnitString,
+            numberOfServings: numberOfServings,
+            isOriginalServingSize: isUsingOriginalServingSize,
+            servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
+            servingQuantity: food.servingsPerPackage
+        )
+    }
+    
+    private func totalSugar(_ refreshID: UUID) -> Double? {
+        guard let sugar = currentFood.sugar else { return nil }
+        return NutritionCalculator.calculateMacro(
+            macroValue: sugar,
+            servingSize: servingSize,
+            servingUnit: servingUnitString,
+            numberOfServings: numberOfServings,
+            isOriginalServingSize: isUsingOriginalServingSize,
+            servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
+            servingQuantity: food.servingsPerPackage
+        )
+    }
+    
+    private func totalSodium(_ refreshID: UUID) -> Double? {
+        guard let sodium = currentFood.sodium else { return nil }
+        return NutritionCalculator.calculateMacro(
+            macroValue: sodium,
+            servingSize: servingSize,
+            servingUnit: servingUnitString,
+            numberOfServings: numberOfServings,
+            isOriginalServingSize: isUsingOriginalServingSize,
+            servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
+            servingQuantity: food.servingsPerPackage
+        )
+    }
+    
+    private func totalSaturatedFat(_ refreshID: UUID) -> Double? {
+        guard let saturatedFat = currentFood.saturatedFat else { return nil }
+        return NutritionCalculator.calculateMacro(
+            macroValue: saturatedFat,
+            servingSize: servingSize,
+            servingUnit: servingUnitString,
+            numberOfServings: numberOfServings,
+            isOriginalServingSize: isUsingOriginalServingSize,
+            servingDescription: isUsingOriginalServingSize ? food.servingSize : nil,
+            servingQuantity: food.servingsPerPackage
+        )
+    }
+    
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 16) {
                 // Food name and brand
                 VStack(alignment: .center, spacing: 4) {
-                    Text(currentFood.name)
-                        .font(.custom("Montserrat-Bold", size: 28))
-                        .multilineTextAlignment(.center)
+                    HStack(spacing: 6) {
+                        Text(currentFood.name)
+                            .font(.custom("Montserrat-Bold", size: 28))
+                            .multilineTextAlignment(.center)
+                        
+                        // Verified badge for curated foods
+                        if currentFood.isVerified {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundColor(.green)
+                                .font(.system(size: 18))
+                        }
+                    }
                     
                     if let brandName = currentFood.brandName, !brandName.isEmpty {
                         Text(brandName)
@@ -506,7 +605,7 @@ struct BasicFoodEntryView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Color(.systemGray6))
+                            .background(Color.appInsetBackground)
                             .cornerRadius(8)
                         }
                     }
@@ -631,7 +730,7 @@ struct BasicFoodEntryView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Color(.systemGray6))
+                            .background(Color.appInsetBackground)
                             .cornerRadius(8)
                         }
                     }
@@ -648,7 +747,7 @@ struct BasicFoodEntryView: View {
                         .frame(width: 80)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color(.systemGray6))
+                        .background(Color.appInsetBackground)
                         .cornerRadius(8)
                         .focused($isServingsFieldFocused)
                         .onChange(of: servingsText) { _, newValue in
@@ -740,8 +839,8 @@ struct BasicFoodEntryView: View {
                             // Protein segment (green) - only if protein visible
                             if visibilityService.showProtein {
                                 Circle()
-                                    .trim(from: 0.0, to: proteinCaloriesEnd(refreshID))
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                    .trim(from: 0.0, to: proteinCaloriesEndSimple(refreshID))
+                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                     .foregroundColor(Color.green)
                                     .rotationEffect(Angle(degrees: 270.0))
                             }
@@ -749,8 +848,8 @@ struct BasicFoodEntryView: View {
                             // Carbs segment (orange) - only if carbs visible
                             if visibilityService.showCarbs {
                                 Circle()
-                                    .trim(from: proteinCaloriesEnd(refreshID), to: carbsCaloriesEnd(refreshID))
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                    .trim(from: proteinCaloriesEndSimple(refreshID), to: carbsCaloriesEndSimple(refreshID))
+                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                     .foregroundColor(Color.orange)
                                     .rotationEffect(Angle(degrees: 270.0))
                             }
@@ -758,8 +857,8 @@ struct BasicFoodEntryView: View {
                             // Fats segment (pink) - only if fat visible
                             if visibilityService.showFat {
                                 Circle()
-                                    .trim(from: carbsCaloriesEnd(refreshID), to: fatCaloriesEnd(refreshID))
-                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                    .trim(from: carbsCaloriesEndSimple(refreshID), to: 1.0)
+                                    .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                     .foregroundColor(Color.pink)
                                     .rotationEffect(Angle(degrees: 270.0))
                             }
@@ -795,11 +894,11 @@ struct BasicFoodEntryView: View {
                                     
                                     Circle()
                                         .trim(from: 0.0, to: proteinProportion(refreshID))
-                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                         .foregroundColor(Color.green) // Green for protein
                                         .rotationEffect(Angle(degrees: 270.0))
                                     
-                                    Text(String(format: "%.0fg", totalProtein(refreshID)))
+                                    Text(String(format: "%.1fg", totalProtein(refreshID)))
                                         .font(.custom("Montserrat-SemiBold", size: 14))
                                         .foregroundColor(.primary)
                                 }
@@ -823,11 +922,11 @@ struct BasicFoodEntryView: View {
                                     
                                     Circle()
                                         .trim(from: 0.0, to: carbsProportion(refreshID))
-                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                         .foregroundColor(Color.orange) // Orange for carbs
                                         .rotationEffect(Angle(degrees: 270.0))
                                     
-                                    Text(String(format: "%.0fg", totalCarbs(refreshID)))
+                                    Text(String(format: "%.1fg", totalCarbs(refreshID)))
                                         .font(.custom("Montserrat-SemiBold", size: 14))
                                         .foregroundColor(.primary)
                                 }
@@ -851,11 +950,11 @@ struct BasicFoodEntryView: View {
                                     
                                     Circle()
                                         .trim(from: 0.0, to: fatProportion(refreshID))
-                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                        .stroke(style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                                         .foregroundColor(Color.pink) // Pink for fats
                                         .rotationEffect(Angle(degrees: 270.0))
                                     
-                                    Text(String(format: "%.0fg", totalFat(refreshID)))
+                                    Text(String(format: "%.1fg", totalFat(refreshID)))
                                         .font(.custom("Montserrat-SemiBold", size: 14))
                                         .foregroundColor(.primary)
                                 }
@@ -903,15 +1002,14 @@ struct BasicFoodEntryView: View {
                     
                     // Expandable content
                     if showAdditionalInfo {
-                        let _ = print("🔍 BasicFoodEntryView - Additional Info Values:")
-                        let _ = print("   fiber: \(food.fiber ?? -1)")
-                        let _ = print("   sugar: \(food.sugar ?? -1)")
-                        let _ = print("   sodium: \(food.sodium ?? -1)")
-                        let _ = print("   saturatedFat: \(food.saturatedFat ?? -1)")
+                        let scaledFiber = totalFiber(refreshID)
+                        let scaledSugar = totalSugar(refreshID)
+                        let scaledSodium = totalSodium(refreshID)
+                        let scaledSaturatedFat = totalSaturatedFat(refreshID)
                         
                         VStack(alignment: .leading, spacing: 12) {
                             // Fiber
-                            if let fiber = food.fiber, fiber > 0 {
+                            if let fiber = scaledFiber, fiber > 0 {
                                 HStack {
                                     Text("Fiber")
                                         .font(.system(size: 16, weight: .medium))
@@ -923,7 +1021,7 @@ struct BasicFoodEntryView: View {
                             }
                         
                         // Sugar
-                        if let sugar = food.sugar, sugar > 0 {
+                        if let sugar = scaledSugar, sugar > 0 {
                             HStack {
                                 Text("Sugar")
                                     .font(.system(size: 16, weight: .medium))
@@ -935,7 +1033,7 @@ struct BasicFoodEntryView: View {
                         }
                         
                         // Sodium
-                        if let sodium = food.sodium, sodium > 0 {
+                        if let sodium = scaledSodium, sodium > 0 {
                             HStack {
                                 Text("Sodium")
                                     .font(.system(size: 16, weight: .medium))
@@ -947,7 +1045,7 @@ struct BasicFoodEntryView: View {
                         }
                         
                         // Saturated Fat
-                        if let saturatedFat = food.saturatedFat, saturatedFat > 0 {
+                        if let saturatedFat = scaledSaturatedFat, saturatedFat > 0 {
                             HStack {
                                 Text("Saturated Fat")
                                     .font(.system(size: 16, weight: .medium))
@@ -959,7 +1057,7 @@ struct BasicFoodEntryView: View {
                         }
                         
                         // Show a message if no additional info is available
-                        if (food.fiber ?? 0) <= 0 && (food.sugar ?? 0) <= 0 && (food.sodium ?? 0) <= 0 && (food.saturatedFat ?? 0) <= 0 {
+                        if (scaledFiber ?? 0) <= 0 && (scaledSugar ?? 0) <= 0 && (scaledSodium ?? 0) <= 0 && (scaledSaturatedFat ?? 0) <= 0 {
                             Text("No additional nutritional information available")
                                 .font(.system(size: 14))
                                 .foregroundColor(.secondary)
@@ -1363,29 +1461,43 @@ struct BasicFoodEntryView: View {
             unitString = selectedUnit.rawValue
         }
         
+        // Use currentFood to include refreshed data (fiber, sugar, etc.) if available
+        let sourceFood = currentFood
+        
         // Calculate calories from macros if food has 0 calories but has macro data
         let effectiveCalories: Int
-        if food.calories == 0 && (food.protein > 0 || food.carbs > 0 || food.fat > 0) {
-            let calculatedCalories = (food.protein * 4.0) + (food.carbs * 4.0) + (food.fat * 9.0)
+        if sourceFood.calories == 0 && (sourceFood.protein > 0 || sourceFood.carbs > 0 || sourceFood.fat > 0) {
+            let calculatedCalories = (sourceFood.protein * 4.0) + (sourceFood.carbs * 4.0) + (sourceFood.fat * 9.0)
             effectiveCalories = Int(round(calculatedCalories))
         } else {
-            effectiveCalories = food.calories
+            effectiveCalories = sourceFood.calories
         }
         
         // Create food item with corrected calories for the food log
         let foodForLog = FoodItem(
-            name: food.name,
-            brandName: food.brandName,
-            barcode: food.barcode,
+            name: sourceFood.name,
+            brandName: sourceFood.brandName,
+            barcode: sourceFood.barcode,
             calories: effectiveCalories,
-            protein: food.protein,
-            carbs: food.carbs,
-            fat: food.fat,
-            novaScore: food.novaScore,
-            nutriScoreGrade: food.nutriScoreGrade,
-            servingSize: food.servingSize,
-            servingsPerPackage: food.servingsPerPackage,
-            servingType: food.servingType
+            protein: sourceFood.protein,
+            carbs: sourceFood.carbs,
+            fat: sourceFood.fat,
+            novaScore: sourceFood.novaScore,
+            novaScoreIsEstimated: sourceFood.novaScoreIsEstimated,
+            nutriScoreGrade: sourceFood.nutriScoreGrade,
+            nutriScoreIsEstimated: sourceFood.nutriScoreIsEstimated,
+            servingSize: sourceFood.servingSize,
+            servingsPerPackage: sourceFood.servingsPerPackage,
+            servingType: sourceFood.servingType,
+            fiber: sourceFood.fiber,
+            sugar: sourceFood.sugar,
+            sodium: sourceFood.sodium,
+            saturatedFat: sourceFood.saturatedFat,
+            ingredients: sourceFood.ingredients,
+            countries: sourceFood.countries,
+            purchasePlaces: sourceFood.purchasePlaces,
+            origins: sourceFood.origins,
+            isVerified: sourceFood.isVerified
         )
         
         // Add the food to the FoodLogManager (skip if creating a meal)
@@ -1515,12 +1627,13 @@ struct BasicFoodEntryView: View {
             unitString = selectedUnit == .milliliter ? "ml" : "g"
         }
         
-        // Update in FoodLogManager (note: this only updates serving info, not the food item itself)
+        // Update in FoodLogManager - pass refreshed food data if available (includes fiber, sugar, etc.)
         FoodLogManager.shared.updateEntry(
             id: entry.id,
             servingSize: servingSize,
             servingUnit: unitString,
-            numberOfServings: numberOfServings
+            numberOfServings: numberOfServings,
+            refreshedFoodItem: refreshedFood
         )
         
         // Dismiss the view

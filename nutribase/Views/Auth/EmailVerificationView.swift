@@ -74,7 +74,7 @@ struct EmailVerificationView: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.appInsetBackground)
             )
             .padding(.horizontal)
             .padding(.top, 8)

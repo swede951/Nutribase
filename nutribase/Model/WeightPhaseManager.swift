@@ -212,6 +212,17 @@ class WeightPhaseManager: ObservableObject {
     // MARK: - Public Methods
     
     func addPhase(_ phase: WeightPhase) {
+        // Prevent duplicates: skip if a phase with the same name and overlapping dates already exists
+        let isDuplicate = phases.contains { existing in
+            existing.name == phase.name &&
+            existing.startDate <= phase.endDate &&
+            existing.endDate >= phase.startDate
+        }
+        if isDuplicate {
+            print("[WeightPhaseManager] Skipping duplicate phase: \(phase.name)")
+            return
+        }
+        
         phases.append(phase)
         phases.sort { $0.startDate < $1.startDate }
         savePhasesToLocal()

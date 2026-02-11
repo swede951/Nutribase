@@ -84,7 +84,7 @@ struct WeightGoalsView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -525,7 +525,7 @@ struct WeightGoalsView: View {
                     .padding(.vertical, 12)
                     .background(
                         Capsule()
-                            .fill(Color.white)
+                            .fill(Color.appCardBackground)
                             .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
                     )
                     .padding(.bottom, 100)

@@ -281,6 +281,7 @@ struct WeightChartCardView: View {
                         .font(.system(size: 16))
                         .padding(.horizontal, 16)
                         .padding(.top, 20)
+                        .padding(.bottom, 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -883,11 +884,11 @@ struct WeightChartDetailView: View {
     @ObservedObject private var weightLogManager = WeightLogManager.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
 
     @State private var selectedTimeFrame: TimeFrame = .allTime
@@ -972,7 +973,7 @@ struct WeightChartDetailView: View {
                     .foregroundColor(.primary)
                 }
             }
-            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(Color.appBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .onAppear {
                 haptic.prepare()
@@ -1014,7 +1015,7 @@ struct WeightChartDetailView: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.systemBackground))
+                    .fill(Color.appCardBackground)
                     .shadow(
                         color: Color.black.opacity(0.08),
                         radius: 8, x: 0, y: 2
@@ -2280,7 +2281,7 @@ private struct CanvasChart: View {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(.systemBackground))
+                    .fill(Color.appCardBackground)
                     .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1)
             )
             .position(x: x, y: max(28, y - 36))
@@ -2495,7 +2496,7 @@ struct StatCard: View {
     let color: Color
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
 
     var body: some View {

@@ -49,6 +49,11 @@ class SearchRankingService {
         }
     }
     
+    // Get meal-type preference frequency for a food (used by TypesenseDirectService for ranking)
+    func getMealTypePreference(for foodId: String, mealType: String) -> Int {
+        return mealTypePreferences[mealType]?[foodId] ?? 0
+    }
+    
     // Record when a user selects a food item for a specific meal type
     func recordFoodSelection(foodId: String, foodName: String, mealType: String) {
         // Update general food selection frequency

@@ -5,7 +5,15 @@ struct DataConsentsView: View {
     @State private var analyticsEnabled = UserDefaults.standard.bool(forKey: "analyticsEnabled")
     @State private var crashReportingEnabled = UserDefaults.standard.bool(forKey: "crashReportingEnabled")
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         Form {
             Section(header: Text("Health Data")) {
                 Toggle("HealthKit Integration", isOn: $healthKitEnabled)
@@ -13,6 +21,7 @@ struct DataConsentsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("App Improvement")) {
                 Toggle("Analytics", isOn: $analyticsEnabled)
@@ -31,14 +40,17 @@ struct DataConsentsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(footer: Text("You can change these permissions at any time. Disabling may limit some app features.")) {
                 EmptyView()
             }
         }
+        .scrollContentBackground(.hidden)
+        }
         .navigationTitle("Data Consents")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }

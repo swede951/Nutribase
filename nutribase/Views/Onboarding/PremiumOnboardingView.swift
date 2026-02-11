@@ -8,18 +8,18 @@ enum PremiumOnboardingStep: Int, CaseIterable {
     case welcome = 0
     case privacy = 1
     case region = 2
-    case activity = 3
-    case goal = 4
-    case age = 5
-    case gender = 6
-    case height = 7
-    case weight = 8
-    case trackingPreferences = 9  // Moved before planSelection
-    case planSelection = 10       // Now after trackingPreferences
+    case age = 3
+    case gender = 4
+    case height = 5
+    case weight = 6
+    case activity = 7
+    case goal = 8
+    case trackingPreferences = 9
+    case planSelection = 10
     case personalPlan = 11
     case building = 12
-    case dashboardSetup = 13      // New: customize dashboard after loading
-    case emailVerification = 14   // Verify email before completing
+    case dashboardSetup = 13
+    case emailVerification = 14
     case complete = 15
     
     var progress: Double {
@@ -79,7 +79,7 @@ enum OnboardingMetricCategory: String, CaseIterable {
         case .activity:
             return [.steps]
         case .foodQuality:
-            return [.novaScore, .nutriScore]
+            return [.novaScore, .nutriScore, .gutHealth]
         }
     }
 }
@@ -133,6 +133,9 @@ struct PremiumOnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var authService = FirebaseAuthService.shared
     
+    // Test mode - when launched from Settings, shows close button and doesn't save profile
+    var isTestMode: Bool = false
+    
     // Step state
     @State private var currentStep: PremiumOnboardingStep = .welcome
     @State private var isAnimating = false
@@ -141,6 +144,7 @@ struct PremiumOnboardingView: View {
     @State private var welcomeCardIndex = 0
     @State private var welcomeCarouselTimer: Timer?
     @State private var scrolledCardId: Int? = 0
+    @State private var swipeDirection: Edge = .trailing
     
     // Privacy consents
     @State private var crashReportingConsent = false
@@ -196,14 +200,19 @@ struct PremiumOnboardingView: View {
     @State private var buildingProgress: CGFloat = 0
     @State private var currentFeatureIndex: Int = 0
     @State private var featureOpacity: Double = 1.0
+    @State private var buildingCarouselTimer: Timer?
+    @State private var buildingSwipeDirection: Edge = .trailing
     
     // Dashboard setup state
-    @State private var onboardingDashboardCards: [DashboardCard] = []
-    @State private var availableOnboardingCards: [DashboardCard] = []
-    @State private var draggingCard: DashboardCard? = nil
+    @State private var onboardingCardOrder: [CardType] = []
+    @State private var onboardingHiddenCards: [CardType] = []
+    @State private var showingOnboardingWidgetStorage = false
     
     // Complete step confetti
     @State private var showConfetti = false
+    
+    // Guard against duplicate phase creation
+    @State private var hasCreatedPhase = false
     
     // Email verification step
     @State private var showingVerificationAlert = false
@@ -247,11 +256,12 @@ struct PremiumOnboardingView: View {
                 .ignoresSafeArea()
             
             // Blue gradient for welcome step (covers entire screen including safe area)
+            // Adapts to dark mode by using darker end color
             if currentStep == .welcome {
                 LinearGradient(
                     gradient: Gradient(colors: [
                         Color(hex: "#35b8ff").opacity(1),
-                        Color(hex: "#F0F1F4")
+                        Color.appCardBackground
                     ]),
                     startPoint: .top,
                     endPoint: UnitPoint(x: 0.5, y: 0.5)
@@ -315,27 +325,56 @@ struct PremiumOnboardingView: View {
     // MARK: - Top Bar
     private var topBar: some View {
         Group {
-            // Hide top bar during building and complete steps
-            if currentStep == .building || currentStep == .complete {
+            // Hide top bar during building and complete steps (unless test mode)
+            if (currentStep == .building || currentStep == .complete) && !isTestMode {
                 Spacer().frame(height: 40)
+            } else if (currentStep == .building || currentStep == .complete) && isTestMode {
+                // In test mode, show just the close button during building/complete
+                HStack {
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 30, height: 30)
+                            .background(Color.appInsetBackground)
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
             } else {
                 VStack(spacing: 12) {
-                    // Progress bar
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            // Background
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(height: 4)
-                            
-                            // Progress
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(Color(hex: "#35b8ff"))
-                                .frame(width: geometry.size.width * currentStep.progress, height: 4)
-                                .animation(.spring(response: 0.4), value: currentStep)
+                    // Progress bar with optional close button
+                    HStack {
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                // Background
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(height: 4)
+                                
+                                // Progress
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color(hex: "#35b8ff"))
+                                    .frame(width: geometry.size.width * currentStep.progress, height: 4)
+                                    .animation(.spring(response: 0.4), value: currentStep)
+                            }
+                        }
+                        .frame(height: 4)
+                        
+                        if isTestMode {
+                            Button(action: { dismiss() }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 30, height: 30)
+                                    .background(Color.appInsetBackground)
+                                    .clipShape(Circle())
+                            }
                         }
                     }
-                    .frame(height: 4)
                     .padding(.horizontal, 24)
                     
                 }
@@ -348,9 +387,11 @@ struct PremiumOnboardingView: View {
     // MARK: - Bottom Navigation
     private var bottomNavigation: some View {
         Group {
-            // Hide navigation during building step
+            // Hide navigation during building and dashboard setup steps
             if currentStep == .building {
                 Spacer().frame(height: 80)
+            } else if currentStep == .dashboardSetup {
+                EmptyView()
             } else {
                 HStack(spacing: 16) {
                     // Back button
@@ -367,7 +408,7 @@ struct PremiumOnboardingView: View {
                             .padding(.vertical, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color.white)
+                                    .fill(Color.appInsetBackground)
                                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                             )
                         }
@@ -442,15 +483,36 @@ struct PremiumOnboardingView: View {
                         WelcomeCardView(card: welcomeCards[index])
                             .padding(.horizontal, 40)
                             .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
+                                insertion: .move(edge: swipeDirection).combined(with: .opacity),
+                                removal: .move(edge: swipeDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
                             ))
                     }
                 }
             }
             .frame(height: 240)
+            .contentShape(Rectangle())
             .padding(.top, 32)
-            .animation(.easeInOut(duration: 0.4), value: welcomeCardIndex)
+            .gesture(
+                DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                    .onEnded { value in
+                        let horizontal = value.translation.width
+                        if horizontal < -30 {
+                            // Swipe left → next card
+                            swipeDirection = .trailing
+                            withAnimation(.easeInOut(duration: 0.7)) {
+                                welcomeCardIndex = (welcomeCardIndex + 1) % welcomeCards.count
+                            }
+                            startWelcomeCarouselTimer()
+                        } else if horizontal > 30 {
+                            // Swipe right → previous card
+                            swipeDirection = .leading
+                            withAnimation(.easeInOut(duration: 0.7)) {
+                                welcomeCardIndex = (welcomeCardIndex - 1 + welcomeCards.count) % welcomeCards.count
+                            }
+                            startWelcomeCarouselTimer()
+                        }
+                    }
+            )
             
             // Page indicator dots
             HStack(spacing: 8) {
@@ -476,8 +538,11 @@ struct PremiumOnboardingView: View {
     
     private func startWelcomeCarouselTimer() {
         welcomeCarouselTimer?.invalidate()
-        welcomeCarouselTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { _ in
-            welcomeCardIndex = (welcomeCardIndex + 1) % welcomeCards.count
+        welcomeCarouselTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true) { _ in
+            swipeDirection = .trailing
+            withAnimation(.easeInOut(duration: 0.7)) {
+                welcomeCardIndex = (welcomeCardIndex + 1) % welcomeCards.count
+            }
         }
     }
     
@@ -776,7 +841,7 @@ struct PremiumOnboardingView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(Color.appInsetBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
             )
             .padding(.horizontal, 24)
@@ -876,7 +941,7 @@ struct PremiumOnboardingView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white)
+                        .fill(Color.appInsetBackground)
                         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                 )
                 
@@ -904,7 +969,7 @@ struct PremiumOnboardingView: View {
                             .background(useImperialHeight ? Color(hex: "#35b8ff") : Color.clear)
                     }
                 }
-                .background(Color(.systemGray5))
+                .background(Color.appInsetBackground)
                 .cornerRadius(8)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
@@ -1013,7 +1078,7 @@ struct PremiumOnboardingView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white)
+                        .fill(Color.appInsetBackground)
                         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                 )
                 
@@ -1041,7 +1106,7 @@ struct PremiumOnboardingView: View {
                             .background(useImperialWeight ? Color(hex: "#35b8ff") : Color.clear)
                     }
                 }
-                .background(Color(.systemGray5))
+                .background(Color.appInsetBackground)
                 .cornerRadius(8)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
@@ -1193,7 +1258,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 12,
                     weeklyChangeKg: 0.25,
                     calorieAdjustment: 400,
-                    proteinMultiplier: 1.8
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Aggressive Bulk",
@@ -1203,7 +1268,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 8,
                     weeklyChangeKg: 0.4,
                     calorieAdjustment: 600,
-                    proteinMultiplier: 1.6
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Custom Plan",
@@ -1227,7 +1292,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 16,
                     weeklyChangeKg: -0.25,
                     calorieAdjustment: -300,
-                    proteinMultiplier: 2.2
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Moderate Cut",
@@ -1247,7 +1312,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 8,
                     weeklyChangeKg: -0.75,
                     calorieAdjustment: -750,
-                    proteinMultiplier: 2.4
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Custom Plan",
@@ -1271,7 +1336,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 16,
                     weeklyChangeKg: 0.3,
                     calorieAdjustment: 350,
-                    proteinMultiplier: 1.6
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Moderate Gain",
@@ -1281,7 +1346,7 @@ struct PremiumOnboardingView: View {
                     durationWeeks: 12,
                     weeklyChangeKg: 0.5,
                     calorieAdjustment: 500,
-                    proteinMultiplier: 1.4
+                    proteinMultiplier: 2.0
                 ),
                 NutritionPlan(
                     name: "Custom Plan",
@@ -1640,43 +1705,67 @@ struct PremiumOnboardingView: View {
                     .foregroundColor(.secondary)
             }
             
-            // Feature showcase
-            VStack(spacing: 0) {
-                if currentFeatureIndex < features.count {
-                    let feature = features[currentFeatureIndex]
-                    
-                    VStack(spacing: 16) {
-                        ZStack {
-                            Circle()
-                                .fill(feature.color.opacity(0.15))
-                                .frame(width: 70, height: 70)
+            // Feature showcase - swipeable carousel
+            ZStack {
+                ForEach(0..<features.count, id: \.self) { index in
+                    if index == currentFeatureIndex {
+                        let feature = features[index]
+                        VStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(feature.color.opacity(0.15))
+                                    .frame(width: 70, height: 70)
+                                
+                                Image(systemName: feature.icon)
+                                    .font(.system(size: 32))
+                                    .foregroundColor(feature.color)
+                            }
                             
-                            Image(systemName: feature.icon)
-                                .font(.system(size: 32))
-                                .foregroundColor(feature.color)
+                            Text(feature.title)
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.primary)
+                            
+                            Text(feature.description)
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
                         }
-                        
-                        Text(feature.title)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        Text(feature.description)
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
+                        .padding(24)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(Color.appInsetBackground)
+                                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+                        )
+                        .transition(.asymmetric(
+                            insertion: .move(edge: buildingSwipeDirection).combined(with: .opacity),
+                            removal: .move(edge: buildingSwipeDirection == .trailing ? .leading : .trailing).combined(with: .opacity)
+                        ))
                     }
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color.white)
-                            .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
-                    )
-                    .opacity(featureOpacity)
                 }
             }
             .frame(height: 200)
+            .contentShape(Rectangle())
             .padding(.horizontal, 24)
+            .gesture(
+                DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                    .onEnded { value in
+                        let horizontal = value.translation.width
+                        if horizontal < -30 {
+                            buildingSwipeDirection = .trailing
+                            withAnimation(.easeInOut(duration: 0.7)) {
+                                currentFeatureIndex = (currentFeatureIndex + 1) % features.count
+                            }
+                            startBuildingCarouselTimer(featureCount: features.count)
+                        } else if horizontal > 30 {
+                            buildingSwipeDirection = .leading
+                            withAnimation(.easeInOut(duration: 0.7)) {
+                                currentFeatureIndex = (currentFeatureIndex - 1 + features.count) % features.count
+                            }
+                            startBuildingCarouselTimer(featureCount: features.count)
+                        }
+                    }
+            )
             
             // Progress dots
             HStack(spacing: 8) {
@@ -1694,386 +1783,317 @@ struct PremiumOnboardingView: View {
         .onAppear {
             startBuildingAnimation(featureCount: features.count)
         }
+        .onDisappear {
+            buildingCarouselTimer?.invalidate()
+        }
     }
     
     private func startBuildingAnimation(featureCount: Int) {
         // Reset state
         buildingProgress = 0
         currentFeatureIndex = 0
-        featureOpacity = 1.0
         
         let totalDuration: Double = 6.0 // Total time for the "loading"
-        let featureDuration = totalDuration / Double(featureCount)
         
         // Animate progress bar
         withAnimation(.linear(duration: totalDuration)) {
             buildingProgress = 1.0
         }
         
-        // Cycle through features
-        for i in 0..<featureCount {
-            DispatchQueue.main.asyncAfter(deadline: .now() + (featureDuration * Double(i))) {
-                if i > 0 {
-                    // Fade out previous
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        featureOpacity = 0
-                    }
-                    
-                    // Switch and fade in
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        currentFeatureIndex = i
-                        withAnimation(.easeIn(duration: 0.3)) {
-                            featureOpacity = 1.0
-                        }
-                    }
-                }
-            }
-        }
+        // Start feature carousel timer
+        startBuildingCarouselTimer(featureCount: featureCount)
+        
+        // Pre-load app data while the user watches the building animation
+        preloadAppData()
         
         // Auto-advance to dashboard setup step
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDuration + 0.5) {
+            buildingCarouselTimer?.invalidate()
             withAnimation {
                 currentStep = .dashboardSetup
             }
         }
     }
     
+    private func preloadAppData() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Touch shared singletons to trigger their lazy initialization
+            _ = FoodLogManager.shared
+            _ = WeightLogManager.shared
+            _ = WeightPhaseManager.shared
+            _ = DailyNutritionCache.shared
+            _ = UserProfile.shared
+            
+            DispatchQueue.main.async {
+                // Pre-warm nutrition cache for faster dashboard rendering
+                DailyNutritionCache.shared.prewarmCommonDates()
+                
+                print("[Onboarding] Pre-loaded app data during building animation")
+            }
+        }
+    }
+    
+    private func startBuildingCarouselTimer(featureCount: Int) {
+        buildingCarouselTimer?.invalidate()
+        buildingCarouselTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+            buildingSwipeDirection = .trailing
+            withAnimation(.easeInOut(duration: 0.7)) {
+                currentFeatureIndex = (currentFeatureIndex + 1) % featureCount
+            }
+        }
+    }
+    
     // MARK: - Step 14: Dashboard Setup
     private var dashboardSetupStep: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Title
-                VStack(spacing: 8) {
-                    Text("Your Dashboard")
-                        .font(.system(size: 32, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Text("Drag to arrange, tap ─ to remove")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 16)
-                .padding(.horizontal, 24)
-                
-                // Dashboard preview with draggable cards - using Grid for proper wide card layout
-                Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-                    ForEach(Array(createOnboardingGridRowsWithIndices().enumerated()), id: \.offset) { _, rowData in
-                        GridRow {
-                            ForEach(rowData.cards, id: \.id) { card in
-                                let isWide = card.cardType == .weightChart || card.cardType == .novaGroups || card.cardType == .nutriScore || card.cardType == .dailyGoals
-                                
-                                ZStack(alignment: .topLeading) {
-                                    // Actual card preview with sample data - make entire area draggable
-                                    onboardingCardPreviewView(for: card.cardType)
-                                        .contentShape(Rectangle())
-                                    
-                                    // Remove button overlay (red minus in top left)
-                                    // Using allowsHitTesting only on the button area
-                                    Button(action: {
-                                        removeOnboardingCard(card)
-                                    }) {
-                                        Image(systemName: "minus.circle.fill")
-                                            .font(.title2)
-                                            .foregroundColor(Color.red.opacity(0.9))
-                                            .background(Circle().fill(Color(.systemBackground)))
-                                    }
-                                    .padding(4)
-                                }
-                                .contentShape(Rectangle())
-                                .onDrag {
-                                    self.draggingCard = card
-                                    return NSItemProvider(object: card.cardType.rawValue as NSString)
-                                }
-                                .onDrop(of: [.text], delegate: OnboardingCardDropDelegate(
-                                    card: card,
-                                    cards: $onboardingDashboardCards,
-                                    draggingCard: $draggingCard
-                                ))
-                                .if(isWide) { view in
-                                    view.gridCellColumns(2)
-                                }
-                            }
-                            
-                            // Add empty drop zone if row has only 1 small card
-                            if rowData.needsEmptyCell {
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color(.systemGray6).opacity(0.5))
-                                    .frame(minHeight: 150)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8]))
-                                            .foregroundColor(Color(.systemGray4))
-                                    )
-                                    .onDrop(of: [.text], delegate: OnboardingEmptyCellDropDelegate(
-                                        insertIndex: rowData.emptyInsertIndex,
-                                        cards: $onboardingDashboardCards,
-                                        draggingCard: $draggingCard
-                                    ))
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                
-                // Available widgets section (if any cards have been removed)
-                if !availableOnboardingCards.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Available Widgets")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 16)
-                        
-                        LazyVGrid(columns: [
-                            GridItem(.flexible(), spacing: 16),
-                            GridItem(.flexible(), spacing: 16)
-                        ], spacing: 16) {
-                            ForEach(availableOnboardingCards, id: \.id) { card in
-                                // Wide card types for potential future use
-                                let _ = card.cardType == .novaGroups || card.cardType == .nutriScore || card.cardType == .dailyGoals
-                                
-                                ZStack {
-                                    onboardingCardPreviewView(for: card.cardType)
-                                    
-                                    // Add button overlay (green plus in top left)
-                                    VStack {
-                                        HStack {
-                                            Button(action: {
-                                                addOnboardingCard(card)
-                                            }) {
-                                                Image(systemName: "plus.circle.fill")
-                                                    .font(.title2)
-                                                    .foregroundColor(Color.green.opacity(0.9))
-                                                    .background(Circle().fill(Color(.systemBackground)))
-                                            }
-                                            .padding(6)
-                                            Spacer()
-                                        }
-                                        Spacer()
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                    .padding(.top, 16)
-                }
-                
-                // Tip card
-                HStack(spacing: 12) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.yellow)
-                    
-                    Text("You can always rearrange your dashboard later by tapping the edit button")
-                        .font(.system(size: 14))
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.yellow.opacity(0.1))
-                )
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
-            }
+        VStack(spacing: 0) {
+            EmbeddedDashboardEditorView(
+                cardOrder: $onboardingCardOrder,
+                hiddenCards: $onboardingHiddenCards,
+                onShowWidgetStorage: {
+                    showingOnboardingWidgetStorage = true
+                },
+                cardViewProvider: { cardType in
+                    EditorCardViewProvider.cardView(for: cardType, isWeightChartExpanded: true)
+                },
+                isWeightChartExpanded: true,
+                headerView: AnyView(onboardingDashboardHeader),
+                headerHeight: 80,
+                footerView: AnyView(onboardingDashboardFooter),
+                footerHeight: 60
+            )
         }
         .onAppear {
             setupOnboardingDashboardCards()
         }
-    }
-    
-    private func removeOnboardingCard(_ card: DashboardCard) {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            if let index = onboardingDashboardCards.firstIndex(where: { $0.id == card.id }) {
-                onboardingDashboardCards.remove(at: index)
-                availableOnboardingCards.append(card)
-            }
+        .sheet(isPresented: $showingOnboardingWidgetStorage) {
+            WidgetStorageView(
+                cardOrder: $onboardingCardOrder,
+                hiddenCards: $onboardingHiddenCards
+            )
         }
-        HapticManager.shared.lightFeedback()
     }
     
-    private func addOnboardingCard(_ card: DashboardCard) {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            if let index = availableOnboardingCards.firstIndex(where: { $0.id == card.id }) {
-                availableOnboardingCards.remove(at: index)
-                onboardingDashboardCards.append(card)
-            }
-        }
-        HapticManager.shared.lightFeedback()
-    }
-    
-    // Create grid rows for proper 2-column layout with wide cards
-    private func createOnboardingGridRows() -> [[DashboardCard]] {
-        var rows: [[DashboardCard]] = []
-        var currentRow: [DashboardCard] = []
-        var currentRowColumns = 0
-        
-        for card in onboardingDashboardCards {
-            let isWide = card.cardType == .weightChart || card.cardType == .novaGroups || card.cardType == .nutriScore || card.cardType == .dailyGoals
-            let cardColumns = isWide ? 2 : 1
+    private var onboardingDashboardHeader: some View {
+        VStack(spacing: 0) {
+            Text("Your Dashboard")
+                .font(.system(size: 32, weight: .bold))
+                .foregroundColor(.primary)
             
-            if currentRowColumns + cardColumns > 2 {
-                if !currentRow.isEmpty {
-                    rows.append(currentRow)
+            Text("Drag to arrange, tap ─ to remove")
+                .font(.system(size: 16))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.horizontal, 24)
+    }
+    
+    private var onboardingDashboardFooter: some View {
+        HStack(spacing: 16) {
+            Button(action: goBack) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Back")
+                        .font(.system(size: 16, weight: .semibold))
                 }
-                currentRow = [card]
-                currentRowColumns = cardColumns
-            } else {
-                currentRow.append(card)
-                currentRowColumns += cardColumns
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.appInsetBackground)
+                        .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                )
             }
             
-            if currentRowColumns == 2 {
-                rows.append(currentRow)
-                currentRow = []
-                currentRowColumns = 0
-            }
-        }
-        
-        if !currentRow.isEmpty {
-            rows.append(currentRow)
-        }
-        
-        return rows
-    }
-    
-    // Row data for grid with empty cell tracking
-    struct OnboardingGridRowData {
-        let cards: [DashboardCard]
-        let needsEmptyCell: Bool
-        let emptyInsertIndex: Int
-    }
-    
-    // Create grid rows with indices for empty cell drop zones
-    private func createOnboardingGridRowsWithIndices() -> [OnboardingGridRowData] {
-        var rowsData: [OnboardingGridRowData] = []
-        var currentRow: [DashboardCard] = []
-        var currentRowColumns = 0
-        var cardIndex = 0
-        
-        for card in onboardingDashboardCards {
-            let isWide = card.cardType == .weightChart || card.cardType == .novaGroups || card.cardType == .nutriScore || card.cardType == .dailyGoals
-            let cardColumns = isWide ? 2 : 1
+            Spacer()
             
-            if currentRowColumns + cardColumns > 2 {
-                if !currentRow.isEmpty {
-                    // Row with 1 small card needs an empty cell
-                    let needsEmpty = currentRow.count == 1 && currentRowColumns == 1
-                    rowsData.append(OnboardingGridRowData(
-                        cards: currentRow,
-                        needsEmptyCell: needsEmpty,
-                        emptyInsertIndex: cardIndex
-                    ))
+            Button(action: goNext) {
+                HStack(spacing: 6) {
+                    Text("Looks Good!")
+                        .font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .semibold))
                 }
-                currentRow = [card]
-                currentRowColumns = cardColumns
-            } else {
-                currentRow.append(card)
-                currentRowColumns += cardColumns
+                .foregroundColor(.white)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color(hex: "#35b8ff"))
+                        .shadow(color: Color(hex: "#35b8ff").opacity(0.3), radius: 8, y: 4)
+                )
             }
-            
-            if currentRowColumns == 2 {
-                rowsData.append(OnboardingGridRowData(
-                    cards: currentRow,
-                    needsEmptyCell: false,
-                    emptyInsertIndex: cardIndex + 1
-                ))
-                currentRow = []
-                currentRowColumns = 0
-            }
-            
-            cardIndex += 1
         }
-        
-        if !currentRow.isEmpty {
-            // Final row with 1 small card needs an empty cell
-            let needsEmpty = currentRow.count == 1 && currentRowColumns == 1
-            rowsData.append(OnboardingGridRowData(
-                cards: currentRow,
-                needsEmptyCell: needsEmpty,
-                emptyInsertIndex: cardIndex
-            ))
-        }
-        
-        return rowsData
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
     }
     
-    // Returns the actual card view in preview mode with sample data
-    @ViewBuilder
-    private func onboardingCardPreviewView(for cardType: CardType) -> some View {
-        switch cardType {
-        case .currentWeight:
-            CurrentWeightCardView(isPreview: true, customPreviewWeight: weightKg)
-        case .weightChart:
-            OnboardingWeightChartPreview(startWeight: weightKg + 10, endWeight: weightKg)
-        case .calorieTarget:
-            CalorieTargetCardView(isPreview: true)
-        case .protein:
-            ProteinCardView(isPreview: true)
-        case .carbs:
-            CarbsCardView(isPreview: true)
-        case .fat:
-            FatCardView(isPreview: true)
-        case .activity:
-            StepsCardView(isPreview: true)
-        case .dailyGoals:
-            DailyGoalsCardView(isPreview: true)
-        case .novaGroups:
-            NovaGroupsCardView(isPreview: true)
-        case .nutriScore:
-            NutriScoreCardView(isPreview: true)
-        case .gutHealth:
-            GutHealthCardView(isPreview: true)
-        case .empty:
-            EmptyView()
+    private func populateOnboardingPreviewData() {
+        let data = CapturedCardData.shared
+        
+        // MARK: Weight card - use onboarding weight
+        data.currentWeight = weightKg
+        data.hasWeightData = true
+        data.weightUnit = "kg"
+        
+        // MARK: Calorie & macro targets from selected plan
+        let maintenance = calculateMaintenanceCalories() ?? 2000
+        let targetCalories: Int
+        let proteinGrams: Int
+        let carbGrams: Int
+        let fatGrams: Int
+        
+        if let plan = selectedPlan {
+            targetCalories = maintenance + plan.calorieAdjustment
+            proteinGrams = Int(weightKg * plan.proteinMultiplier)
+            let proteinCalories = proteinGrams * 4
+            let remainingCalories = max(0, targetCalories - proteinCalories)
+            let rawFatGrams = Int(Double(remainingCalories) * 0.25 / 9)
+            let minFatGrams = Int(weightKg * 0.25)
+            fatGrams = max(rawFatGrams, minFatGrams)
+            let fatCalories = fatGrams * 9
+            carbGrams = max(0, (targetCalories - proteinCalories - fatCalories) / 4)
+            
+            // Weekly weight rate based on plan deficit/surplus
+            data.weeklyWeightRate = Double(plan.calorieAdjustment) / 1100.0
+        } else {
+            targetCalories = maintenance
+            proteinGrams = Int(weightKg * 1.6)
+            fatGrams = Int(Double(maintenance) * 0.30 / 9)
+            carbGrams = Int(Double(maintenance) * 0.45 / 4)
+            data.weeklyWeightRate = 0.0
         }
+        
+        data.calorieTarget = targetCalories
+        data.proteinTarget = proteinGrams
+        data.carbsTarget = carbGrams
+        data.fatTarget = fatGrams
+        data.fibreTarget = 30
+        data.stepsTarget = 10000
+        
+        // MARK: Sample "today" consumption (~70% of targets)
+        data.caloriesConsumed = Int(Double(targetCalories) * 0.72)
+        data.proteinConsumed = Int(Double(proteinGrams) * 0.65)
+        data.carbsConsumed = Int(Double(carbGrams) * 0.70)
+        data.fatConsumed = Int(Double(fatGrams) * 0.68)
+        data.fibreConsumed = 21
+        data.stepsCount = 7500
+        
+        // MARK: Weekly bar chart data (sample variation)
+        let dayLetters = ["S", "M", "T", "W", "T", "F", "S"]
+        let calFactors  = [0.85, 0.92, 0.78, 0.95, 0.88, 1.05, 0.72]
+        let protFactors = [0.80, 0.88, 0.72, 0.90, 0.85, 0.95, 0.65]
+        let carbFactors = [0.82, 0.90, 0.75, 0.92, 0.86, 1.00, 0.70]
+        let fatFactors  = [0.78, 0.85, 0.70, 0.88, 0.82, 0.98, 0.68]
+        let fibreFactors = [0.75, 0.80, 0.65, 0.85, 0.78, 0.90, 0.60]
+        let stepValues  = [8200, 6500, 9800, 7200, 8800, 11000, 7500]
+        
+        data.weeklyCalorieData = (0..<7).map { i in (day: dayLetters[i], consumed: Int(Double(targetCalories) * calFactors[i])) }
+        data.weeklyProteinData = (0..<7).map { i in (day: dayLetters[i], consumed: Int(Double(proteinGrams) * protFactors[i])) }
+        data.weeklyCarbsData   = (0..<7).map { i in (day: dayLetters[i], consumed: Int(Double(carbGrams) * carbFactors[i])) }
+        data.weeklyFatData     = (0..<7).map { i in (day: dayLetters[i], consumed: Int(Double(fatGrams) * fatFactors[i])) }
+        data.weeklyFibreData   = (0..<7).map { i in (day: dayLetters[i], consumed: Int(30.0 * fibreFactors[i])) }
+        data.weeklyStepsData   = (0..<7).map { i in (day: dayLetters[i], steps: stepValues[i]) }
+        
+        // MARK: Weight chart - forward projection for the phase duration
+        // Starts at current weight today, ends at phase target weight
+        let calendar = Calendar.current
+        let today = Date()
+        var chartPoints: [(date: Date, weight: Double)] = []
+        let phaseWeeks = selectedPlan?.durationWeeks ?? 12
+        let weeklyChange = selectedPlan?.weeklyChangeKg ?? 0.0
+        let endWeight = weightKg + (weeklyChange * Double(phaseWeeks))
+        
+        for week in 0...phaseWeeks {
+            if let date = calendar.date(byAdding: .weekOfYear, value: week, to: today) {
+                let projectedWeight = weightKg + (weeklyChange * Double(week))
+                chartPoints.append((date: date, weight: projectedWeight))
+            }
+        }
+        data.weightChartPoints = chartPoints
+        
+        // Update weekly rate for the weight card subtitle
+        data.weeklyWeightRate = weeklyChange
+        
+        // MARK: NOVA Groups - moderately positive (mostly unprocessed)
+        data.novaDistribution = [1: 0.55, 2: 0.15, 3: 0.20, 4: 0.10]
+        data.weeklyNovaData = dayLetters.map { day in
+            (day: day, distribution: [1: 0.55, 2: 0.15, 3: 0.20, 4: 0.10])
+        }
+        
+        // MARK: Nutri-Score - moderately positive (mostly A & B)
+        data.nutriScoreDistribution = ["A": 0.43, "B": 0.31, "C": 0.16, "D": 0.06, "E": 0.02]
+        data.weeklyNutriScoreData = dayLetters.map { day in
+            (day: day, distribution: ["A": 0.43, "B": 0.31, "C": 0.16, "D": 0.06, "E": 0.02])
+        }
+        
+        // MARK: Gut Health - moderately positive
+        data.gutHealthScore = 72.0
+        data.fiberScore = 65.0
+        data.upfScore = 40.0
+        data.fermentedScore = 50.0
+        data.fatQualityScore = 60.0
     }
     
     private func setupOnboardingDashboardCards() {
-        // Create dashboard cards based on selected metrics
-        var cards: [DashboardCard] = []
+        // Only set up once (avoid re-initializing when view re-appears)
+        guard onboardingCardOrder.isEmpty else { return }
         
-        // Always include weight cards at the top
-        cards.append(DashboardCard(cardType: .currentWeight))
-        cards.append(DashboardCard(cardType: .weightChart))
+        // Populate CapturedCardData with preview values for the editor cards
+        populateOnboardingPreviewData()
+        
+        var cards: [CardType] = []
+        var hidden: [CardType] = []
+        
+        // Set weight chart to expanded (2×3) mode for onboarding
+        UserDefaults.standard.set(WeightChartSizeMode.expanded.rawValue, forKey: "weightChartSizeMode")
+        
+        // Current weight at the top
+        cards.append(.currentWeight)
         
         // Add nutrition cards based on tracking preferences
-        if selectedMetrics.contains(.calories) {
-            cards.append(DashboardCard(cardType: .calorieTarget))
-        }
-        if selectedMetrics.contains(.protein) {
-            cards.append(DashboardCard(cardType: .protein))
-        }
-        if selectedMetrics.contains(.carbs) {
-            cards.append(DashboardCard(cardType: .carbs))
-        }
-        if selectedMetrics.contains(.fat) {
-            cards.append(DashboardCard(cardType: .fat))
-        }
+        if selectedMetrics.contains(.calories) { cards.append(.calorieTarget) }
+        if selectedMetrics.contains(.protein) { cards.append(.protein) }
+        if selectedMetrics.contains(.carbs) { cards.append(.carbs) }
+        if selectedMetrics.contains(.fat) { cards.append(.fat) }
+        if selectedMetrics.contains(.fiber) { cards.append(.fibre) }
+        
+        // Steps after fibre
+        if selectedMetrics.contains(.steps) { cards.append(.activity) }
         
         // Add food quality cards
-        if selectedMetrics.contains(.novaScore) {
-            cards.append(DashboardCard(cardType: .novaGroups))
-        }
-        if selectedMetrics.contains(.nutriScore) {
-            cards.append(DashboardCard(cardType: .nutriScore))
+        if selectedMetrics.contains(.novaScore) { cards.append(.novaGroups) }
+        if selectedMetrics.contains(.nutriScore) { cards.append(.nutriScore) }
+        if selectedMetrics.contains(.gutHealth) { cards.append(.gutHealth) }
+        
+        // Weight chart at the bottom (expanded 2×3)
+        cards.append(.weightChart)
+        
+        // Daily goals always starts in hidden/available widgets
+        hidden.append(.dailyGoals)
+        
+        // Any card types not added to dashboard go to hidden
+        let allCardTypes: [CardType] = [.currentWeight, .weightChart, .calorieTarget, .protein, .carbs, .fat, .fibre, .activity, .novaGroups, .nutriScore, .gutHealth, .dailyGoals]
+        for cardType in allCardTypes {
+            if !cards.contains(cardType) && !hidden.contains(cardType) {
+                hidden.append(cardType)
+            }
         }
         
-        // Always include activity
-        if selectedMetrics.contains(.steps) {
-            cards.append(DashboardCard(cardType: .activity))
-        }
-        
-        onboardingDashboardCards = cards
+        onboardingCardOrder = cards
+        onboardingHiddenCards = hidden
     }
     
     private func saveDashboardLayout() {
-        // Save the card order to UserDefaults so it's used when the app launches
-        let cardTypes = onboardingDashboardCards.map { $0.cardType }
-        if let encodedData = try? JSONEncoder().encode(cardTypes) {
+        // Save the card order to UserDefaults
+        if let encodedData = try? JSONEncoder().encode(onboardingCardOrder) {
             UserDefaults.standard.set(encodedData, forKey: "dashboardCardOrder")
+        }
+        // Save hidden cards to UserDefaults
+        if let encodedHidden = try? JSONEncoder().encode(onboardingHiddenCards) {
+            UserDefaults.standard.set(encodedHidden, forKey: "dashboardHiddenCards")
         }
     }
     
@@ -2468,13 +2488,20 @@ struct PremiumOnboardingView: View {
     }
     
     private func saveUserProfile() {
+        // In test mode, don't persist any profile changes
+        if isTestMode {
+            print("🧪 Test mode - skipping profile save")
+            return
+        }
         UserProfile.shared.dateOfBirth = dateOfBirth
         UserProfile.shared.gender = selectedGender
         UserProfile.shared.heightCm = heightCm
         UserProfile.shared.weightKg = weightKg
         UserProfile.shared.activityLevel = selectedActivity
         
-        UserDefaults.standard.set(selectedRegion, forKey: "preferredFoodRegion")
+        // Save region preference to UserProfile (which syncs to Firebase)
+        UserProfile.shared.preferredRegion = selectedRegion
+        
         UserDefaults.standard.set(analyticsConsent, forKey: "analyticsEnabled")
         UserDefaults.standard.set(crashReportingConsent, forKey: "crashReportingEnabled")
         UserDefaults.standard.set(healthKitConsent, forKey: "healthKitEnabled")
@@ -2490,21 +2517,26 @@ struct PremiumOnboardingView: View {
             // Calculate macros based on plan's protein multiplier
             let proteinGrams = Int(weightKg * plan.proteinMultiplier)
             let proteinCalories = proteinGrams * 4
-            let remainingCalories = targetCalories - proteinCalories
-            let carbCalories = Int(Double(remainingCalories) * 0.55)
-            let fatCalories = remainingCalories - carbCalories
+            let remainingCalories = max(0, targetCalories - proteinCalories)
+            // Fat = 25% of remaining calories after protein, with floor of 0.25g/kg bodyweight
+            let fatFromPercentage = Int(Double(remainingCalories) * 0.25) / 9
+            let fatFloor = Int(weightKg * 0.25)
+            let fatGrams = max(fatFromPercentage, fatFloor)
+            let fatCalories = fatGrams * 9
+            // Carbs = remaining calories after protein and fat
+            let carbGrams = max(0, targetCalories - proteinCalories - fatCalories) / 4
             
             UserProfile.shared.proteinGoalGrams = proteinGrams
-            UserProfile.shared.carbGoalGrams = carbCalories / 4
-            UserProfile.shared.fatGoalGrams = fatCalories / 9
+            UserProfile.shared.carbGoalGrams = carbGrams
+            UserProfile.shared.fatGoalGrams = fatGrams
             
             // Save plan details
             UserDefaults.standard.set(plan.name, forKey: "selectedPlanName")
             UserDefaults.standard.set(plan.durationWeeks, forKey: "selectedPlanDuration")
             UserDefaults.standard.set(plan.weeklyChangeKg, forKey: "selectedPlanWeeklyChange")
             
-            // Create a weight phase from the selected plan if it has a duration
-            if plan.durationWeeks > 0 {
+            // Create a weight phase from the selected plan if it has a duration (only once)
+            if plan.durationWeeks > 0 && !hasCreatedPhase {
                 let startDate = Date()
                 let endDate = Calendar.current.date(byAdding: .weekOfYear, value: plan.durationWeeks, to: startDate) ?? startDate
                 
@@ -2534,6 +2566,7 @@ struct PremiumOnboardingView: View {
                 )
                 
                 WeightPhaseManager.shared.addPhase(phase)
+                hasCreatedPhase = true
                 print("📅 Created weight phase: \(plan.name) for \(plan.durationWeeks) weeks")
             }
         } else if let calories = calculateDailyCalories() {
@@ -2558,6 +2591,7 @@ struct PremiumOnboardingView: View {
             case .steps: return .activity
             case .novaScore: return .novaGroups
             case .nutriScore: return .nutriScore
+            case .gutHealth: return .gutHealth
             default: return nil
             }
         }
@@ -2598,10 +2632,12 @@ struct PremiumOnboardingView: View {
 
 // MARK: - Supporting Views
 
-// App-consistent background (light gray)
+// App-consistent background (adapts to dark mode)
 struct OnboardingBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     var body: some View {
-        Color(hex: "#F0F1F4")
+        Color.appBackground
     }
 }
 
@@ -2612,13 +2648,18 @@ struct PremiumGradientBackground: View {
     }
 }
 
-// White card matching app design
+// Card matching app design (adapts to dark mode)
 struct OnboardingCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     var cornerRadius: CGFloat = 16
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Color.white)
+            .fill(cardBackground)
             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
     }
 }
@@ -2648,7 +2689,12 @@ struct BuildingFeature: Identifiable {
 }
 
 struct WelcomeCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let card: WelcomeCard
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         VStack(spacing: 16) {
@@ -2670,19 +2716,24 @@ struct WelcomeCardView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         )
     }
 }
 
 struct PrivacyCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let icon: String
     let title: String
     let subtitle: String
     let isToggle: Bool
     @Binding var isOn: Bool
     var iconColor: Color = Color(hex: "#35b8ff")
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         HStack(spacing: 16) {
@@ -2720,18 +2771,23 @@ struct PrivacyCard: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         )
     }
 }
 
 struct RegionRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let name: String
     let flag: String
     let isSelected: Bool
     let isRecommended: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         Button(action: onTap) {
@@ -2762,7 +2818,7 @@ struct RegionRow: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
@@ -2775,8 +2831,13 @@ struct RegionRow: View {
 }
 
 struct ActivityCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let activity: ActivityLevel
     let isSelected: Bool
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         VStack(spacing: 20) {
@@ -2806,7 +2867,7 @@ struct ActivityCard: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 24)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                 .overlay(
                     RoundedRectangle(cornerRadius: 24)
@@ -2819,9 +2880,14 @@ struct ActivityCard: View {
 }
 
 struct GoalCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let goal: HealthGoal
     let isSelected: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var motivationalText: String {
         switch goal {
@@ -2867,7 +2933,7 @@ struct GoalCard: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
@@ -2913,8 +2979,13 @@ struct MicroStepContainer<Content: View>: View {
 }
 
 struct StepperButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let systemName: String
     let action: () -> Void
+    
+    private var buttonBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         Button(action: action) {
@@ -2924,7 +2995,7 @@ struct StepperButton: View {
                 .frame(width: 60, height: 60)
                 .background(
                     RoundedRectangle(cornerRadius: 30)
-                        .fill(Color.white)
+                        .fill(buttonBackground)
                         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                 )
         }
@@ -2932,15 +3003,20 @@ struct StepperButton: View {
 }
 
 struct GenderCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let gender: Gender
     let isSelected: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var icon: String {
         switch gender {
         case .male: return "figure.stand"
         case .female: return "figure.stand.dress"
-        case .notSpecified: return "person.fill.questionmark"
+        case .notSpecified: return "person.fill"
         }
     }
     
@@ -2975,7 +3051,7 @@ struct GenderCard: View {
             .padding(20)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
@@ -2988,9 +3064,14 @@ struct GenderCard: View {
 }
 
 struct PresetCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let preset: TrackingPreset
     let isSelected: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var iconColor: Color {
         switch preset {
@@ -3034,7 +3115,7 @@ struct PresetCard: View {
             .padding(20)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(cardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
@@ -3107,20 +3188,21 @@ struct PlanCard: View {
         Int(bodyWeight * plan.proteinMultiplier)
     }
     
-    private var carbGrams: Int {
-        // Calculate carbs: remaining calories after protein, 55% to carbs
+    private var fatGrams: Int {
+        // Fat = 25% of remaining calories after protein, with floor of 0.25g/kg bodyweight
         let proteinCalories = proteinGrams * 4
-        let remainingCalories = targetCalories - proteinCalories
-        let carbCalories = Int(Double(remainingCalories) * 0.55)
-        return carbCalories / 4
+        let remainingCalories = max(0, targetCalories - proteinCalories)
+        let fatFromPercentage = Int(Double(remainingCalories) * 0.25) / 9
+        let fatFloor = Int(bodyWeight * 0.25)
+        return max(fatFromPercentage, fatFloor)
     }
     
-    private var fatGrams: Int {
-        // Calculate fat: remaining calories after protein and carbs
+    private var carbGrams: Int {
+        // Carbs = remaining calories after protein and fat
         let proteinCalories = proteinGrams * 4
-        let carbCalories = carbGrams * 4
-        let fatCalories = targetCalories - proteinCalories - carbCalories
-        return fatCalories / 9
+        let fatCalories = fatGrams * 9
+        let carbCalories = max(0, targetCalories - proteinCalories - fatCalories)
+        return carbCalories / 4
     }
     
     // Check which nutrition metrics are selected
@@ -3213,7 +3295,7 @@ struct PlanCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white)
+                    .fill(Color.appInsetBackground)
                     .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)
@@ -3277,8 +3359,10 @@ struct MetricCategoryCard: View {
                 }
             }
             
-            // Metrics grid
-            LazyVGrid(columns: [
+            // Metrics grid - single column for Food Quality to avoid text truncation
+            LazyVGrid(columns: category == .foodQuality ? [
+                GridItem(.flexible())
+            ] : [
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 10) {
@@ -3299,7 +3383,7 @@ struct MetricCategoryCard: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
+                .fill(Color.appInsetBackground)
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         )
     }
@@ -3508,7 +3592,7 @@ struct LegalDocumentView: View {
                     Button("Done") {
                         dismiss()
                     }
-                    .foregroundColor(Color(hex: "#35b8ff"))
+                    .foregroundColor(.primary)
                 }
             }
         }
@@ -3625,8 +3709,13 @@ struct LegalDocumentView: View {
 
 // MARK: - Onboarding Weight Chart Preview
 struct OnboardingWeightChartPreview: View {
+    @Environment(\.colorScheme) private var colorScheme
     let startWeight: Double
     let endWeight: Double
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     private var sampleWeightData: [(date: Date, weight: Double)] {
         let calendar = Calendar.current
@@ -3730,7 +3819,7 @@ struct OnboardingWeightChartPreview: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }

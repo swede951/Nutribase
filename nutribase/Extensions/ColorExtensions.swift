@@ -11,6 +11,34 @@ extension Color {
     // Additional colors
     static let headerGray = Color(hex: "B7B7A4")
     
+    // MARK: - App adaptive backgrounds (elevated dark mode)
+    // Dark mode is shifted one tier up from pure black to dark gray for contrast.
+    // Light mode values are unchanged from the original design.
+    
+    /// View / scroll background. Light: #F2F2F7  Dark: #1C1C1E
+    /// Uses fixed hex in dark mode so sheets/elevated contexts don't shift the color.
+    static let appBackground = Color(UIColor { tc in
+        tc.userInterfaceStyle == .dark
+            ? UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 1)   // #1C1C1E
+            : .systemGroupedBackground                                      // #F2F2F7
+    })
+    
+    /// Card / section background. Light: white  Dark: #2C2C2E
+    /// Uses fixed hex in dark mode so sheets/elevated contexts don't shift the color.
+    static let appCardBackground = Color(UIColor { tc in
+        tc.userInterfaceStyle == .dark
+            ? UIColor(red: 44/255, green: 44/255, blue: 46/255, alpha: 1)   // #2C2C2E
+            : .secondarySystemGroupedBackground                             // #FFFFFF
+    })
+    
+    /// Inset elements inside cards (text fields, dropdowns). Light: #F2F2F7  Dark: #3A3A3C
+    /// Uses fixed hex in dark mode so sheets/elevated contexts don't shift the color.
+    static let appInsetBackground = Color(UIColor { tc in
+        tc.userInterfaceStyle == .dark
+            ? UIColor(red: 58/255, green: 58/255, blue: 60/255, alpha: 1)   // #3A3A3C
+            : .tertiarySystemGroupedBackground                              // #F2F2F7
+    })
+    
     // Helper initializer to create colors from hex strings
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)

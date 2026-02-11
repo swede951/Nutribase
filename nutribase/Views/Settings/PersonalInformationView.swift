@@ -7,7 +7,7 @@ struct PersonalInformationView: View {
     @State private var showingWeightPicker = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     // Temporary state for pickers
@@ -24,6 +24,10 @@ struct PersonalInformationView: View {
     let availableRegions = ["All Regions", "United Kingdom", "United States", "France", "Germany", "Italy", "Spain", "Netherlands", "Belgium", "Switzerland", "Australia", "Canada", "New Zealand", "Ireland", "Norway", "Sweden", "Denmark"]
     
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         Form {
             Section(header: Text("Basic Information")) {
                 // Gender picker
@@ -38,6 +42,7 @@ struct PersonalInformationView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                 }
+                .listRowBackground(Color.appCardBackground)
                 
                 // Date of Birth picker
                 DatePicker(
@@ -46,6 +51,7 @@ struct PersonalInformationView: View {
                     in: ...Date(),
                     displayedComponents: .date
                 )
+                .listRowBackground(Color.appCardBackground)
                 
                 // Age display (computed from DOB)
                 HStack {
@@ -54,6 +60,7 @@ struct PersonalInformationView: View {
                     Text("\(userProfile.age) years")
                         .foregroundColor(.secondary)
                 }
+                .listRowBackground(Color.appCardBackground)
                 
                 // Height button that shows sheet
                 HStack {
@@ -67,6 +74,7 @@ struct PersonalInformationView: View {
                             .foregroundColor(.blue)
                     }
                 }
+                .listRowBackground(Color.appCardBackground)
                 
                 // Weight button that shows sheet
                 HStack {
@@ -80,6 +88,7 @@ struct PersonalInformationView: View {
                             .foregroundColor(.blue)
                     }
                 }
+                .listRowBackground(Color.appCardBackground)
                 
                 // Preferred Region picker
                 HStack {
@@ -93,6 +102,7 @@ struct PersonalInformationView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                 }
+                .listRowBackground(Color.appCardBackground)
             }
             
             Section(header: Text("Activity Level")) {
@@ -102,10 +112,11 @@ struct PersonalInformationView: View {
                     }
                 }
                 .pickerStyle(.navigationLink)
+                .listRowBackground(Color.appCardBackground)
             }
         }
         .scrollContentBackground(.hidden)
-        .background(viewBackground)
+        }
         .navigationTitle("Personal Information")
         .toolbarBackground(viewBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -162,12 +173,14 @@ struct PersonalInformationView: View {
                     Button("Cancel") {
                         showingHeightPicker = false
                     }
+                    .foregroundColor(.primary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         userProfile.heightCm = heightCm
                         showingHeightPicker = false
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }
@@ -234,11 +247,13 @@ struct PersonalInformationView: View {
                     Button("Cancel") {
                         showingWeightPicker = false
                     }
+                    .foregroundColor(.primary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         saveWeight()
                     }
+                    .foregroundColor(.primary)
                     .disabled(!isValidWeight)
                 }
             }

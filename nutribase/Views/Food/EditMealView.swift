@@ -13,6 +13,7 @@ struct EditMealView: View {
     init(meal: SavedMeal) {
         self.meal = meal
         _editedMeal = State(initialValue: meal)
+        _numberOfServings = State(initialValue: meal.numberOfServings)
     }
     
     // NumberFormatter for servings input
@@ -55,7 +56,7 @@ struct EditMealView: View {
                 }
                 .padding(.vertical)
             }
-            .background(Color(.systemGray6))
+            .background(Color.appBackground)
             .navigationTitle("Edit Meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -63,11 +64,13 @@ struct EditMealView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         saveMeal()
                     }
+                    .foregroundColor(.primary)
                     .disabled(editedMeal.foods.isEmpty)
                 }
             }
@@ -170,7 +173,7 @@ struct EditMealView: View {
                                 .frame(width: 80)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Color(.systemGray6))
+                                .background(Color.appInsetBackground)
                                 .cornerRadius(8)
                                 .toolbar {
                                     ToolbarItemGroup(placement: .keyboard) {
@@ -186,7 +189,7 @@ struct EditMealView: View {
                                 }
                         }
                         .padding()
-                        .background(Color.white)
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                         .padding(.horizontal)
         }
@@ -229,7 +232,7 @@ struct EditMealView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(Color.white)
+                                .fill(Color.appCardBackground)
                         )
                         .padding(.horizontal)
                         
@@ -240,7 +243,7 @@ struct EditMealView: View {
                             MacroCircle(value: totalFat, label: "Fats", color: .pink)
                         }
                         .padding()
-                        .background(Color.white)
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                         .padding(.horizontal)
         }
@@ -286,7 +289,7 @@ struct EditMealView: View {
                             .foregroundColor(.blue)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color(.systemGray6))
+                            .background(Color.appInsetBackground)
                             .cornerRadius(10)
                         }
                         .padding(.horizontal)
@@ -297,6 +300,35 @@ struct EditMealView: View {
     // MARK: - Actions
     
     private func saveMeal() {
+        let oldServings = editedMeal.numberOfServings
+        let newServings = max(numberOfServings, 1.0)
+        
+        // If servings changed, rescale food amounts so stored data = 1 serving
+        if oldServings != newServings {
+            let scale = oldServings / newServings
+            editedMeal.foods = editedMeal.foods.map { food in
+                MealFood(
+                    id: food.id,
+                    foodItemId: food.foodItemId,
+                    foodName: food.foodName,
+                    brandName: food.brandName,
+                    servingSize: food.servingSize * scale,
+                    servingUnit: food.servingUnit,
+                    numberOfServings: food.numberOfServings,
+                    calories: Int(round(Double(food.calories) * scale)),
+                    protein: food.protein * scale,
+                    carbs: food.carbs * scale,
+                    fat: food.fat * scale,
+                    fiber: (food.fiber ?? 0) * scale,
+                    novaScore: food.novaScore,
+                    novaScoreIsEstimated: food.novaScoreIsEstimated,
+                    nutriScoreGrade: food.nutriScoreGrade,
+                    nutriScoreIsEstimated: food.nutriScoreIsEstimated
+                )
+            }
+        }
+        
+        editedMeal.numberOfServings = newServings
         // Update the meal in the manager
         if let index = mealsManager.meals.firstIndex(where: { $0.id == meal.id }) {
             mealsManager.meals[index] = editedMeal
@@ -391,7 +423,7 @@ struct EditableMealFoodCard: View {
                 }
             }
             .padding()
-            .background(Color.white)
+            .background(Color.appCardBackground)
             .cornerRadius(12)
             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
             .padding(.horizontal)
@@ -498,12 +530,12 @@ struct EditMealFoodView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(Color(.systemGray6))
+                            .background(Color.appInsetBackground)
                             .cornerRadius(8)
                         }
                     }
                     .padding()
-                    .background(Color.white)
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
                     .padding(.horizontal)
                     
@@ -517,7 +549,7 @@ struct EditMealFoodView: View {
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                     }
                     .padding()
-                    .background(Color.white)
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
                     .padding(.horizontal)
                     
@@ -554,14 +586,14 @@ struct EditMealFoodView: View {
                             }
                         }
                         .padding()
-                        .background(Color.white)
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                         .padding(.horizontal)
                     }
                 }
                 .padding(.vertical)
             }
-            .background(Color(.systemGray6))
+            .background(Color.appBackground)
             .navigationTitle(mealFood.foodName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -569,11 +601,13 @@ struct EditMealFoodView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         saveChanges()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }

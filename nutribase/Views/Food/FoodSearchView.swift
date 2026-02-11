@@ -141,11 +141,11 @@ struct FoodSearchView: View {
     var onFoodSelectedForMeal: ((FoodEntry) -> Void)? = nil
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @StateObject private var typesenseService = TypesenseDirectService.shared
@@ -153,6 +153,7 @@ struct FoodSearchView: View {
     @StateObject private var verifiedFoodsService = VerifiedFoodsService.shared
     @StateObject private var analyticsService = AnalyticsService.shared
     @ObservedObject private var mealsManager = SavedMealsManager.shared
+    @ObservedObject private var favoritesService = FavoriteFoodsService.shared
     @State private var searchText = ""
     @State private var searchTask: DispatchWorkItem?
     @FocusState private var isSearchFieldFocused: Bool
@@ -180,7 +181,6 @@ struct FoodSearchView: View {
     
     // State for meals view
     @State private var showingMealsView = false
-    @State private var showingCreateMeal = false
     
     // State for toast notification
     @State private var showToast = false
@@ -205,6 +205,9 @@ struct FoodSearchView: View {
     @State private var cachedHistoryFoods: [FoodItem] = []
     @State private var lastHistorySearchText: String = ""
     
+    // Cached recent foods to avoid decoding from UserDefaults on every render
+    @State private var cachedRecentFoods: [FoodItem] = []
+    
     // Keys for storing data in UserDefaults (user-specific)
     private var recentFoodsKey: String {
         if let authenticatedUser = FirebaseAuthService.shared.currentUser {
@@ -223,12 +226,17 @@ struct FoodSearchView: View {
     private let maxRecentFoods = 30
     
     private var recentFoods: [FoodItem] {
+        return cachedRecentFoods
+    }
+    
+    // Load recent foods from UserDefaults into cache (call sparingly)
+    private func loadRecentFoodsCache() {
         if let data = UserDefaults.standard.data(forKey: recentFoodsKey),
            let foods = try? JSONDecoder().decode([FoodItem].self, from: data) {
-            // Apply cached serving info so recent foods use last-used serving sizes
-            return FoodServingCacheService.shared.applyCachedServingInfo(to: foods)
+            cachedRecentFoods = FoodServingCacheService.shared.applyCachedServingInfo(to: foods)
+        } else {
+            cachedRecentFoods = []
         }
-        return []
     }
     
     // Computed property for filtered foods
@@ -244,6 +252,27 @@ struct FoodSearchView: View {
                 return !historyFoodIds.contains(foodId) && !food.isMeal
             }
         }
+    }
+    
+    // Sectioned results: Common Foods (USDA ingredients)
+    private var commonFoods: [FoodItem] {
+        filteredFoods.filter { $0.dataSource == "usda" }
+    }
+    
+    // Sectioned results: Branded Products (Open Food Facts)
+    private var brandedFoods: [FoodItem] {
+        filteredFoods.filter { $0.dataSource == "brand" }
+    }
+    
+    // Sectioned results: Unsectioned (legacy/unknown source)
+    private var unsectionedFoods: [FoodItem] {
+        filteredFoods.filter { $0.dataSource != "usda" && $0.dataSource != "brand" }
+    }
+    
+    // Matching favorites for current search query
+    private var matchingFavorites: [FoodItem] {
+        guard !searchText.isEmpty else { return [] }
+        return favoritesService.searchFavorites(query: searchText)
     }
     
     // Generate a unique identifier for a food item (same logic as FoodServingCacheService)
@@ -386,6 +415,52 @@ struct FoodSearchView: View {
         if let encodedData = try? JSONEncoder().encode(foods) {
             UserDefaults.standard.set(encodedData, forKey: recentFoodsKey)
         }
+        
+        // Refresh the in-memory cache
+        cachedRecentFoods = FoodServingCacheService.shared.applyCachedServingInfo(to: foods)
+    }
+    
+    // MARK: - Search Result Section Helpers
+    
+    @ViewBuilder
+    private func searchSectionHeader(_ title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundColor(color)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.primary)
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+    
+    @ViewBuilder
+    private func searchResultCard(food: FoodItem) -> some View {
+        FoodItemCard(
+            food: food,
+            mealType: mealType,
+            selectedDate: selectedDate,
+            onQuickAdd: {
+                addToRecentFoods(food)
+                toastMessage = "\(food.name) added to \(mealType)"
+                showToast = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    showToast = false
+                }
+            },
+            isCreatingMeal: isCreatingMeal,
+            onFoodSelectedForMeal: onFoodSelectedForMeal
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            HapticFeedback.shared.selectionFeedback()
+            selectedFood = food
+            showingFoodEntry = true
+        }
     }
     
     // Perform search with debounce
@@ -497,6 +572,8 @@ struct FoodSearchView: View {
                 VStack(spacing: 0) {
                 // Fixed header area with title and search bar
                 VStack(spacing: 0) {
+                    // Title bar and search bar - gray background area
+                    VStack(spacing: 0) {
                     // Title bar - matches Dashboard style
                     ZStack {
                         // Center title based on full width
@@ -606,12 +683,14 @@ struct FoodSearchView: View {
                                 .withHapticFeedback()
                             }
                             .padding(8)
-                            .background(Color(.systemGray5))
+                            .background(Color.appInsetBackground)
                             .cornerRadius(10)
                         }
                         .padding(.horizontal)
                     }
                     .padding(.bottom, 8)
+                    }
+                    .background(viewBackground)
                     
                     // Search, Quick add and Meals buttons - only show when search text is empty
                     if searchText.isEmpty {
@@ -627,7 +706,7 @@ struct FoodSearchView: View {
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Color(.systemGray6))
+                                .background(viewBackground)
                                 .cornerRadius(8)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
@@ -646,7 +725,7 @@ struct FoodSearchView: View {
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Color(.systemGray6))
+                                .background(viewBackground)
                                 .cornerRadius(8)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
@@ -667,7 +746,7 @@ struct FoodSearchView: View {
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
-                                    .background(Color(.systemGray6))
+                                    .background(viewBackground)
                                     .cornerRadius(8)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8)
@@ -687,7 +766,6 @@ struct FoodSearchView: View {
                     Spacer().frame(height: 8)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .background(Color(.systemGray6))
                 .onChange(of: searchText) { oldValue, newValue in
                     // Provide ultra light haptic feedback when typing
                     HapticFeedback.shared.ultraLightFeedback()
@@ -704,8 +782,6 @@ struct FoodSearchView: View {
                         showSuggestions = false
                     }
                 }
-                
-                Divider()
                 
                 // Content area below the fixed header
                 if isSearchingBarcode {
@@ -750,6 +826,57 @@ struct FoodSearchView: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 1) {
+                            // Favorites bar - shown when user has favorites
+                            if !favoritesService.favorites.isEmpty && searchText.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "heart.fill")
+                                            .font(.caption)
+                                            .foregroundColor(.red)
+                                        Text("Favorites")
+                                            .font(.headline)
+                                            .foregroundColor(.primary)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal)
+                                    
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 10) {
+                                            ForEach(favoritesService.favorites) { food in
+                                                Button(action: {
+                                                    HapticFeedback.shared.selectionFeedback()
+                                                    selectedFood = food
+                                                    showingFoodEntry = true
+                                                }) {
+                                                    VStack(spacing: 4) {
+                                                        Text(food.name)
+                                                            .font(.caption)
+                                                            .fontWeight(.medium)
+                                                            .lineLimit(2)
+                                                            .multilineTextAlignment(.center)
+                                                            .foregroundColor(.primary)
+                                                        Text("\(food.calories) kcal")
+                                                            .font(.caption2)
+                                                            .foregroundColor(.secondary)
+                                                    }
+                                                    .frame(width: 90, height: 56)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 10)
+                                                            .fill(Color.appCardBackground)
+                                                            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 1)
+                                                    )
+                                                }
+                                                .buttonStyle(PlainButtonStyle())
+                                            }
+                                        }
+                                        .padding(.horizontal)
+                                    }
+                                }
+                                .padding(.top, 8)
+                                .padding(.bottom, 4)
+                            }
+                            
+                            Spacer().frame(height: 4)
                             if searchText.isEmpty {
                                 // Show either Meals view or Recently Added Foods
                                 if showingMealsView {
@@ -761,18 +888,7 @@ struct FoodSearchView: View {
                                         
                                         Spacer()
                                         
-                                        Button(action: {
-                                            HapticManager.shared.lightFeedback()
-                                            showingCreateMeal = true
-                                        }) {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "plus")
-                                                    .font(.system(size: 14, weight: .semibold))
-                                                Text("Create Meal")
-                                                    .font(.system(size: 16, weight: .semibold))
-                                            }
-                                            .foregroundColor(.blue)
-                                        }
+                                        CreateMealButton(mealType: mealType, selectedDate: selectedDate)
                                     }
                                     .padding(.horizontal)
                                     .padding(.top, 16)
@@ -849,6 +965,16 @@ struct FoodSearchView: View {
                                 }
                             } else {
                                 // User is typing or has submitted search
+                                
+                                // Show matching favorites at the top
+                                if !matchingFavorites.isEmpty {
+                                    searchSectionHeader("Favorites", icon: "heart.fill", color: .red)
+                                        .padding(.top, 8)
+                                    
+                                    ForEach(matchingFavorites) { food in
+                                        searchResultCard(food: food)
+                                    }
+                                }
                                 
                                 // Always show History section if there are matching foods from food log
                                 if !historyFoods.isEmpty {
@@ -959,70 +1085,44 @@ struct FoodSearchView: View {
                                             Spacer()
                                         }
                                     } else if !filteredFoods.isEmpty || !verifiedFoodResults.isEmpty {
-                                        Text("Search Results")
-                                            .font(.headline)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.horizontal)
-                                            .padding(.top, historyFoods.isEmpty ? 8 : 0)
-                                        
                                         // Show verified foods at the top of search results
-                                        ForEach(verifiedFoodResults) { food in
-                                            FoodItemCard(
-                                                food: food,
-                                                mealType: mealType,
-                                                selectedDate: selectedDate,
-                                                onQuickAdd: {
-                                                    // Add to recent foods when quick added
-                                                    addToRecentFoods(food)
-                                                    
-                                                    // Show toast notification
-                                                    toastMessage = "\(food.name) added to \(mealType)"
-                                                    showToast = true
-                                                    
-                                                    // Hide toast after 2 seconds
-                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                                        showToast = false
-                                                    }
-                                                },
-                                                isCreatingMeal: isCreatingMeal,
-                                                onFoodSelectedForMeal: onFoodSelectedForMeal
-                                            )
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                HapticFeedback.shared.selectionFeedback()
-                                                selectedFood = food
-                                                showingFoodEntry = true
+                                        if !verifiedFoodResults.isEmpty {
+                                            searchSectionHeader("Verified", icon: "checkmark.seal.fill", color: .green)
+                                                .padding(.top, historyFoods.isEmpty ? 8 : 0)
+                                            
+                                            ForEach(verifiedFoodResults) { food in
+                                                searchResultCard(food: food)
                                             }
                                         }
                                         
-                                        // Then show regular search results
-                                        ForEach(filteredFoods) { food in
-                                            FoodItemCard(
-                                                food: food,
-                                                mealType: mealType,
-                                                selectedDate: selectedDate,
-                                                onQuickAdd: {
-                                                    // Add to recent foods when quick added
-                                                    addToRecentFoods(food)
-                                                    
-                                                    // Show toast notification
-                                                    toastMessage = "\(food.name) added to \(mealType)"
-                                                    showToast = true
-                                                    
-                                                    // Hide toast after 2 seconds
-                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                                        showToast = false
-                                                    }
-                                                },
-                                                isCreatingMeal: isCreatingMeal,
-                                                onFoodSelectedForMeal: onFoodSelectedForMeal
-                                            )
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                // Provide selection haptic feedback when tapping a food item
-                                                HapticFeedback.shared.selectionFeedback()
-                                                selectedFood = food
-                                                showingFoodEntry = true
+                                        // Common Foods section (USDA ingredients)
+                                        if !commonFoods.isEmpty {
+                                            searchSectionHeader("Common Foods", icon: "leaf.fill", color: .green)
+                                                .padding(.top, verifiedFoodResults.isEmpty && historyFoods.isEmpty ? 8 : 0)
+                                            
+                                            ForEach(commonFoods) { food in
+                                                searchResultCard(food: food)
+                                            }
+                                        }
+                                        
+                                        // Products section (branded foods)
+                                        if !brandedFoods.isEmpty {
+                                            searchSectionHeader("Products", icon: "cart.fill", color: .blue)
+                                            
+                                            ForEach(brandedFoods) { food in
+                                                searchResultCard(food: food)
+                                            }
+                                        }
+                                        
+                                        // Unsectioned results (legacy/unknown source)
+                                        if !unsectionedFoods.isEmpty {
+                                            if commonFoods.isEmpty && brandedFoods.isEmpty {
+                                                searchSectionHeader("Search Results", icon: "magnifyingglass", color: .secondary)
+                                                    .padding(.top, historyFoods.isEmpty ? 8 : 0)
+                                            }
+                                            
+                                            ForEach(unsectionedFoods) { food in
+                                                searchResultCard(food: food)
                                             }
                                         }
                                     } else if historyFoods.isEmpty {
@@ -1050,12 +1150,15 @@ struct FoodSearchView: View {
                 // Store current meal type for search ranking
                 UserDefaults.standard.set(mealType, forKey: "currentMealType")
                 
+                // Pre-load recent foods cache once
+                loadRecentFoodsCache()
+                
                 // Initialize suggestions
                 suggestionService.getSuggestions(for: searchText)
                 
                 if searchText.isEmpty {
                     // Don't fetch all foods when search is empty
-                    // Recent foods will be shown from UserDefaults
+                    // Recent foods will be shown from cache
                 } else {
                     performSearch()
                 }
@@ -1068,9 +1171,6 @@ struct FoodSearchView: View {
             }
             .sheet(isPresented: $showingAddFoodView) {
                 AddFoodView(mealType: mealType, selectedDate: selectedDate)
-            }
-            .sheet(isPresented: $showingCreateMeal) {
-                CreateMealBuilderView(mealType: mealType, selectedDate: selectedDate)
             }
             .navigationDestination(isPresented: $showingFoodEntry) {
                 if !isCreatingMeal, let food = selectedFood {
@@ -1226,6 +1326,7 @@ struct TappableFoodItemCard: View {
 // Food item card component
 struct FoodItemCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var favoritesService = FavoriteFoodsService.shared
     let food: FoodItem
     let mealType: String
     let selectedDate: Date
@@ -1234,11 +1335,15 @@ struct FoodItemCard: View {
     var onFoodSelectedForMeal: ((FoodEntry) -> Void)? = nil
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @ObservedObject private var foodLogManager = FoodLogManager.shared
-    @State private var showingFoodEntry = false
+    
+    // Computed once per render: effective NOVA score (original or predicted)
+    private var effectiveNovaScore: Int {
+        food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
+    }
     
     // Format serving size to display nicely with 2 decimal places when needed
     private func formatServingSize(_ servingSize: String?) -> String {
@@ -1274,10 +1379,9 @@ struct FoodItemCard: View {
         return servingSize
     }
     
-    // Get color based on NOVA score (use predicted score if original is 0)
+    // Get color based on NOVA score (uses cached effectiveNovaScore)
     private var novaScoreColor: Color {
-        let displayScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
-        switch displayScore {
+        switch effectiveNovaScore {
         case 1: return Color(hex: "#3f993f")  // Unprocessed - darker green
         case 2: return Color(hex: "#b7ce0d")  // Processed culinary ingredients - lime green
         case 3: return Color(hex: "#f28e16")  // Processed foods - orange
@@ -1337,15 +1441,14 @@ struct FoodItemCard: View {
                         .foregroundColor(.gray)
                     
                     // NOVA score if available (don't show for meals - only individual food items)
-                    if !food.isMeal && (food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0) {
+                    if !food.isMeal && effectiveNovaScore > 0 {
                         // Add comma before NOVA score
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             
-                        let displayNovaScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
                         let isEstimated = food.novaScoreIsEstimated || food.novaScore == 0
-                        Text("\(isEstimated ? "✨ " : "")NOVA \(displayNovaScore)")
+                        Text("\(isEstimated ? "✨ " : "")NOVA \(effectiveNovaScore)")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -1374,23 +1477,32 @@ struct FoodItemCard: View {
             
             Spacer()
             
-            // Calories and Quick Add Button
+            // Calories, Favorite, and Quick Add Button
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(displayCalories()) kcal")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 
-                Button(action: {
-                    // Quick add - always add directly without opening entry view
-                    // User can tap on the food item itself to edit servings
-                    quickAddFood()
-                }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.blue)
+                HStack(spacing: 8) {
+                    Button(action: {
+                        favoritesService.toggleFavorite(food)
+                    }) {
+                        Image(systemName: favoritesService.isFavorite(food) ? "heart.fill" : "heart")
+                            .font(.system(size: 16))
+                            .foregroundColor(favoritesService.isFavorite(food) ? .red : .gray)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Button(action: {
+                        quickAddFood()
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .withHapticFeedback()
                 }
-                .buttonStyle(PlainButtonStyle())
-                .withHapticFeedback()
             }
         }
         .padding(.vertical, 12)
@@ -1402,51 +1514,10 @@ struct FoodItemCard: View {
         )
         .padding(.horizontal, 8)
         .frame(height: 72) // Maintain consistent height similar to rows
-        .sheet(isPresented: $showingFoodEntry) {
-            if isCreatingMeal {
-                // Show BasicFoodEntryView for meal creation
-                BasicFoodEntryView(
-                    food: food,
-                    mealType: mealType,
-                    selectedDate: selectedDate,
-                    onFoodAdded: { cachedFood in
-                        // Create FoodEntry from the cached food with serving info
-                        if let onFoodSelectedForMeal = onFoodSelectedForMeal,
-                           let servingSize = cachedFood.cachedServingSize,
-                           let servingUnit = cachedFood.cachedServingUnit,
-                           let numberOfServings = cachedFood.cachedNumberOfServings {
-                            let foodEntry = FoodEntry(
-                                id: UUID(),
-                                foodItem: cachedFood,
-                                mealType: mealType,
-                                servingSize: servingSize,
-                                servingUnit: servingUnit,
-                                numberOfServings: numberOfServings,
-                                dateAdded: selectedDate
-                            )
-                            onFoodSelectedForMeal(foodEntry)
-                        }
-                        showingFoodEntry = false
-                    },
-                    showScanAgainButton: false,
-                    isCreatingMeal: true,
-                    editingEntry: nil,
-                    initialServingSize: food.cachedServingSize,
-                    initialServingUnit: food.cachedServingUnit,
-                    initialNumberOfServings: food.cachedNumberOfServings,
-                    initialSelectedServingSizeOption: food.cachedSelectedServingSizeOption
-                )
-            }
-        }
     }
     
     // Display serving size - either cached or original
     private func displayServingSize() -> String {
-        print("🔍 displayServingSize for \(food.name):")
-        print("   - cachedServingSize: \(food.cachedServingSize ?? 0)")
-        print("   - cachedServingUnit: \(food.cachedServingUnit ?? "nil")")
-        print("   - cachedNumberOfServings: \(food.cachedNumberOfServings ?? 0)")
-        print("   - cachedSelectedServingSizeOption: \(food.cachedSelectedServingSizeOption ?? "nil")")
         
         if let cachedSize = food.cachedServingSize,
            let cachedUnit = food.cachedServingUnit,
@@ -1456,7 +1527,6 @@ struct FoodItemCard: View {
             let formattedSize = totalSize.truncatingRemainder(dividingBy: 1) == 0 ? 
                 String(format: "%.0f", totalSize) : String(format: "%.1f", totalSize)
             let result = "\(formattedSize)\(cachedUnit)"
-            print("   - using cached total: \(result)")
             return result
         } else if let cachedSize = food.cachedServingSize,
                   let cachedUnit = food.cachedServingUnit,
@@ -1466,7 +1536,6 @@ struct FoodItemCard: View {
             let formattedSize = totalSize.truncatingRemainder(dividingBy: 1) == 0 ? 
                 String(format: "%.0f", totalSize) : String(format: "%.1f", totalSize)
             let result = "\(formattedSize)\(cachedUnit)"
-            print("   - using cached fallback: \(result)")
             return result
         } else {
             // Try to extract grams from serving size string (e.g., "1 serving (180 g)" -> "180g")
@@ -1483,7 +1552,6 @@ struct FoodItemCard: View {
                                 let formattedValue = value.truncatingRemainder(dividingBy: 1) == 0 ? 
                                     String(format: "%.0f", value) : String(format: "%.1f", value)
                                 let result = "\(formattedValue)g"
-                                print("   - extracted grams from parentheses: \(result)")
                                 return result
                             }
                         }
@@ -1492,9 +1560,7 @@ struct FoodItemCard: View {
             }
             
             // Show original serving size formatted
-            let result = formatServingSize(food.servingSize)
-            print("   - using original: \(result)")
-            return result
+            return formatServingSize(food.servingSize)
         }
     }
     
@@ -1690,7 +1756,10 @@ public struct FoodItem: Identifiable, Codable, Equatable {
     // Flag to identify if this is a verified food with curated nutrition data
     public let isVerified: Bool
     
-    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, novaScoreIsEstimated: Bool = false, nutriScoreGrade: String? = nil, nutriScoreIsEstimated: Bool = false, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, fiber: Double? = nil, sugar: Double? = nil, sodium: Double? = nil, saturatedFat: Double? = nil, ingredients: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil, countries: [String]? = nil, purchasePlaces: String? = nil, origins: String? = nil, isMeal: Bool = false, isVerified: Bool = false) {
+    // Data source tag for sectioned results: "usda", "brand", "verified", or "unknown"
+    public let dataSource: String
+    
+    public init(name: String, brandName: String? = nil, barcode: String? = nil, calories: Int, protein: Double, carbs: Double, fat: Double, novaScore: Int = 0, novaScoreIsEstimated: Bool = false, nutriScoreGrade: String? = nil, nutriScoreIsEstimated: Bool = false, servingSize: String? = nil, servingsPerPackage: Double? = nil, servingType: String? = nil, fiber: Double? = nil, sugar: Double? = nil, sodium: Double? = nil, saturatedFat: Double? = nil, ingredients: String? = nil, cachedServingSize: Double? = nil, cachedServingUnit: String? = nil, cachedNumberOfServings: Double? = nil, cachedSelectedServingSizeOption: String? = nil, countries: [String]? = nil, purchasePlaces: String? = nil, origins: String? = nil, isMeal: Bool = false, isVerified: Bool = false, dataSource: String = "unknown") {
         self.id = UUID()
         self.name = name
         self.brandName = brandName
@@ -1720,11 +1789,12 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         self.origins = origins
         self.isMeal = isMeal
         self.isVerified = isVerified
+        self.dataSource = dataSource
     }
     
     // Codable implementation
     enum CodingKeys: String, CodingKey {
-        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, novaScoreIsEstimated, nutriScoreGrade, nutriScoreIsEstimated, servingSize, servingsPerPackage, servingType, fiber, sugar, sodium, saturatedFat, ingredients, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption, countries, purchasePlaces, origins, isMeal, isVerified
+        case id, name, brandName, barcode, calories, protein, carbs, fat, novaScore, novaScoreIsEstimated, nutriScoreGrade, nutriScoreIsEstimated, servingSize, servingsPerPackage, servingType, fiber, sugar, sodium, saturatedFat, ingredients, cachedServingSize, cachedServingUnit, cachedNumberOfServings, cachedSelectedServingSizeOption, countries, purchasePlaces, origins, isMeal, isVerified, dataSource
     }
     
     public init(from decoder: Decoder) throws {
@@ -1758,6 +1828,7 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         origins = try container.decodeIfPresent(String.self, forKey: .origins)
         isMeal = try container.decodeIfPresent(Bool.self, forKey: .isMeal) ?? false
         isVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false
+        dataSource = try container.decodeIfPresent(String.self, forKey: .dataSource) ?? "unknown"
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -1791,6 +1862,7 @@ public struct FoodItem: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(origins, forKey: .origins)
         try container.encode(isMeal, forKey: .isMeal)
         try container.encode(isVerified, forKey: .isVerified)
+        try container.encode(dataSource, forKey: .dataSource)
     }
 }
 
@@ -1798,6 +1870,11 @@ public struct FoodItem: Identifiable, Codable, Equatable {
 struct FoodItemRow: View {
     let food: FoodItem
     @StateObject private var visibilityService = MetricVisibilityService.shared
+    
+    // Computed once per render: effective NOVA score (original or predicted)
+    private var effectiveNovaScore: Int {
+        food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
+    }
     
     // Format serving size to display nicely with 2 decimal places when needed
     private func formatServingSize(_ servingSize: String?) -> String {
@@ -1833,10 +1910,9 @@ struct FoodItemRow: View {
         return servingSize
     }
     
-    // Get color based on NOVA score (use predicted score if original is 0)
+    // Get color based on NOVA score (uses cached effectiveNovaScore)
     private var novaScoreColor: Color {
-        let displayScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
-        switch displayScore {
+        switch effectiveNovaScore {
         case 1: return Color(hex: "#3f993f")  // Unprocessed - darker green
         case 2: return Color(hex: "#b7ce0d")  // Processed culinary ingredients - lime green
         case 3: return Color(hex: "#f28e16")  // Processed foods - orange
@@ -1906,15 +1982,14 @@ struct FoodItemRow: View {
                         .foregroundColor(.gray)
                     
                     // NOVA score if available and visible
-                    if visibilityService.showNovaScore && (food.novaScore > 0 || NovaScoreService.shared.predictNovaScore(for: food) > 0) {
+                    if visibilityService.showNovaScore && effectiveNovaScore > 0 {
                         // Add comma before NOVA score
                         Text(",")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             
-                        let displayNovaScore = food.novaScore > 0 ? food.novaScore : NovaScoreService.shared.predictNovaScore(for: food)
                         let isEstimated = food.novaScoreIsEstimated || food.novaScore == 0
-                        Text("\(isEstimated ? "✨ " : "")NOVA \(displayNovaScore)")
+                        Text("\(isEstimated ? "✨ " : "")NOVA \(effectiveNovaScore)")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 4)
@@ -2102,7 +2177,7 @@ struct FoodQualityIndicator: View {
     let color: Color
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -2148,7 +2223,7 @@ struct SavedMealCard: View {
     let onQuickAdd: () -> Void
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @ObservedObject private var foodLogManager = FoodLogManager.shared
@@ -2199,10 +2274,19 @@ struct SavedMealCard: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.primary)
                         
-                        // Food count
-                        Text("\(meal.foods.count) item\(meal.foods.count == 1 ? "" : "s")")
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
+                        // Food count and servings info
+                        HStack(spacing: 4) {
+                            Text("\(meal.foods.count) item\(meal.foods.count == 1 ? "" : "s")")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                            if meal.numberOfServings > 1 {
+                                Text("·")
+                                    .foregroundColor(.secondary)
+                                Text("\(Int(meal.numberOfServings)) servings")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     
                     Spacer()

@@ -13,7 +13,11 @@ struct NotificationSettingsView: View {
     @State private var showingPermissionAlert = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
+    }
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -34,6 +38,7 @@ struct NotificationSettingsView: View {
                             }
                         }
                     }
+                    .listRowBackground(cardBackground)
             } footer: {
                 Text("Enable notifications to receive helpful reminders and celebrate your progress.")
             }
@@ -42,9 +47,11 @@ struct NotificationSettingsView: View {
                 // Daily Reminder
                 Section {
                     Toggle("Daily Logging Reminder", isOn: $notificationManager.dailyReminderEnabled)
+                        .listRowBackground(cardBackground)
                     
                     if notificationManager.dailyReminderEnabled {
                         DatePicker("Reminder Time", selection: $notificationManager.dailyReminderTime, displayedComponents: .hourAndMinute)
+                            .listRowBackground(cardBackground)
                     }
                 } header: {
                     Text("Daily Reminders")
@@ -55,6 +62,7 @@ struct NotificationSettingsView: View {
                 // Milestones & Achievements
                 Section {
                     Toggle("Milestone Celebrations", isOn: $notificationManager.milestonesEnabled)
+                        .listRowBackground(cardBackground)
                 } header: {
                     Text("Achievements")
                 } footer: {
@@ -64,6 +72,7 @@ struct NotificationSettingsView: View {
                 // Weekly Summary
                 Section {
                     Toggle("Weekly Summary", isOn: $notificationManager.weeklySummaryEnabled)
+                        .listRowBackground(cardBackground)
                 } header: {
                     Text("Progress Updates")
                 } footer: {
@@ -73,6 +82,7 @@ struct NotificationSettingsView: View {
                 // Re-engagement
                 Section {
                     Toggle("Re-engagement Reminders", isOn: $notificationManager.reEngagementEnabled)
+                        .listRowBackground(cardBackground)
                 } header: {
                     Text("Stay Connected")
                 } footer: {
@@ -82,6 +92,7 @@ struct NotificationSettingsView: View {
                 // Data Insights
                 Section {
                     Toggle("Data Insights", isOn: $notificationManager.dataInsightsEnabled)
+                        .listRowBackground(cardBackground)
                 } header: {
                     Text("Learn About Your Patterns")
                 } footer: {
@@ -91,10 +102,13 @@ struct NotificationSettingsView: View {
                 // Quiet Hours
                 Section {
                     Toggle("Quiet Hours", isOn: $notificationManager.quietHoursEnabled)
+                        .listRowBackground(cardBackground)
                     
                     if notificationManager.quietHoursEnabled {
                         DatePicker("Start", selection: $notificationManager.quietHoursStart, displayedComponents: .hourAndMinute)
+                            .listRowBackground(cardBackground)
                         DatePicker("End", selection: $notificationManager.quietHoursEnd, displayedComponents: .hourAndMinute)
+                            .listRowBackground(cardBackground)
                     }
                 } header: {
                     Text("Do Not Disturb")

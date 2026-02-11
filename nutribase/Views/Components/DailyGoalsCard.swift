@@ -27,6 +27,7 @@ struct GoalMetric: Identifiable, Equatable {
         case caloriesRemaining = "Cal Remaining"
         case carbs = "Carbs"
         case fat = "Fat"
+        case fibre = "Fibre"
         // case water = "Water" // TEMPORARILY DISABLED
         // case sleep = "Sleep" // TEMPORARILY DISABLED
     }
@@ -36,7 +37,7 @@ struct DailyGoalsCard: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Preview mode flag
@@ -78,6 +79,10 @@ struct DailyGoalsCard: View {
     var fatConsumed: Int = 0
     var fatGoal: Int = 65
     
+    // Fibre goal
+    var fibreConsumed: Int = 0
+    var fibreGoal: Int = 30
+    
     // State for showing the settings sheet
     @State private var showingSettings = false
     
@@ -99,6 +104,8 @@ struct DailyGoalsCard: View {
                 return visibilityService.showCarbs
             case .fat:
                 return visibilityService.showFat
+            case .fibre:
+                return true // Always show fibre
             case .nova4:
                 return visibilityService.showNovaScore
             case .steps, .activityCalories:
@@ -163,8 +170,7 @@ struct DailyGoalsCard: View {
                             // Background circle
                             Circle()
                                 .stroke(lineWidth: 6)
-                                .opacity(0.2)
-                                .foregroundColor(Color.gray)
+                                .foregroundColor(Color.appInsetBackground)
                             
                             // Progress circle
                             Circle()
@@ -303,11 +309,11 @@ struct DailyGoalsSettingsView: View {
     @StateObject private var visibilityService = MetricVisibilityService.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // State for drag operation
@@ -326,6 +332,8 @@ struct DailyGoalsSettingsView: View {
                 return visibilityService.showCarbs
             case .fat:
                 return visibilityService.showFat
+            case .fibre:
+                return true // Always show fibre
             case .nova4:
                 return visibilityService.showNovaScore
             case .steps, .activityCalories:
@@ -336,7 +344,6 @@ struct DailyGoalsSettingsView: View {
         }
     }
     
-    // Filter available metrics in library by visibility
     private var availableMetrics: [GoalMetric] {
         return metricsManager.metrics.filter { metric in
             switch metric.type {
@@ -348,6 +355,8 @@ struct DailyGoalsSettingsView: View {
                 return visibilityService.showCarbs
             case .fat:
                 return visibilityService.showFat
+            case .fibre:
+                return true // Always show fibre
             case .nova4:
                 return visibilityService.showNovaScore
             case .steps, .activityCalories:
@@ -472,6 +481,7 @@ struct DailyGoalsSettingsView: View {
                         metricsManager.saveMetrics()
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }
@@ -486,7 +496,7 @@ struct MetricCard: View {
     @State private var isDragging = false
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -550,6 +560,8 @@ struct MetricPreviewCard: View {
             return "120g"
         case .fat:
             return "45g"
+        case .fibre:
+            return "18g"
         // case .water: // TEMPORARILY DISABLED
         //     return "1.2L"
         // case .sleep: // TEMPORARILY DISABLED
@@ -575,6 +587,8 @@ struct MetricPreviewCard: View {
             return "/250g"
         case .fat:
             return "/65g"
+        case .fibre:
+            return "/30g"
         // case .water: // TEMPORARILY DISABLED
         //     return "/2L"
         // case .sleep: // TEMPORARILY DISABLED
@@ -588,8 +602,7 @@ struct MetricPreviewCard: View {
                 // Background circle
                 Circle()
                     .stroke(lineWidth: 6)
-                    .opacity(0.2)
-                    .foregroundColor(Color.gray)
+                    .foregroundColor(Color.appInsetBackground)
                 
                 // Progress circle - using 0.7 as a sample progress value for preview
                 Circle()
@@ -664,6 +677,8 @@ extension DailyGoalsCard {
             return carbsGoal > 0 ? Double(carbsConsumed) / Double(carbsGoal) : 0
         case .fat:
             return fatGoal > 0 ? Double(fatConsumed) / Double(fatGoal) : 0
+        case .fibre:
+            return fibreGoal > 0 ? Double(fibreConsumed) / Double(fibreGoal) : 0
         // case .water: // TEMPORARILY DISABLED
         //     return 0.6 // Placeholder
         // case .sleep: // TEMPORARILY DISABLED
@@ -690,6 +705,8 @@ extension DailyGoalsCard {
             return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow
         case .fat:
             return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink
+        case .fibre:
+            return Color(red: 0.4, green: 0.8, blue: 0.4) // Light green
         // case .water: // TEMPORARILY DISABLED
         //     return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
         // case .sleep: // TEMPORARILY DISABLED
@@ -717,6 +734,8 @@ extension DailyGoalsCard {
             return "\(carbsConsumed)g"
         case .fat:
             return "\(fatConsumed)g"
+        case .fibre:
+            return "\(fibreConsumed)g"
         // case .water: // TEMPORARILY DISABLED
         //     return "1.2L" // Placeholder
         // case .sleep: // TEMPORARILY DISABLED
@@ -743,6 +762,8 @@ extension DailyGoalsCard {
             return "/\(carbsGoal)g"
         case .fat:
             return "/\(fatGoal)g"
+        case .fibre:
+            return "/\(fibreGoal)g"
         // case .water: // TEMPORARILY DISABLED
         //     return "/2L"
         // case .sleep: // TEMPORARILY DISABLED
@@ -770,6 +791,8 @@ func colorForMetricType(_ type: GoalMetric.MetricType) -> Color {
         return Color(red: 1.0, green: 0.8, blue: 0.0) // Bright yellow
     case .fat:
         return Color(red: 1.0, green: 0.4, blue: 0.6) // Bright pink
+    case .fibre:
+        return Color(red: 0.4, green: 0.8, blue: 0.4) // Light green
     // case .water: // TEMPORARILY DISABLED
     //     return Color(red: 0.0, green: 0.8, blue: 1.0) // Bright cyan
     // case .sleep: // TEMPORARILY DISABLED
@@ -795,6 +818,8 @@ func iconForMetricType(_ type: GoalMetric.MetricType) -> String {
         return "c.circle"
     case .fat:
         return "f.circle"
+    case .fibre:
+        return "leaf.fill"
     // case .water: // TEMPORARILY DISABLED
     //     return "drop"
     // case .sleep: // TEMPORARILY DISABLED
@@ -823,6 +848,8 @@ extension DailyGoalsSettingsView {
             return 0.45 // Sample 45%
         case .carbs:
             return 0.55 // Sample 55%
+        case .fibre:
+            return 0.60 // Sample 60%
         // case .water: // TEMPORARILY DISABLED
         //     return 0.25 // Sample 25%
         // case .sleep: // TEMPORARILY DISABLED
@@ -848,6 +875,8 @@ extension DailyGoalsSettingsView {
             return Color.pink
         case .carbs:
             return Color.yellow
+        case .fibre:
+            return Color(red: 0.4, green: 0.8, blue: 0.4)
         // case .water: // TEMPORARILY DISABLED
         //     return Color.cyan
         // case .sleep: // TEMPORARILY DISABLED
@@ -873,6 +902,8 @@ extension DailyGoalsSettingsView {
             return "45"
         case .carbs:
             return "120"
+        case .fibre:
+            return "18"
         // case .water: // TEMPORARILY DISABLED
         //     return "500"
         // case .sleep: // TEMPORARILY DISABLED
@@ -897,6 +928,8 @@ extension DailyGoalsSettingsView {
         case .fat:
             return "/\(metric.goal)g"
         case .carbs:
+            return "/\(metric.goal)g"
+        case .fibre:
             return "/\(metric.goal)g"
         // case .water: // TEMPORARILY DISABLED
         //     return "/\(metric.goal)ml"
@@ -1026,7 +1059,7 @@ struct GoalsSettingsCard: View {
     @ObservedObject private var userProfile = UserProfile.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {

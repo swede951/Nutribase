@@ -24,7 +24,7 @@ struct CardStyle: ViewModifier {
     @State private var isPressed = false
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     func body(content: Content) -> some View {

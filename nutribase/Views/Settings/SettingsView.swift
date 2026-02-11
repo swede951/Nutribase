@@ -20,7 +20,7 @@ struct SettingsViewOld: View {
         NavigationStack {
             ZStack {
                 // Background color matching other views
-                Color(.systemGray6)
+                Color.appBackground
                     .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
@@ -34,7 +34,7 @@ struct SettingsViewOld: View {
                     .padding(.horizontal)
                     .padding(.bottom, 8)
                     .padding(.top, 1)
-                    .background(Color(.systemGray6))
+                    .background(Color.appBackground)
                     
                     ScrollView {
                         VStack(spacing: 20) {
@@ -75,7 +75,7 @@ struct SettingsViewOld: View {
                                         .padding(.vertical, 12)
                                     }
                                 }
-                                .background(Color.white)
+                                .background(Color.appCardBackground)
                                 .cornerRadius(16)
                                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                             }

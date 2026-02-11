@@ -14,14 +14,12 @@ struct ProfileView: View {
     @State private var showingChangePassword = false
     @State private var showingDeleteAccountAlert = false
     
-    let availableRegions = ["All Regions", "United Kingdom", "United States", "France", "Germany", "Italy", "Spain", "Netherlands", "Belgium", "Switzerland", "Australia", "Canada", "New Zealand", "Ireland", "Norway", "Sweden", "Denmark"]
-    
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Use display name if set, otherwise extract name from email
@@ -97,38 +95,8 @@ struct ProfileView: View {
                             iconColor: Color(hex: "#35b8ff"),
                             title: "Email",
                             value: authService.currentUser?.email ?? "Not set",
-                            showDivider: true
+                            showDivider: false
                         )
-                        
-                        // Location picker row
-                        VStack(spacing: 0) {
-                            HStack(spacing: 15) {
-                                Image(systemName: "location.fill")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 24, height: 24)
-                                    .foregroundColor(.green)
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Location")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    
-                                    Picker("Location", selection: $userProfile.preferredRegion) {
-                                        ForEach(availableRegions, id: \.self) { region in
-                                            Text(region).tag(region)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .labelsHidden()
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                        }
                     }
                     .background(cardBackground)
                     .cornerRadius(16)
@@ -227,7 +195,7 @@ struct ProfileView: View {
             }
         }
         .navigationTitle("Profile")
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .fullScreenCover(isPresented: $shouldShowLogin) {
             LoginView()

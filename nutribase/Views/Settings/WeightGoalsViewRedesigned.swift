@@ -5,7 +5,7 @@ struct WeightGoalsViewRedesigned: View {
     @StateObject private var userProfile = UserProfile.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     // Expanded state for each card
@@ -500,6 +500,7 @@ struct WeightGoalsViewRedesigned: View {
 
 // MARK: - Collapsible Card Component
 struct CollapsibleCard<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let subtitle: String
     @Binding var isExpanded: Bool
@@ -532,7 +533,7 @@ struct CollapsibleCard<Content: View>: View {
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
                 .padding(16)
-                .background(Color(.systemBackground))
+                .background(Color.appCardBackground)
                 .cornerRadius(isExpanded ? 12 : 12)
             }
             .buttonStyle(PlainButtonStyle())
@@ -540,11 +541,11 @@ struct CollapsibleCard<Content: View>: View {
             // Expanded Content
             if isExpanded {
                 content()
-                    .background(Color(.systemBackground))
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.appCardBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
     }

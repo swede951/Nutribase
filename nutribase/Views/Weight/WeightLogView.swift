@@ -10,11 +10,11 @@ struct WeightLogView: View {
     @State private var showingFilePicker = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     @State private var showingUploadOptions = false
     @State private var showingImportAlert = false
@@ -251,7 +251,7 @@ struct MonthCardView: View {
     private let performanceCache = PerformanceCache.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Calculate if weight increased or decreased this month
@@ -276,23 +276,22 @@ struct MonthCardView: View {
     private var gradientCacheKey: String {
         let colorKey = monthWeightChange > 0 ? "orange" : "blue"
         let modeKey = colorScheme == .dark ? "dark" : "light"
-        return "monthHeader_\(colorKey)_\(modeKey)"
+        return "monthHeader_\(colorKey)_\(modeKey)_v2"
     }
     
     // Performance: Cached gradient image
     private var cachedGradientImage: UIImage {
         let baseColor = monthWeightChange > 0 ? UIColor.systemOrange : UIColor(red: 0.21, green: 0.72, blue: 1.0, alpha: 1.0)
-        let bgColor = colorScheme == .dark ? UIColor.systemGray6 : UIColor.systemBackground
         
         return performanceCache.getOrCreateGradient(
             key: gradientCacheKey,
             colors: [
-                baseColor.withAlphaComponent(0.7),
                 baseColor.withAlphaComponent(0.5),
-                baseColor.withAlphaComponent(0.25),
-                bgColor
+                baseColor.withAlphaComponent(0.3),
+                baseColor.withAlphaComponent(0.1),
+                baseColor.withAlphaComponent(0.0)
             ],
-            size: CGSize(width: 400, height: 100),
+            size: CGSize(width: 400, height: 120),
             direction: .vertical
         )
     }
@@ -348,12 +347,6 @@ struct MonthCardView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
             }
-            .background(
-                // Performance: Use cached gradient image instead of runtime LinearGradient
-                Image(uiImage: cachedGradientImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            )
             
             // Use custom swipe-to-delete implementation
             VStack(spacing: 0) {
@@ -377,8 +370,19 @@ struct MonthCardView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(cardBackground)
+            ZStack {
+                // Base card background
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(cardBackground)
+                
+                // Gradient overlay on top, aligned to top
+                VStack {
+                    Image(uiImage: cachedGradientImage)
+                        .resizable()
+                        .frame(height: 120)
+                    Spacer()
+                }
+            }
         )
         .clipShape(RoundedRectangle(cornerRadius: 16)) // Ensure content respects rounded corners
         .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2) // Shadow applied AFTER clipping
@@ -419,7 +423,7 @@ struct SwipeToDeleteRow: View {
     private let swipeThreshold: CGFloat = 50
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -641,12 +645,14 @@ struct AddWeightEntryView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         saveWeightEntry()
                     }
+                    .foregroundColor(.primary)
                     .disabled(weight.isEmpty)
                 }
             }
@@ -746,7 +752,7 @@ struct WeightEmptyStateView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding()
-                    .background(Color(.systemGray6))
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -778,7 +784,7 @@ struct WeightEmptyStateView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding()
-                    .background(Color(.systemGray6))
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -814,7 +820,7 @@ struct WeightEmptyStateView: View {
                         }
                     }
                     .padding()
-                    .background(Color(.systemGray6))
+                    .background(Color.appCardBackground)
                     .cornerRadius(12)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -1033,6 +1039,7 @@ struct WeightSettingsView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
             .alert("Delete All Weight Data?", isPresented: $showingDeleteConfirmation) {

@@ -13,7 +13,7 @@ struct DataManagementView: View {
     @State private var showingExporter = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -47,6 +47,7 @@ struct DataManagementView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     // Connect Health App
                     NavigationLink(destination: HealthKitConnectionView()) {
@@ -69,6 +70,7 @@ struct DataManagementView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     // Export Weight Data
                     Button(action: {
@@ -93,6 +95,7 @@ struct DataManagementView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     // Clear Weight Data
                     Button(action: {
@@ -117,6 +120,7 @@ struct DataManagementView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                 }
             }
             .scrollContentBackground(.hidden)

@@ -9,9 +9,15 @@ import SwiftUI
 
 struct MealStorageView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var visibleMeals: [MealType]
     @Binding var hiddenMeals: [MealType]
     var onDismiss: () -> Void
+    
+    // Adaptive colors for dark mode support
+    private var galleryBackground: Color {
+        Color.appBackground
+    }
     
     // Available cards (not visible) - simple filter like WidgetStorageView
     private var availableCards: [MealType] {
@@ -20,39 +26,39 @@ struct MealStorageView: View {
     
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background color matching dashboard
-                Color(.systemGray6)
-                    .ignoresSafeArea()
-                
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 20) {
-                        // All cards section
-                        Text("All Cards")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                        
-                        // Show cards in a vertical stack
-                        VStack(spacing: 16) {
-                            ForEach(availableCards, id: \.self) { mealType in
-                                cardPreviewWithOverlay(for: mealType)
-                            }
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 20) {
+                    // All cards section
+                    Text("All Cards")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                    
+                    // Show cards in a vertical stack
+                    VStack(spacing: 16) {
+                        ForEach(availableCards, id: \.self) { mealType in
+                            cardPreviewWithOverlay(for: mealType)
                         }
-                        .padding(.horizontal, 16)
-                        
-                        Spacer()
                     }
-                    .padding(.vertical)
+                    .padding(.horizontal, 16)
+                    
+                    Spacer()
                 }
+                .padding(.vertical)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(galleryBackground.ignoresSafeArea())
+            .scrollContentBackground(.hidden)
             .navigationTitle("Add Cards")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(galleryBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }
@@ -88,7 +94,7 @@ struct MealStorageView: View {
                         Image(systemName: "plus.circle.fill")
                             .font(.title2)
                             .foregroundColor(Color.green.opacity(0.9))
-                            .background(Circle().fill(Color(.systemBackground)))
+                            .background(Circle().fill(Color.appCardBackground))
                     }
                     Spacer()
                 }
@@ -116,6 +122,12 @@ struct MealStorageView: View {
 
 // Static preview that looks like CalorieSummaryCard
 struct CaloriesSummaryPreview: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -195,7 +207,7 @@ struct CaloriesSummaryPreview: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -203,6 +215,12 @@ struct CaloriesSummaryPreview: View {
 
 // Static preview that looks like DailyGoalsCard
 struct DailyGoalsPreview: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -325,7 +343,7 @@ struct DailyGoalsPreview: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -333,7 +351,12 @@ struct DailyGoalsPreview: View {
 
 // Empty meal card preview that matches the actual MealCardView appearance
 struct EmptyMealCardPreview: View {
+    @Environment(\.colorScheme) private var colorScheme
     let mealType: MealType
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -375,7 +398,7 @@ struct EmptyMealCardPreview: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }

@@ -2,106 +2,99 @@ import SwiftUI
 
 struct WidgetStorageView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var cardOrder: [CardType]
     @Binding var hiddenCards: [CardType]
     
-    // Available widgets (not on dashboard)
-    private var availableWidgets: [CardType] {
-        CardType.allCases.filter { !cardOrder.contains($0) && $0 != .empty }
+    /// Background color matching dashboard (grey in light mode, black in dark mode)
+    private var scrollBackground: Color {
+        Color.appBackground
     }
     
-    // Create grid rows similar to dashboard
-    private func createGridRows() -> [[CardType]] {
-        var rows: [[CardType]] = []
-        var currentRow: [CardType] = []
-        var currentRowColumns = 0
-        
-        for cardType in availableWidgets {
-            let cardColumns = cardType.size == .twoByOne ? 2 : 1
-            
-            if currentRowColumns + cardColumns > 2 {
-                // Start new row
-                if !currentRow.isEmpty {
-                    rows.append(currentRow)
-                }
-                currentRow = [cardType]
-                currentRowColumns = cardColumns
-            } else {
-                currentRow.append(cardType)
-                currentRowColumns += cardColumns
-            }
-            
-            // If row is full, start new row
-            if currentRowColumns == 2 {
-                rows.append(currentRow)
-                currentRow = []
-                currentRowColumns = 0
-            }
-        }
-        
-        // Add remaining cards
-        if !currentRow.isEmpty {
-            rows.append(currentRow)
-        }
-        
-        return rows
+    // Grid layout configuration - spacing matches DashboardGridEngine.spacing (16pt)
+    private let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    // Separate hidden cards into 1x1 and full-width
+    private var hiddenOneByOneCards: [CardType] {
+        hiddenCards.filter { $0.size == .oneByOne && $0 != .empty }
+    }
+    
+    private var hiddenFullWidthCards: [CardType] {
+        hiddenCards.filter { $0.size == .twoByOne && $0 != .empty }
     }
     
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background color matching dashboard
-                Color(.systemGray6)
-                    .ignoresSafeArea()
-                
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 20) {
-                        // All widgets section
-                        Text("All Widgets")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                        
-                        // Grid layout matching dashboard
-                        VStack(spacing: 16) {
-                            // Wide cards (2x1) - full width
-                            ForEach(availableWidgets.filter { $0.size == .twoByOne }, id: \.self) { cardType in
-                                widgetPreviewCard(for: cardType)
-                            }
-                            
-                            // Regular cards (1x1) - two columns
-                            let regularCards = availableWidgets.filter { $0.size != .twoByOne }
-                            LazyVGrid(columns: [
-                                GridItem(.flexible(), spacing: 16),
-                                GridItem(.flexible(), spacing: 16)
-                            ], spacing: 16) {
-                                ForEach(regularCards, id: \.self) { cardType in
-                                    widgetPreviewCard(for: cardType)
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(spacing: 16) {
+                    if hiddenCards.isEmpty || (hiddenOneByOneCards.isEmpty && hiddenFullWidthCards.isEmpty) {
+                        // All widgets are on the dashboard
+                        VStack(spacing: 12) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.largeTitle)
+                                .foregroundColor(.green)
+                            Text("All widgets added")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            Text("All available widgets are on your dashboard")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 60)
+                    } else {
+                        // 1x1 cards in a 2-column grid
+                        if !hiddenOneByOneCards.isEmpty {
+                            LazyVGrid(columns: columns, spacing: 16) {
+                                ForEach(hiddenOneByOneCards, id: \.self) { cardType in
+                                    galleryCardWrapper(for: cardType)
                                 }
                             }
+                            .padding(.horizontal)
                         }
-                        .padding(.horizontal, 16)
                         
-                        Spacer()
+                        // Full-width cards stacked vertically
+                        if !hiddenFullWidthCards.isEmpty {
+                            VStack(spacing: 16) {
+                                ForEach(hiddenFullWidthCards, id: \.self) { cardType in
+                                    galleryCardWrapper(for: cardType)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
                     }
-                    .padding(.vertical)
+                    
+                    Spacer()
                 }
+                .padding(.vertical)
             }
+            .background(scrollBackground.ignoresSafeArea())
+            .scrollContentBackground(.hidden)
             .navigationTitle("Widget Gallery")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(scrollBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }
     }
     
     private func addWidgetToDashboard(_ cardType: CardType) {
-        // Add the card to the dashboard (wide cards are handled by gridCellColumns(2) in the view)
-        cardOrder.append(cardType)
+        // Handle special cases for cards that span two columns
+        if cardType == .novaGroups || cardType == .nutriScore {
+            cardOrder.append(cardType)
+            cardOrder.append(cardType) // Add twice for the two-column span
+        } else {
+            cardOrder.append(cardType)
+        }
         
         // Remove from hidden cards if it was there
         if let index = hiddenCards.firstIndex(of: cardType) {
@@ -112,59 +105,32 @@ struct WidgetStorageView: View {
         dismiss()
     }
     
+    /// Wraps an editor preview card with a green + button overlay
     @ViewBuilder
-    private func widgetPreviewCard(for cardType: CardType) -> some View {
-        ZStack {
-            // Actual card preview with placeholder data - full size
-            cardPreviewView(for: cardType)
+    private func galleryCardWrapper(for cardType: CardType) -> some View {
+        ZStack(alignment: .topLeading) {
+            // Use the same editor preview cards as the edit dashboard
+            EditorPreviewCardProvider.previewView(for: cardType)
+                .allowsHitTesting(false) // Prevent interaction with card internals
             
-            // Green plus button overlay - positioned outside card bounds
-            VStack {
-                HStack {
-                    Button(action: {
-                        addWidgetToDashboard(cardType)
-                    }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(Color.green.opacity(0.9))
-                            .background(Circle().fill(Color(.systemBackground)))
-                    }
-                    Spacer()
-                }
-                Spacer()
+            // Green + button in top-left (same position as red - button in edit mode)
+            Button(action: {
+                addWidgetToDashboard(cardType)
+            }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.green)
+                    .background(
+                        Circle()
+                            .fill(Color.appCardBackground)
+                            .frame(width: 20, height: 20)
+                    )
             }
-            .offset(x: -10, y: -10)  // Position button outside card bounds
+            .offset(x: -6, y: -6)
         }
-    }
-    
-    // Returns the actual card view in preview mode
-    @ViewBuilder
-    private func cardPreviewView(for cardType: CardType) -> some View {
-        switch cardType {
-        case .currentWeight:
-            CurrentWeightCardView(isPreview: true)
-        case .weightChart:
-            WeightChartCardView(isPreview: true)
-        case .calorieTarget:
-            CalorieTargetCardView(isPreview: true)
-        case .protein:
-            ProteinCardView(isPreview: true)
-        case .carbs:
-            CarbsCardView(isPreview: true)
-        case .fat:
-            FatCardView(isPreview: true)
-        case .activity:
-            StepsCardView(isPreview: true)
-        case .dailyGoals:
-            DailyGoalsCardView(isPreview: true)
-        case .novaGroups:
-            NovaGroupsCardView(isPreview: true)
-        case .nutriScore:
-            NutriScoreCardView(isPreview: true)
-        case .gutHealth:
-            GutHealthCardView(isPreview: true)
-        case .empty:
-            EmptyView()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            addWidgetToDashboard(cardType)
         }
     }
 }
@@ -172,6 +138,6 @@ struct WidgetStorageView: View {
 #Preview {
     WidgetStorageView(
         cardOrder: .constant([.currentWeight, .weightChart, .calorieTarget, .protein]),
-        hiddenCards: .constant([.carbs, .fat, .activity]) // .water removed - TEMPORARILY DISABLED
+        hiddenCards: .constant([.carbs, .fat, .novaGroups, .activity])
     )
 }

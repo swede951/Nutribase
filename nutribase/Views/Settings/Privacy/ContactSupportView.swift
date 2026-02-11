@@ -5,7 +5,15 @@ struct ContactSupportView: View {
     @State private var message = ""
     @State private var showingAlert = false
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         Form {
             Section(header: Text("Contact Information")) {
                 HStack {
@@ -19,6 +27,7 @@ struct ContactSupportView: View {
                     openEmail()
                 }
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("Quick Links")) {
                 Link(destination: URL(string: "https://nutribase.app/faq")!) {
@@ -41,6 +50,7 @@ struct ContactSupportView: View {
                     }
                 }
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("App Information")) {
                 HStack {
@@ -57,6 +67,7 @@ struct ContactSupportView: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("Feedback")) {
                 Button("Report a Bug") {
@@ -71,10 +82,13 @@ struct ContactSupportView: View {
                     openEmail(subject: "Feedback")
                 }
             }
+            .listRowBackground(Color.appCardBackground)
+        }
+        .scrollContentBackground(.hidden)
         }
         .navigationTitle("Contact Support")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
     

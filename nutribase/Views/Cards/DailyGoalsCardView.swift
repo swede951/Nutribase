@@ -17,6 +17,7 @@ struct DailyGoalsCardView: View {
     private var previewProtein: Int { 85 }
     private var previewCarbs: Int { 180 }
     private var previewFat: Int { 45 }
+    private var previewFibre: Int { 18 }
     private var previewCalories: Int { 1450 }
     private var previewNova4: Double { 15.0 }
     
@@ -51,6 +52,12 @@ struct DailyGoalsCardView: View {
     private var fatConsumed: Int {
         if isPreview { return previewFat }
         let total = expandedFoodItems.reduce(0.0) { $0 + $1.fat }
+        return Int(total)
+    }
+    
+    private var fibreConsumed: Int {
+        if isPreview { return previewFibre }
+        let total = expandedFoodItems.reduce(0.0) { $0 + $1.fibre }
         return Int(total)
     }
     
@@ -90,6 +97,10 @@ struct DailyGoalsCardView: View {
         userProfile.fatGoalGrams > 0 ? userProfile.fatGoalGrams : 65
     }
     
+    private var fibreGoal: Int {
+        userProfile.fibreGoalGrams > 0 ? userProfile.fibreGoalGrams : 30
+    }
+    
     private var caloriesGoal: Int {
         userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
     }
@@ -111,7 +122,9 @@ struct DailyGoalsCardView: View {
             carbsConsumed: carbsConsumed,
             carbsGoal: carbsGoal,
             fatConsumed: fatConsumed,
-            fatGoal: fatGoal
+            fatGoal: fatGoal,
+            fibreConsumed: fibreConsumed,
+            fibreGoal: fibreGoal
         )
     }
 }

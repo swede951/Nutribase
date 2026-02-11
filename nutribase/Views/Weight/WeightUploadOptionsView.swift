@@ -64,7 +64,7 @@ struct WeightUploadOptionsView: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding()
-                        .background(Color(.systemGray6))
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -96,7 +96,7 @@ struct WeightUploadOptionsView: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding()
-                        .background(Color(.systemGray6))
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -132,7 +132,7 @@ struct WeightUploadOptionsView: View {
                             }
                         }
                         .padding()
-                        .background(Color(.systemGray6))
+                        .background(Color.appCardBackground)
                         .cornerRadius(12)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -153,7 +153,7 @@ struct WeightUploadOptionsView: View {
                         .multilineTextAlignment(.center)
                 }
                 .padding()
-                .background(Color(.systemGray6))
+                .background(Color.appCardBackground)
                 .cornerRadius(8)
                 .padding(.bottom, 20)
             }
@@ -164,6 +164,7 @@ struct WeightUploadOptionsView: View {
                 trailing: Button("Cancel") {
                     dismiss()
                 }
+                .foregroundColor(.primary)
             )
         }
         .alert("Health App Import", isPresented: $showingHealthImportAlert) {

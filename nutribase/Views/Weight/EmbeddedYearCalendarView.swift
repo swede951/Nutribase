@@ -23,7 +23,7 @@ struct EmbeddedYearCalendarView: View {
     
     // Dashboard-matching card background
     private var cardBackground: Color {
-        Color(.systemBackground)
+        Color.appCardBackground
     }
     private let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

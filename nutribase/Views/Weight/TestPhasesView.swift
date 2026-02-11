@@ -20,11 +20,11 @@ struct TestPhasesView: View {
     
     // Dashboard-matching colors
     private var scrollBackground: Color {
-        colorScheme == .dark ? Color(.systemBackground) : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -134,7 +134,7 @@ struct TestPhasesView: View {
 struct PhaseCarouselView: View {
     let phases: [WeightPhase]
     let onPhaseTap: (WeightPhase) -> Void
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     @State private var currentPhaseIndex: Int
     
     private let dateFormatter: DateFormatter = {
@@ -217,25 +217,20 @@ struct PhaseCarouselView: View {
                         
                         // Weight Progress Chart
                         TestPhaseWeightChartView(phase: phase)
-                            .id("\(phase.id)-\(phase.startDate)-\(phase.effectiveEndDate)") // Force refresh when dates change
                         
                         // Rate of Change Chart - Commented out for now
                         // TestPhaseRateOfChangeView(phase: phase)
-                        //     .id("\(phase.id)-\(phase.startDate)-\(phase.effectiveEndDate)") // Force refresh when dates change
                         
                         // Statistics Section
                         TestPhaseStatisticsView(phase: phase)
-                            .id("\(phase.id)-\(phase.startDate)-\(phase.effectiveEndDate)") // Force refresh when dates change
                         
                         // Overview Section
                         TestPhaseOverviewView(phase: phase)
-                            .id("\(phase.id)-\(phase.startDate)-\(phase.effectiveEndDate)") // Force view recreation when phase changes
                             .padding(.bottom, 16)
                     }
                     .frame(width: UIScreen.main.bounds.width - 32)
                     .frame(maxWidth: .infinity)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    .animation(.easeInOut(duration: 0.3), value: currentPhase?.id)
+                    .animation(.easeInOut(duration: 0.25), value: phase.id)
                 }
             }
         }
@@ -246,7 +241,7 @@ struct PhaseCarouselView: View {
 struct PhaseCarouselCard: View {
     let phase: WeightPhase
     let onTap: () -> Void
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     
     @State private var cachedPhaseEntries: [WeightLogEntry] = []
     
@@ -418,50 +413,61 @@ struct PhaseCarouselCard: View {
 struct TestPhaseCalendarView: View {
     @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     @State private var isExpanded: Bool = false
+    @State private var cachedEntryDaySet: Set<DateComponents> = []
+    @State private var cachedMonths: [Date] = []
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
-    private var calendar: Calendar {
+    // Cached calendar instance (avoids recreating on every property access)
+    private static let mondayFirstCalendar: Calendar = {
         var cal = Calendar.current
         cal.firstWeekday = 2 // Monday first
         return cal
-    }
+    }()
+    
+    private var calendar: Calendar { Self.mondayFirstCalendar }
     
     private let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     
-    // Precompute all entry dates for the phase (normalized to day) - O(1) lookup
+    // Use cached set for O(1) lookup
     private var weightEntryDaySet: Set<DateComponents> {
+        return cachedEntryDaySet
+    }
+    
+    // Use cached months
+    private var phaseMonths: [Date] {
+        return cachedMonths
+    }
+    
+    private func recomputeCalendarData() {
+        let cal = Self.mondayFirstCalendar
+        
+        // Compute entry day set
         let entriesInPhase = weightManager.allEntries.filter {
             $0.date >= phase.startDate && $0.date <= phase.effectiveEndDate
         }
-        
-        return Set(
+        cachedEntryDaySet = Set(
             entriesInPhase.map {
-                calendar.dateComponents([.year, .month, .day], from: $0.date)
+                cal.dateComponents([.year, .month, .day], from: $0.date)
             }
         )
-    }
-    
-    // Get all months covered by this phase
-    private var phaseMonths: [Date] {
+        
+        // Compute months
         var months: [Date] = []
         let startDate = phase.startDate
         let endDate = phase.effectiveEndDate
-        
-        var currentDate = calendar.dateInterval(of: .month, for: startDate)?.start ?? startDate
-        
+        var currentDate = cal.dateInterval(of: .month, for: startDate)?.start ?? startDate
         while currentDate <= endDate {
             months.append(currentDate)
-            guard let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentDate) else { break }
+            guard let nextMonth = cal.date(byAdding: .month, value: 1, to: currentDate) else { break }
             currentDate = nextMonth
         }
-        
-        return months
+        cachedMonths = months
     }
     
     var body: some View {
@@ -523,6 +529,15 @@ struct TestPhaseCalendarView: View {
                     .stroke(Color.gray.opacity(0.2), lineWidth: 1)
             )
             .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
+        }
+        .onAppear {
+            recomputeCalendarData()
+        }
+        .onChange(of: phase.id) { _, _ in
+            recomputeCalendarData()
+        }
+        .onChange(of: weightManager.allEntries.count) { _, _ in
+            recomputeCalendarData()
         }
     }
     
@@ -654,10 +669,10 @@ struct TestPhaseCalendarView: View {
 struct TestPhaseWeightChartView: View {
     @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @State private var cachedPhaseEntries: [WeightLogEntry] = []
@@ -665,10 +680,46 @@ struct TestPhaseWeightChartView: View {
     @State private var cachedPredictionEntries: [WeightLogEntry] = []
     @State private var isComputing: Bool = false
     
+    // Per-phase chart data cache
+    private let chartCache = PhaseDataCache.shared
+    
     // Crosshair interaction
     @State private var selectedIndex: Int? = nil
     @State private var lastSelectedIndex: Int? = nil
     private let haptic = UIImpactFeedbackGenerator(style: .light)
+    
+    // Hash of current weight entries for cache validation
+    private var currentEntriesHash: Int {
+        weightManager.allEntries.count
+    }
+    
+    // Dynamic chart end date: show full year when data covers it,
+    // otherwise cap at latest data + padding so the line fills the chart width.
+    // Start interpolation ensures the line connects from the previous year.
+    private var chartEndDate: Date {
+        let calendar = Calendar.current
+        let phaseDays = calendar.dateComponents([.day], from: phase.startDate, to: phase.endDate).day ?? 0
+        
+        // Only apply dynamic end for phases longer than 3 months
+        guard phaseDays > 90 else { return phase.endDate }
+        
+        // Find latest data point across smoothed and raw entries
+        let latestSmoothed = cachedSmoothedEntries.last?.date
+        let latestRaw = phaseWeightEntries.last?.date
+        let latestData = [latestSmoothed, latestRaw].compactMap { $0 }.max()
+        
+        guard let latest = latestData else { return phase.endDate }
+        
+        // If data covers more than 80% of the phase, show the full phase
+        let dataDays = calendar.dateComponents([.day], from: phase.startDate, to: latest).day ?? 0
+        if Double(dataDays) / Double(phaseDays) > 0.8 { return phase.endDate }
+        
+        // Add padding: ~15% of data range or 2 weeks, whichever is larger
+        let paddingDays = max(Int(Double(dataDays) * 0.15), 14)
+        let paddedEnd = calendar.date(byAdding: .day, value: paddingDays, to: latest) ?? phase.endDate
+        
+        return min(paddedEnd, phase.endDate)
+    }
     
     // Get weight entries for this phase
     private var phaseWeightEntries: [WeightLogEntry] {
@@ -682,6 +733,19 @@ struct TestPhaseWeightChartView: View {
     }
     
     private func recomputeEntries() {
+        let phaseId = phase.id.uuidString
+        let hash = currentEntriesHash
+        
+        // Check per-phase cache first
+        if let cachedPhase = chartCache.getCachedPhaseEntries(for: phaseId, entriesHash: hash),
+           let cachedSmoothed = chartCache.getCachedSmoothedEntries(for: phaseId, entriesHash: hash),
+           let cachedPredictions = chartCache.getCachedPredictionEntries(for: phaseId, entriesHash: hash) {
+            cachedPhaseEntries = cachedPhase
+            cachedSmoothedEntries = cachedSmoothed
+            cachedPredictionEntries = cachedPredictions
+            return
+        }
+        
         cachedPhaseEntries = weightManager.allEntries
             .filter { $0.date >= phase.startDate && $0.date <= phase.effectiveEndDate }
             .sorted { $0.date < $1.date }
@@ -690,21 +754,78 @@ struct TestPhaseWeightChartView: View {
         computeSmoothedDataAsync()
     }
     
+    // Interpolate a weight value at an exact date from the smoothed trend
+    private static func interpolateWeight(at targetDate: Date, from entries: [WeightLogEntry]) -> Double? {
+        guard !entries.isEmpty else { return nil }
+        
+        // If target is before all entries, use the first entry's value
+        if targetDate <= entries.first!.date { return entries.first!.weight }
+        // If target is after all entries, use the last entry's value
+        if targetDate >= entries.last!.date { return entries.last!.weight }
+        
+        // Find the two entries that bracket this date
+        for i in 0..<(entries.count - 1) {
+            let before = entries[i]
+            let after = entries[i + 1]
+            if before.date <= targetDate && after.date >= targetDate {
+                let totalInterval = after.date.timeIntervalSince(before.date)
+                guard totalInterval > 0 else { return before.weight }
+                let t = targetDate.timeIntervalSince(before.date) / totalInterval
+                return before.weight + t * (after.weight - before.weight)
+            }
+        }
+        
+        return entries.last!.weight
+    }
+    
     private func computeSmoothedDataAsync() {
         guard !isComputing else { return }
         isComputing = true
         
+        let phaseId = phase.id.uuidString
+        let hash = currentEntriesHash
+        let phaseStart = phase.startDate
+        let phaseEnd = phase.effectiveEndDate
+        
         DispatchQueue.global(qos: .userInitiated).async {
             let allEntries = weightManager.allEntries.sorted { $0.date < $1.date }
             
-            // Build smoothed trend
+            // Build smoothed trend from ALL data (not just phase data)
             let smoothed = buildHappyScaleSmoothedTrend(
                 from: allEntries,
                 timeframe: phaseTimeframe
             )
             
             // Trim to phase dates
-            let trimmed = smoothed.filter { $0.date >= phase.startDate && $0.date <= phase.effectiveEndDate }
+            var trimmed = smoothed.filter { $0.date >= phaseStart && $0.date <= phaseEnd }
+            
+            // Interpolate at phase start boundary if the line doesn't begin there
+            if let firstDate = trimmed.first?.date, firstDate > phaseStart {
+                if let startWeight = Self.interpolateWeight(at: phaseStart, from: smoothed) {
+                    let startEntry = WeightLogEntry(
+                        id: UUID(),
+                        date: phaseStart,
+                        weight: startWeight,
+                        movingAverage: startWeight
+                    )
+                    trimmed.insert(startEntry, at: 0)
+                }
+            }
+            
+            // Interpolate at phase end boundary ONLY if smoothed data actually covers that date
+            // (don't extrapolate far into the future for the current year)
+            if let lastDate = trimmed.last?.date, lastDate < phaseEnd,
+               let lastSmoothedDate = smoothed.last?.date, phaseEnd <= lastSmoothedDate {
+                if let endWeight = Self.interpolateWeight(at: phaseEnd, from: smoothed) {
+                    let endEntry = WeightLogEntry(
+                        id: UUID(),
+                        date: phaseEnd,
+                        weight: endWeight,
+                        movingAverage: endWeight
+                    )
+                    trimmed.append(endEntry)
+                }
+            }
             
             // Calculate predictions
             let predictions = calculatePredictions(from: trimmed)
@@ -713,6 +834,15 @@ struct TestPhaseWeightChartView: View {
                 self.cachedSmoothedEntries = trimmed
                 self.cachedPredictionEntries = predictions
                 self.isComputing = false
+                
+                // Store in per-phase cache for instant access when switching back
+                self.chartCache.setChartCache(
+                    for: phaseId,
+                    phaseEntries: self.cachedPhaseEntries,
+                    smoothed: trimmed,
+                    predictions: predictions,
+                    entriesHash: hash
+                )
             }
         }
     }
@@ -773,7 +903,7 @@ struct TestPhaseWeightChartView: View {
     // Determine appropriate timeframe based on phase duration
     private var phaseTimeframe: TimeFrame {
         let calendar = Calendar.current
-        let days = calendar.dateComponents([.day], from: phase.startDate, to: phase.effectiveEndDate).day ?? 0
+        let days = calendar.dateComponents([.day], from: phase.startDate, to: phase.endDate).day ?? 0
         
         if days <= 7 {
             return .oneWeek
@@ -1036,7 +1166,7 @@ struct TestPhaseWeightChartView: View {
             
             // Get start and end months
             let startComponents = calendar.dateComponents([.year, .month], from: phase.startDate)
-            let endComponents = calendar.dateComponents([.year, .month], from: phase.endDate)
+            let endComponents = calendar.dateComponents([.year, .month], from: chartEndDate)
             
             if let startDate = calendar.date(from: startComponents),
                let endDate = calendar.date(from: endComponents) {
@@ -1045,13 +1175,13 @@ struct TestPhaseWeightChartView: View {
                 
                 // Add label for each month, positioned in the middle of the visible range
                 while currentDate <= endDate {
-                    // Show label if any part of this month overlaps with the phase
+                    // Show label if any part of this month overlaps with the visible chart range
                     if let monthEnd = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: currentDate) {
-                        // Check if month overlaps with phase range
-                        if monthEnd >= phase.startDate && currentDate <= phase.endDate {
-                            // Calculate the visible range for this month within the phase
+                        // Check if month overlaps with visible chart range
+                        if monthEnd >= phase.startDate && currentDate <= chartEndDate {
+                            // Calculate the visible range for this month within the chart
                             let visibleStart = max(currentDate, phase.startDate)
-                            let visibleEnd = min(monthEnd, phase.endDate)
+                            let visibleEnd = min(monthEnd, chartEndDate)
                             
                             // Position label at the middle of the visible range
                             let daysBetween = calendar.dateComponents([.day], from: visibleStart, to: visibleEnd).day ?? 0
@@ -1087,19 +1217,19 @@ struct TestPhaseWeightChartView: View {
             )
         } else {
             // For 1W and All, use evenly distributed labels
-            let totalDays = Calendar.current.dateComponents([.day], from: phase.startDate, to: phase.endDate).day ?? 1
+            let totalDays = Calendar.current.dateComponents([.day], from: phase.startDate, to: chartEndDate).day ?? 1
             let interval = timeframe == "1W" ? 1 : max(totalDays / 4, 1)
             
             var dates: [Date] = []
             var currentDate = phase.startDate
             
-            while currentDate <= phase.endDate {
+            while currentDate <= chartEndDate {
                 dates.append(currentDate)
-                currentDate = Calendar.current.date(byAdding: .day, value: interval, to: currentDate) ?? phase.endDate
+                currentDate = Calendar.current.date(byAdding: .day, value: interval, to: currentDate) ?? chartEndDate
             }
             
-            if let lastDate = dates.last, lastDate < phase.endDate {
-                dates.append(phase.endDate)
+            if let lastDate = dates.last, lastDate < chartEndDate {
+                dates.append(chartEndDate)
             }
             
             return AnyView(
@@ -1225,7 +1355,7 @@ struct TestPhaseWeightChartView: View {
             var monthPath = Path()
             
             let startComponents = calendar.dateComponents([.year, .month], from: phase.startDate)
-            let endComponents = calendar.dateComponents([.year, .month], from: phase.endDate)
+            let endComponents = calendar.dateComponents([.year, .month], from: chartEndDate)
             
             if let startDate = calendar.date(from: startComponents),
                let endDate = calendar.date(from: endComponents) {
@@ -1233,7 +1363,7 @@ struct TestPhaseWeightChartView: View {
                 var currentDate = startDate
                 
                 while currentDate <= endDate {
-                    if currentDate >= phase.startDate && currentDate <= phase.endDate {
+                    if currentDate >= phase.startDate && currentDate <= chartEndDate {
                         let x = xPosition(for: currentDate, in: size)
                         monthPath.move(to: CGPoint(x: x, y: 0))
                         monthPath.addLine(to: CGPoint(x: x, y: size.height))
@@ -1249,6 +1379,29 @@ struct TestPhaseWeightChartView: View {
                 // Draw month markers with consistent style
                 context.stroke(monthPath, with: .color(Color.gray.opacity(0.4)), lineWidth: 1.0)
             }
+            
+            // Weekly sub-lines between monthly gridlines
+            var weekPath = Path()
+            let weekStart = calendar.startOfDay(for: phase.startDate)
+            
+            // Find the first Monday on or after phase start
+            let weekdayOfStart = calendar.component(.weekday, from: weekStart)
+            let daysToMonday = weekdayOfStart == 1 ? 1 : (9 - weekdayOfStart) % 7
+            if var currentMonday = calendar.date(byAdding: .day, value: daysToMonday == 0 ? 7 : daysToMonday, to: weekStart) {
+                while currentMonday <= chartEndDate {
+                    // Skip if this Monday falls on a month boundary (avoid doubling with monthly lines)
+                    let dayOfMonth = calendar.component(.day, from: currentMonday)
+                    if dayOfMonth != 1 {
+                        let x = xPosition(for: currentMonday, in: size)
+                        weekPath.move(to: CGPoint(x: x, y: 0))
+                        weekPath.addLine(to: CGPoint(x: x, y: size.height))
+                    }
+                    currentMonday = calendar.date(byAdding: .weekOfYear, value: 1, to: currentMonday) ?? currentMonday
+                }
+            }
+            
+            let weekOpacity: Double = (timeframe == "1M") ? 0.25 : 0.15
+            context.stroke(weekPath, with: .color(Color.gray.opacity(weekOpacity)), lineWidth: 0.5)
         }
         
         // Daily vertical gridlines for 1W and 1M
@@ -1256,12 +1409,12 @@ struct TestPhaseWeightChartView: View {
             var dailyPath = Path()
             
             let startDate = calendar.startOfDay(for: phase.startDate)
-            let endDate = calendar.startOfDay(for: phase.endDate)
+            let endDate = calendar.startOfDay(for: chartEndDate)
             
             var currentDate = startDate
             
             while currentDate <= endDate {
-                if currentDate >= phase.startDate && currentDate <= phase.endDate {
+                if currentDate >= phase.startDate && currentDate <= chartEndDate {
                     let x = xPosition(for: currentDate, in: size)
                     dailyPath.move(to: CGPoint(x: x, y: 0))
                     dailyPath.addLine(to: CGPoint(x: x, y: size.height))
@@ -1285,14 +1438,14 @@ struct TestPhaseWeightChartView: View {
         // Yearly vertical gridlines for All time
         if timeframe == "All" {
             let startYear = calendar.component(.year, from: phase.startDate)
-            let endYear = calendar.component(.year, from: phase.endDate)
+            let endYear = calendar.component(.year, from: chartEndDate)
             
             if endYear > startYear {
                 var yearPath = Path()
                 
                 for year in (startYear + 1)...endYear {
                     if let yearStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) {
-                        if yearStart >= phase.startDate && yearStart <= phase.endDate {
+                        if yearStart >= phase.startDate && yearStart <= chartEndDate {
                             let x = xPosition(for: yearStart, in: size)
                             yearPath.move(to: CGPoint(x: x, y: 0))
                             yearPath.addLine(to: CGPoint(x: x, y: size.height))
@@ -1393,7 +1546,7 @@ struct TestPhaseWeightChartView: View {
     }
     
     private func xPosition(for date: Date, in size: CGSize) -> CGFloat {
-        let total = phase.endDate.timeIntervalSince(phase.startDate)
+        let total = chartEndDate.timeIntervalSince(phase.startDate)
         guard total > 0 else { return 0 }
         let t = date.timeIntervalSince(phase.startDate) / total
         return CGFloat(t) * size.width
@@ -1409,7 +1562,7 @@ struct TestPhaseWeightChartView: View {
     
     // Overloaded position functions for crosshair
     private func xPosition(for date: Date, chartWidth: CGFloat) -> CGFloat {
-        let total = phase.endDate.timeIntervalSince(phase.startDate)
+        let total = chartEndDate.timeIntervalSince(phase.startDate)
         guard total > 0 else { return 0 }
         let t = date.timeIntervalSince(phase.startDate) / total
         return CGFloat(t) * chartWidth
@@ -1440,7 +1593,7 @@ struct TestPhaseWeightChartView: View {
         }
         
         // Find closest data point
-        let total = phase.endDate.timeIntervalSince(phase.startDate)
+        let total = chartEndDate.timeIntervalSince(phase.startDate)
         guard total > 0 else { return }
         
         let t = Double(xInChart / chartWidth)
@@ -1631,38 +1784,36 @@ struct TestPhaseWeightChartView: View {
         return (dates: outDates, values: outY)
     }
     
-    // Calculate Y-axis range for the chart (matching dashboard weight chart style)
+    // Calculate Y-axis range for the chart (matching WeightChartDetailView approach)
     private var yAxisRange: ClosedRange<Double> {
-        guard !phaseWeightEntries.isEmpty else { return 0...100 }
+        // Use rendered data (smoothed + predictions) for range, matching detail view style
+        var allWeights = smoothedWeightEntries.map { $0.weight }
+        allWeights.append(contentsOf: predictionEntries.map { $0.weight })
         
-        // Use only actual weight data for range (like dashboard)
-        let weights = phaseWeightEntries.map { $0.weight }
-        var minWeight = weights.min() ?? 0
-        var maxWeight = weights.max() ?? 100
+        // Fall back to raw entries if smoothed data isn't ready yet
+        if allWeights.isEmpty {
+            allWeights = phaseWeightEntries.map { $0.weight }
+        }
+        guard !allWeights.isEmpty else { return 0...100 }
         
-        // Include goal weight in range if present
+        var minW = allWeights.min() ?? 0
+        var maxW = allWeights.max() ?? 100
+        
+        // Include goal weight only if it falls within the plotted data range
         if let goal = goalWeight {
-            minWeight = min(minWeight, goal)
-            maxWeight = max(maxWeight, goal)
-        }
-        
-        // Optionally extend range slightly to include prediction end point if close
-        if !predictionEntries.isEmpty, let lastPrediction = predictionEntries.last?.weight {
-            // Only extend if prediction is within 5kg of current range
-            let currentRange = maxWeight - minWeight
-            if lastPrediction < minWeight && (minWeight - lastPrediction) < max(currentRange * 0.5, 3.0) {
-                minWeight = lastPrediction
-            }
-            if lastPrediction > maxWeight && (lastPrediction - maxWeight) < max(currentRange * 0.5, 3.0) {
-                maxWeight = lastPrediction
+            let dataRange = maxW - minW
+            let tolerance = max(dataRange * 0.5, 3.0)
+            if goal >= minW - tolerance && goal <= maxW + tolerance {
+                minW = min(minW, goal)
+                maxW = max(maxW, goal)
             }
         }
         
-        // Use same padding as dashboard: 5% with minimum 2kg
-        let range = maxWeight - minWeight
-        let padding = max(range * 0.05, 2.0)
+        // Match detail view: 15% padding with 0.5kg minimum
+        let range = maxW - minW
+        let padding = max(range * 0.15, 0.5)
         
-        return (minWeight - padding)...(maxWeight + padding)
+        return (minW - padding)...(maxW + padding)
     }
     
     var body: some View {
@@ -1766,6 +1917,11 @@ struct TestPhaseWeightChartView: View {
         .onAppear {
             recomputeEntries()
         }
+        .onChange(of: phase.id) { _, _ in
+            selectedIndex = nil
+            lastSelectedIndex = nil
+            recomputeEntries()
+        }
         .onChange(of: weightManager.allEntries.count) { _, _ in
             recomputeEntries()
         }
@@ -1782,10 +1938,10 @@ struct TestPhaseWeightChartView: View {
 struct TestPhaseStatisticsView: View {
     @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @State private var cachedPhaseEntries: [WeightLogEntry] = []
@@ -1891,6 +2047,9 @@ struct TestPhaseStatisticsView: View {
             }
         }
         .onAppear(perform: recomputeEntries)
+        .onChange(of: phase.id) { _, _ in
+            recomputeEntries()
+        }
         .onChange(of: weightManager.weightEntries.count) { _, _ in
             recomputeEntries()
         }
@@ -1913,6 +2072,12 @@ class PhaseDataCache: ObservableObject {
     @Published private var loadingStates: [String: Bool] = [:]
     @Published private var stepsCache: [String: Double?] = [:]
     
+    // Per-phase chart data cache (smoothed entries + predictions)
+    private var chartSmoothedCache: [String: [WeightLogEntry]] = [:]
+    private var chartPredictionCache: [String: [WeightLogEntry]] = [:]
+    private var chartPhaseEntriesCache: [String: [WeightLogEntry]] = [:]
+    private var chartEntriesHash: [String: Int] = [:]
+    
     // Persistent storage for finalized weekly data
     private let persistentCacheKey = "phase_weekly_data_persistent_cache"
     
@@ -1922,6 +2087,32 @@ class PhaseDataCache: ObservableObject {
         let avgSteps: Double?
         let savedDate: Date
     }
+    
+    // MARK: - Chart Data Cache Methods
+    
+    func getCachedSmoothedEntries(for phaseId: String, entriesHash: Int) -> [WeightLogEntry]? {
+        guard chartEntriesHash[phaseId] == entriesHash else { return nil }
+        return chartSmoothedCache[phaseId]
+    }
+    
+    func getCachedPredictionEntries(for phaseId: String, entriesHash: Int) -> [WeightLogEntry]? {
+        guard chartEntriesHash[phaseId] == entriesHash else { return nil }
+        return chartPredictionCache[phaseId]
+    }
+    
+    func getCachedPhaseEntries(for phaseId: String, entriesHash: Int) -> [WeightLogEntry]? {
+        guard chartEntriesHash[phaseId] == entriesHash else { return nil }
+        return chartPhaseEntriesCache[phaseId]
+    }
+    
+    func setChartCache(for phaseId: String, phaseEntries: [WeightLogEntry], smoothed: [WeightLogEntry], predictions: [WeightLogEntry], entriesHash: Int) {
+        chartPhaseEntriesCache[phaseId] = phaseEntries
+        chartSmoothedCache[phaseId] = smoothed
+        chartPredictionCache[phaseId] = predictions
+        chartEntriesHash[phaseId] = entriesHash
+    }
+    
+    // MARK: - Weekly Data Cache Methods
     
     func getCachedData(for phaseId: String) -> [(week: Int, weekStart: Date, avgWeight: Double?, weightChange: Double?, avgKcals: Double?, avgSteps: Double?)] {
         return cache[phaseId] ?? []
@@ -2007,6 +2198,10 @@ class PhaseDataCache: ObservableObject {
         cache.removeValue(forKey: phaseId)
         loadingStates.removeValue(forKey: phaseId)
         stepsCache.removeValue(forKey: phaseId)
+        chartSmoothedCache.removeValue(forKey: phaseId)
+        chartPredictionCache.removeValue(forKey: phaseId)
+        chartPhaseEntriesCache.removeValue(forKey: phaseId)
+        chartEntriesHash.removeValue(forKey: phaseId)
         
         // Also clear persistent cache for this phase
         if let data = UserDefaults.standard.data(forKey: persistentCacheKey),
@@ -2024,6 +2219,10 @@ class PhaseDataCache: ObservableObject {
         cache.removeAll()
         loadingStates.removeAll()
         stepsCache.removeAll()
+        chartSmoothedCache.removeAll()
+        chartPredictionCache.removeAll()
+        chartPhaseEntriesCache.removeAll()
+        chartEntriesHash.removeAll()
         UserDefaults.standard.removeObject(forKey: persistentCacheKey)
         print("🗑️ Cleared all phase cache data")
     }
@@ -2054,13 +2253,13 @@ class PhaseDataCache: ObservableObject {
 struct TestPhaseOverviewView: View {
     @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
-    @StateObject private var weightManager = WeightLogManager.shared
-    @StateObject private var healthKitManager = HealthKitManager.shared
-    @StateObject private var foodLogManager = FoodLogManager.shared
-    @StateObject private var cache = PhaseDataCache.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var healthKitManager = HealthKitManager.shared
+    @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @ObservedObject private var cache = PhaseDataCache.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Get weight entries for this phase
@@ -2333,7 +2532,7 @@ struct TestPhaseOverviewView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .background(Color(.systemGray6))
+                    .background(Color.appCardBackground)
                     .clipShape(
                         .rect(
                             topLeadingRadius: 12,
@@ -2478,6 +2677,13 @@ struct TestPhaseOverviewView: View {
                 calculateWeeklyDataAsync()
             }
         }
+        .onChange(of: phase.id) { _, _ in
+            // Recalculate when swiping to a different phase
+            if cachedWeeklyData.isEmpty && !isCalculatingData {
+                fetchCurrentWeekSteps()
+                calculateWeeklyDataAsync()
+            }
+        }
         .onChange(of: phase.startDate) { _, _ in
             // Recalculate when phase dates change
             fetchCurrentWeekSteps()
@@ -2500,10 +2706,10 @@ struct TestPhaseOverviewView: View {
 struct TestPhaseRateOfChangeView: View {
     @Environment(\.colorScheme) private var colorScheme
     let phase: WeightPhase
-    @StateObject private var weightManager = WeightLogManager.shared
+    @ObservedObject private var weightManager = WeightLogManager.shared
     
     private var cardBackground: Color {
-        Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Get weight entries for this phase
@@ -2516,7 +2722,7 @@ struct TestPhaseRateOfChangeView: View {
     // Determine appropriate timeframe based on phase duration
     private var phaseTimeframe: TimeFrame {
         let calendar = Calendar.current
-        let days = calendar.dateComponents([.day], from: phase.startDate, to: phase.effectiveEndDate).day ?? 0
+        let days = calendar.dateComponents([.day], from: phase.startDate, to: phase.endDate).day ?? 0
         
         if days <= 7 {
             return .oneWeek
@@ -2890,7 +3096,7 @@ private struct CrosshairView: View {
     let yAxisRange: ClosedRange<Double>
     
     private var cardBackground: Color {
-        Color(.systemBackground)
+        Color.appCardBackground
     }
     
     private var chartWidth: CGFloat { geoSize.width - 25 }

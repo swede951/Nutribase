@@ -119,7 +119,7 @@ class FoodServingCacheService: ObservableObject {
             return originalFood
         }
         
-        // Create a new FoodItem with the cached serving information
+        // Create a new FoodItem with the cached serving information, preserving all original properties
         return FoodItem(
             name: originalFood.name,
             brandName: originalFood.brandName,
@@ -129,14 +129,26 @@ class FoodServingCacheService: ObservableObject {
             carbs: originalFood.carbs,
             fat: originalFood.fat,
             novaScore: originalFood.novaScore,
+            novaScoreIsEstimated: originalFood.novaScoreIsEstimated,
             nutriScoreGrade: originalFood.nutriScoreGrade,
+            nutriScoreIsEstimated: originalFood.nutriScoreIsEstimated,
             servingSize: originalFood.servingSize,
             servingsPerPackage: originalFood.servingsPerPackage,
             servingType: originalFood.servingType,
+            fiber: originalFood.fiber,
+            sugar: originalFood.sugar,
+            sodium: originalFood.sodium,
+            saturatedFat: originalFood.saturatedFat,
+            ingredients: originalFood.ingredients,
             cachedServingSize: cachedInfo.servingSize,
             cachedServingUnit: cachedInfo.servingUnit,
             cachedNumberOfServings: cachedInfo.numberOfServings,
-            cachedSelectedServingSizeOption: cachedInfo.selectedServingSizeOption
+            cachedSelectedServingSizeOption: cachedInfo.selectedServingSizeOption,
+            countries: originalFood.countries,
+            purchasePlaces: originalFood.purchasePlaces,
+            origins: originalFood.origins,
+            isMeal: originalFood.isMeal,
+            isVerified: originalFood.isVerified
         )
     }
     

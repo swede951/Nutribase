@@ -60,7 +60,7 @@ struct BarcodeScannerView: View {
                 }
                 .padding(.bottom)
             }
-            .background(Color(.systemBackground))
+            .background(Color.appBackground)
             .navigationTitle("Add Food")
             .navigationBarTitleDisplayMode(.inline)
         }

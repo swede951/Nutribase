@@ -80,6 +80,19 @@ struct FoodEntry: Identifiable, Codable, Equatable {
         )
         return result
     }
+    
+    var totalFibre: Double {
+        let result = NutritionCalculator.calculateMacro(
+            macroValue: foodItem.fiber ?? 0,
+            servingSize: servingSize,
+            servingUnit: servingUnit,
+            numberOfServings: numberOfServings,
+            isOriginalServingSize: isUsingOriginalServingSize,
+            servingDescription: foodItem.servingSize,
+            servingQuantity: foodItem.servingsPerPackage
+        )
+        return result
+    }
 }
 
 // Manager class for food log entries
@@ -102,6 +115,7 @@ class FoodLogManager: ObservableObject {
         let protein: Int
         let carbs: Int
         let fat: Int
+        let fibre: Int
     }
     
     @Published private var persistentStreak: Int = 0
@@ -151,6 +165,7 @@ class FoodLogManager: ObservableObject {
     private init() {
         loadEntries()
         loadStreakData()
+        refreshEntriesMissingFiber()
         
         // Subscribe to authentication changes to reload user-specific data
         NotificationCenter.default.publisher(for: .userDidSignIn)
@@ -221,9 +236,11 @@ class FoodLogManager: ObservableObject {
         }) {
             // Update existing entry by adding the new serving quantity
             let existingEntry = entries[existingEntryIndex]
+            // Use newer foodItem if it has fiber data and old one doesn't
+            let bestFoodItem = (existingEntry.foodItem.fiber == nil && foodItem.fiber != nil) ? foodItem : existingEntry.foodItem
             let updatedEntry = FoodEntry(
                 id: existingEntry.id, // Keep the same ID
-                foodItem: existingEntry.foodItem,
+                foodItem: bestFoodItem,
                 mealType: existingEntry.mealType,
                 servingSize: existingEntry.servingSize,
                 servingUnit: existingEntry.servingUnit,
@@ -303,12 +320,15 @@ class FoodLogManager: ObservableObject {
     }
     
     // Update an existing food entry
-    func updateEntry(id: UUID, servingSize: Double, servingUnit: String, numberOfServings: Double) {
+    func updateEntry(id: UUID, servingSize: Double, servingUnit: String, numberOfServings: Double, refreshedFoodItem: FoodItem? = nil) {
         if let index = entries.firstIndex(where: { $0.id == id }) {
-            // Create updated entry with the same ID and food item but new serving info
+            // Use refreshed food item if provided (e.g. from re-fetching Typesense data with fiber/sugar)
+            let foodItem = refreshedFoodItem ?? entries[index].foodItem
+            
+            // Create updated entry with the same ID but new serving info and potentially refreshed food data
             let updatedEntry = FoodEntry(
                 id: id,
-                foodItem: entries[index].foodItem,
+                foodItem: foodItem,
                 mealType: entries[index].mealType,
                 servingSize: servingSize,
                 servingUnit: servingUnit,
@@ -376,7 +396,8 @@ class FoodLogManager: ObservableObject {
             calories: expandedItems.reduce(0) { $0 + $1.calories },
             protein: Int(expandedItems.reduce(0.0) { $0 + $1.protein }),
             carbs: Int(expandedItems.reduce(0.0) { $0 + $1.carbs }),
-            fat: Int(expandedItems.reduce(0.0) { $0 + $1.fat })
+            fat: Int(expandedItems.reduce(0.0) { $0 + $1.fat }),
+            fibre: Int(expandedItems.reduce(0.0) { $0 + $1.fibre })
         )
         
         // Cache the result
@@ -423,6 +444,10 @@ class FoodLogManager: ObservableObject {
     
     func totalCarbsForDay(date: Date) -> Int {
         return getDailyTotals(for: date).carbs
+    }
+    
+    func totalFibreForDay(date: Date) -> Int {
+        return getDailyTotals(for: date).fibre
     }
     
     // Get the current logging streak as a computed property
@@ -494,6 +519,8 @@ class FoodLogManager: ObservableObject {
         let protein: Double
         let carbs: Double
         let fat: Double
+        let fibre: Double
+        let fibreIsEstimated: Bool
         let novaScore: Int
         let novaScoreIsEstimated: Bool
         let nutriScoreGrade: String?
@@ -516,12 +543,17 @@ class FoodLogManager: ObservableObject {
                     let scaledCarbs = mealFood.carbs * entry.numberOfServings
                     let scaledFat = mealFood.fat * entry.numberOfServings
                     
+                    let hasFiber = mealFood.fiber != nil
+                    let scaledFibre = (mealFood.fiber ?? 0) * entry.numberOfServings
+                    
                     expandedItems.append(ExpandedFoodItem(
                         name: mealFood.foodName,
                         calories: scaledCalories,
                         protein: scaledProtein,
                         carbs: scaledCarbs,
                         fat: scaledFat,
+                        fibre: scaledFibre,
+                        fibreIsEstimated: !hasFiber,
                         novaScore: mealFood.novaScore,
                         novaScoreIsEstimated: mealFood.novaScoreIsEstimated,
                         nutriScoreGrade: mealFood.nutriScoreGrade,
@@ -530,12 +562,39 @@ class FoodLogManager: ObservableObject {
                 }
             } else {
                 // Regular food item - add directly
+                // If fiber data is missing, use estimated value (per 100g) scaled through NutritionCalculator
+                let hasFiber = entry.foodItem.fiber != nil
+                let fibreValue: Double
+                let fibreIsEstimated: Bool
+                
+                if hasFiber {
+                    fibreValue = entry.totalFibre
+                    fibreIsEstimated = false
+                } else if let estimate = FiberEstimationService.shared.getEstimate(for: entry.foodItem) {
+                    // Scale the estimated per-100g value the same way as actual fiber
+                    fibreValue = NutritionCalculator.calculateMacro(
+                        macroValue: estimate.fiberPer100g,
+                        servingSize: entry.servingSize,
+                        servingUnit: entry.servingUnit,
+                        numberOfServings: entry.numberOfServings,
+                        isOriginalServingSize: entry.servingUnit.lowercased() == "serving" || entry.servingUnit.lowercased() == "servings" || entry.servingUnit.lowercased() == "meal",
+                        servingDescription: entry.foodItem.servingSize,
+                        servingQuantity: entry.foodItem.servingsPerPackage
+                    )
+                    fibreIsEstimated = true
+                } else {
+                    fibreValue = 0
+                    fibreIsEstimated = false
+                }
+                
                 expandedItems.append(ExpandedFoodItem(
                     name: entry.foodItem.name,
                     calories: entry.totalCalories,
                     protein: entry.totalProtein,
                     carbs: entry.totalCarbs,
                     fat: entry.totalFat,
+                    fibre: fibreValue,
+                    fibreIsEstimated: fibreIsEstimated,
                     novaScore: entry.foodItem.novaScore,
                     novaScoreIsEstimated: entry.foodItem.novaScoreIsEstimated,
                     nutriScoreGrade: entry.foodItem.nutriScoreGrade,
@@ -588,6 +647,79 @@ class FoodLogManager: ObservableObject {
         if let savedEntries = UserDefaults.standard.data(forKey: foodEntriesKey),
            let decodedEntries = try? JSONDecoder().decode([FoodEntry].self, from: savedEntries) {
             entries = decodedEntries
+        }
+    }
+    
+    // Background migration: refresh fiber data for entries that are missing it
+    private func refreshEntriesMissingFiber() {
+        // Find ALL entries missing fiber (not just those with barcodes), excluding meals and Quick Add
+        let entriesToRefresh = entries.filter { $0.foodItem.fiber == nil && !$0.foodItem.isMeal && $0.foodItem.name != "Quick Add" }
+        
+        guard !entriesToRefresh.isEmpty else { return }
+        print("🔄 Fiber migration: \(entriesToRefresh.count) entries need fiber data refresh")
+        
+        let totalCount = entriesToRefresh.count
+        // Use a reference type to safely track completion across escaping closures
+        let tracker = MigrationTracker(totalCount: totalCount)
+        
+        for entry in entriesToRefresh {
+            let hasBarcode = entry.foodItem.barcode != nil && !entry.foodItem.barcode!.isEmpty
+            
+            if hasBarcode {
+                // Use barcode lookup for exact match
+                TypesenseDirectService.shared.searchByBarcode(barcode: entry.foodItem.barcode!) { [weak self] refreshedFood, error in
+                    DispatchQueue.main.async {
+                        self?.applyFiberMigration(entry: entry, refreshedFood: refreshedFood, tracker: tracker)
+                    }
+                }
+            } else {
+                // Use name search for foods without barcodes
+                let searchQuery = entry.foodItem.name
+                TypesenseDirectService.shared.searchFoods(query: searchQuery) { [weak self] results, error in
+                    DispatchQueue.main.async {
+                        // Find best match by name and brand
+                        let match = results?.first(where: { food in
+                            let nameMatch = food.name.lowercased() == entry.foodItem.name.lowercased()
+                            let brandMatch = food.brandName?.lowercased() == entry.foodItem.brandName?.lowercased()
+                            return nameMatch && brandMatch
+                        }) ?? results?.first(where: { $0.name.lowercased() == entry.foodItem.name.lowercased() })
+                        
+                        self?.applyFiberMigration(entry: entry, refreshedFood: match, tracker: tracker)
+                    }
+                }
+            }
+        }
+    }
+    
+    // Simple reference-type counter for tracking async migration completion
+    private class MigrationTracker {
+        let totalCount: Int
+        var completedCount: Int = 0
+        init(totalCount: Int) { self.totalCount = totalCount }
+    }
+    
+    private func applyFiberMigration(entry: FoodEntry, refreshedFood: FoodItem?, tracker: MigrationTracker) {
+        if let refreshedFood = refreshedFood, refreshedFood.fiber != nil {
+            if let index = self.entries.firstIndex(where: { $0.id == entry.id }) {
+                let updatedEntry = FoodEntry(
+                    id: entry.id,
+                    foodItem: refreshedFood,
+                    mealType: entry.mealType,
+                    servingSize: entry.servingSize,
+                    servingUnit: entry.servingUnit,
+                    numberOfServings: entry.numberOfServings,
+                    dateAdded: entry.dateAdded
+                )
+                self.entries[index] = updatedEntry
+                self.saveEntries()
+                print("✅ Fiber migration: updated \(refreshedFood.name) - fiber=\(String(describing: refreshedFood.fiber))")
+            }
+        }
+        
+        tracker.completedCount += 1
+        if tracker.completedCount >= tracker.totalCount {
+            print("🔄 Fiber migration complete")
+            NotificationCenter.default.post(name: .foodLogUpdated, object: nil)
         }
     }
 }

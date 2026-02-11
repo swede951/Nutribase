@@ -1,12 +1,22 @@
 import SwiftUI
 
 struct SignUpView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var authService = FirebaseAuthService.shared
     @Environment(\.presentationMode) var presentationMode
     
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
+    
+    // Adaptive colors for dark/light mode
+    private var backgroundColor: Color {
+        Color.appBackground
+    }
+    
+    private var inputFieldBackground: Color {
+        Color.appCardBackground
+    }
     @State private var isSigningUp = false
     @State private var errorMessage: String?
     @State private var showingAlert = false
@@ -15,46 +25,65 @@ struct SignUpView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                // Header
-                VStack(spacing: 5) {
-                    Image("app-logo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 180, height: 180)
-                    
-                    Text("Create Account")
-                        .font(.custom("Montserrat-ExtraBold", size: 28))
-                        .foregroundColor(.white)
-                    
-                    Text("Join NutriBase to track your nutrition")
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                }
-                .padding(.top, 40)
-                .padding(.bottom, 0)
+            ZStack {
+                // Adaptive background that extends to all edges
+                backgroundColor
+                    .ignoresSafeArea()
                 
-                // Sign up form
-                VStack(spacing: 16) {
-                    // Email field
-                    TextField("Email", text: $email)
-                        .autocapitalization(.none)
-                        .keyboardType(.emailAddress)
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(8)
-                    
-                    // Password field
-                    SecureField("Password", text: $password)
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(8)
-                    
-                    // Confirm password field
-                    SecureField("Confirm Password", text: $confirmPassword)
-                        .padding()
-                        .background(Color(.systemGray6))
-                        .cornerRadius(8)
+                // Blue gradient fade at top (like dashboard)
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "#35b8ff"),
+                        backgroundColor
+                    ]),
+                    startPoint: .top,
+                    endPoint: UnitPoint(x: 0.5, y: 0.55)
+                )
+                .ignoresSafeArea()
+                
+                VStack(spacing: 20) {
+                    // Header
+                    VStack(spacing: 5) {
+                        Image("app-logo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 180, height: 180)
+                        
+                        Text("Create Account")
+                            .font(.custom("Montserrat-ExtraBold", size: 28))
+                            .foregroundColor(.white)
+                        
+                        Text("Join NutriBase to track your nutrition")
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.top, 40)
+                    .padding(.bottom, 0)
+                
+                    // Sign up form
+                    VStack(spacing: 16) {
+                        // Email field
+                        TextField("Email", text: $email)
+                            .autocapitalization(.none)
+                            .keyboardType(.emailAddress)
+                            .padding()
+                            .background(inputFieldBackground)
+                            .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                        
+                        // Password field
+                        SecureField("Password", text: $password)
+                            .padding()
+                            .background(inputFieldBackground)
+                            .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                        
+                        // Confirm password field
+                        SecureField("Confirm Password", text: $confirmPassword)
+                            .padding()
+                            .background(inputFieldBackground)
+                            .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                     
                     // Password validation message
                     if !password.isEmpty && password.count < 6 {
@@ -69,42 +98,40 @@ struct SignUpView: View {
                             .foregroundColor(.red)
                     }
                     
-                    // Sign up button
-                    Button(action: signUp) {
-                        if isSigningUp {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                        } else {
-                            Text("Create Account")
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
+                        // Sign up button
+                        Button(action: signUp) {
+                            if isSigningUp {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Text("Create Account")
+                                    .fontWeight(.semibold)
+                                    .frame(maxWidth: .infinity)
+                            }
                         }
-                    }
-                    .disabled(!isFormValid || isSigningUp)
-                    .padding()
-                    .background(
-                        isFormValid && !isSigningUp ?
-                            Color(UIColor.black) : Color(UIColor.black).opacity(0.8)
-                    )
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                // Back to login button
-                Button(action: { presentationMode.wrappedValue.dismiss() }) {
-                    Text("Already have an account? Log In")
+                        .disabled(!isFormValid || isSigningUp)
+                        .padding()
+                        .background(
+                            isFormValid && !isSigningUp ?
+                                Color(hex: "#35b8ff") : Color(hex: "#35b8ff").opacity(0.6)
+                        )
                         .foregroundColor(.white)
+                        .cornerRadius(12)
+                        .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+                    }
+                    .padding(.horizontal)
+                    
+                    Spacer()
+                    
+                    // Back to login button
+                    Button(action: { presentationMode.wrappedValue.dismiss() }) {
+                        Text("Already have an account? Log In")
+                            .foregroundColor(Color(hex: "#35b8ff"))
+                    }
+                    .padding(.bottom)
                 }
-                .padding(.bottom)
+                .padding()
             }
-            .padding()
-            .background(
-                Color(hex: "35b8ff")
-                    .ignoresSafeArea(.all)
-            )
             .navigationBarHidden(true)
             .overlay(
                 // Close button in top-left corner
@@ -113,7 +140,7 @@ struct SignUpView: View {
                 }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                         .padding(20)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

@@ -115,6 +115,7 @@ enum TrackingMetric: String, CaseIterable, Identifiable {
     case sodium = "Sodium"
     case novaScore = "NOVA Score"
     case nutriScore = "Nutri-Score"
+    case gutHealth = "Gut Health"
     case steps = "Steps"
     case weight = "Weight"
     // case water = "Water Intake" // TEMPORARILY DISABLED
@@ -132,6 +133,7 @@ enum TrackingMetric: String, CaseIterable, Identifiable {
         case .sodium: return "drop.fill"
         case .novaScore: return "star.circle.fill"
         case .nutriScore: return "checkmark.seal.fill"
+        case .gutHealth: return "leaf.arrow.triangle.circlepath"
         case .steps: return "figure.walk.circle.fill"
         case .weight: return "scalemass.fill"
         // case .water: return "drop.circle.fill" // TEMPORARILY DISABLED
@@ -149,6 +151,7 @@ enum TrackingMetric: String, CaseIterable, Identifiable {
         case .sodium: return .purple
         case .novaScore: return .indigo
         case .nutriScore: return .mint
+        case .gutHealth: return Color(red: 0.2, green: 0.7, blue: 0.5)
         case .steps: return .cyan
         case .weight: return .brown
         // case .water: return .blue // TEMPORARILY DISABLED
@@ -166,6 +169,7 @@ enum TrackingMetric: String, CaseIterable, Identifiable {
         case .sodium: return "Sodium intake monitoring"
         case .novaScore: return "Food processing level (NOVA)"
         case .nutriScore: return "Overall nutrition quality"
+        case .gutHealth: return "Gut health & microbiome support"
         case .steps: return "Daily step count and activity"
         case .weight: return "Weight tracking and trends"
         // case .water: return "Daily hydration tracking" // TEMPORARILY DISABLED
@@ -176,7 +180,7 @@ enum TrackingMetric: String, CaseIterable, Identifiable {
         switch self {
         case .calories, .protein, .carbs, .fat, .fiber, .sugar, .sodium:
             return .nutrition
-        case .novaScore, .nutriScore:
+        case .novaScore, .nutriScore, .gutHealth:
             return .quality
         case .steps, .weight: // .water TEMPORARILY DISABLED
             return .health
@@ -228,6 +232,7 @@ enum OnboardingStep: Int, CaseIterable {
 
 struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var authService = FirebaseAuthService.shared
     @State private var currentStep: OnboardingStep = .welcome
     @State private var selectedRegion: String = "All Regions"
@@ -270,6 +275,15 @@ struct OnboardingView: View {
     @State private var showingSignUp = false
     @State private var showingSignIn = false
     
+    // Adaptive colors for dark mode support
+    private var onboardingBackground: Color {
+        Color.appBackground
+    }
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
+    
     // Scroll tracking for collapsible header
     @State private var scrollOffset: CGFloat = 0
     @State private var isHeaderVisible = true
@@ -281,8 +295,8 @@ struct OnboardingView: View {
     
     var body: some View {
         ZStack {
-            // Background color matching dashboard
-            Color(.systemGray6)
+            // Background color matching dashboard (adapts to dark mode)
+            onboardingBackground
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
@@ -298,7 +312,7 @@ struct OnboardingView: View {
                 .padding(.horizontal)
                 .padding(.top, 20)
                 .padding(.bottom, 12)
-                .background(Color(.systemGray6))
+                .background(onboardingBackground)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Progress indicator")
                 .accessibilityValue("Step \(currentStep.rawValue + 1) of \(OnboardingStep.allCases.count)")
@@ -519,7 +533,7 @@ struct OnboardingView: View {
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(.systemBackground))
+                            .fill(cardBackground)
                             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                     )
                 }
@@ -564,7 +578,7 @@ struct OnboardingView: View {
                                     .padding(.horizontal, 12)
                                     .background(
                                         RoundedRectangle(cornerRadius: 12)
-                                            .fill(selectedRegion == region ? Color(hex: "#5ec5ff").opacity(0.2) : Color(.systemBackground))
+                                            .fill(selectedRegion == region ? Color(hex: "#5ec5ff").opacity(0.2) : cardBackground)
                                             .stroke(selectedRegion == region ? Color(hex: "#5ec5ff") : Color.clear, lineWidth: 2)
                                             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                                     )
@@ -604,7 +618,7 @@ struct OnboardingView: View {
                                 .padding(12)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .fill(selectedActivity == activity ? activity.iconColor.opacity(0.2) : Color(.systemBackground))
+                                        .fill(selectedActivity == activity ? activity.iconColor.opacity(0.2) : cardBackground)
                                         .stroke(selectedActivity == activity ? activity.iconColor : Color.clear, lineWidth: 2)
                                         .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                                 )
@@ -641,7 +655,7 @@ struct OnboardingView: View {
                                 .padding()
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .fill(selectedGoal == goal ? goal.iconColor.opacity(0.2) : Color(.systemBackground))
+                                        .fill(selectedGoal == goal ? goal.iconColor.opacity(0.2) : cardBackground)
                                         .stroke(selectedGoal == goal ? goal.iconColor : Color.clear, lineWidth: 2)
                                         .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                                 )
@@ -798,7 +812,7 @@ struct OnboardingView: View {
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(.systemBackground))
+                            .fill(cardBackground)
                             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
                     )
                 }
@@ -830,7 +844,7 @@ struct OnboardingView: View {
                 .padding(.vertical, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white)
+                        .fill(cardBackground)
                         .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
                 )
                 .foregroundColor(.primary)
@@ -1077,6 +1091,8 @@ struct OnboardingView: View {
             return .novaGroups
         case .nutriScore:
             return .nutriScore
+        case .gutHealth:
+            return .gutHealth
         case .fiber, .sugar, .sodium:
             return nil // These don't have corresponding dashboard cards yet
         }
@@ -1102,8 +1118,8 @@ struct OnboardingView: View {
             UserProfile.shared.activityLevel = activity
         }
         
-        // Save region preference to UserDefaults
-        UserDefaults.standard.set(selectedRegion, forKey: "preferredFoodRegion")
+        // Save region preference to UserProfile (which syncs to Firebase)
+        UserProfile.shared.preferredRegion = selectedRegion
         
         // Save consent preferences
         UserDefaults.standard.set(analyticsConsent, forKey: "analyticsEnabled")
@@ -1125,6 +1141,9 @@ struct OnboardingView: View {
         
         // Save dashboard customization based on selected tracking metrics
         saveDashboardCustomization()
+        
+        // Sync profile to Firebase if user is authenticated
+        UserProfile.shared.saveToFirebase()
         
         print("✅ Onboarding completed - User profile saved!")
         print("📊 Daily calories: \(UserProfile.shared.dailyCalorieGoal)")
@@ -1190,10 +1209,16 @@ struct OnboardingView: View {
 
 // MARK: - FeatureCard Component
 struct FeatureCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let icon: String
     let iconColor: Color
     let title: String
     let description: String
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         HStack(spacing: 16) {
@@ -1220,7 +1245,7 @@ struct FeatureCard: View {
         .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
+                .fill(cardBackground)
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
         )
     }
@@ -1283,10 +1308,16 @@ struct SummaryRow: View {
 
 // MARK: - OnboardingMetricCard Component
 struct OnboardingMetricCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let metric: TrackingMetric
     let isSelected: Bool
     let isEssential: Bool
     let onTap: () -> Void
+    
+    private var cardBackground: Color {
+        Color.appCardBackground
+    }
     
     var body: some View {
         Button(action: onTap) {
@@ -1305,7 +1336,7 @@ struct OnboardingMetricCard: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? metric.iconColor.opacity(0.15) : Color.white)
+                    .fill(isSelected ? metric.iconColor.opacity(0.15) : cardBackground)
                     .stroke(
                         isSelected ? metric.iconColor : Color.clear,
                         lineWidth: isSelected ? 2 : 0

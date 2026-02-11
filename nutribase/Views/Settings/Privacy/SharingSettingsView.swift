@@ -5,7 +5,15 @@ struct SharingSettingsView: View {
     @State private var productUpdates = UserDefaults.standard.bool(forKey: "productUpdates")
     @State private var tipsAndTricks = UserDefaults.standard.bool(forKey: "tipsAndTricks")
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         Form {
             Section(header: Text("Email Preferences")) {
                 Toggle("Email Notifications", isOn: $emailNotifications)
@@ -23,6 +31,7 @@ struct SharingSettingsView: View {
                         UserDefaults.standard.set(tipsAndTricks, forKey: "tipsAndTricks")
                     }
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("Data Export")) {
                 Button("Export My Data") {
@@ -33,6 +42,7 @@ struct SharingSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("Account")) {
                 Button("Delete My Account", role: .destructive) {
@@ -43,10 +53,13 @@ struct SharingSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .listRowBackground(Color.appCardBackground)
+        }
+        .scrollContentBackground(.hidden)
         }
         .navigationTitle("Sharing & Email")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }

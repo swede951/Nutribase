@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum NovaGroupsSizeMode: String, CaseIterable {
+    case compact = "1×1"
+    case wide = "2×1"
+}
+
 // Custom wrapper to match the standard DashboardCardView styling
 struct NovaCardWrapper<Content: View>: View {
     let content: Content
@@ -18,8 +23,7 @@ struct NovaCardWrapper<Content: View>: View {
         // Don't pass tap actions in preview mode to allow drag gestures to work
         FixedSizeCard(
             title: "NOVA Groups",
-            showInfoButton: !isPreview,
-            onInfoTap: isPreview ? nil : { showingInfo = true },
+            showInfoButton: false,
             onCardTap: isPreview ? nil : { showingDetailView = true }
         ) {
             content
@@ -31,6 +35,7 @@ struct NovaGroupsCardView: View {
     var isPreview: Bool = false
     
     @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @AppStorage("novaGroupsSizeMode") private var sizeMode: NovaGroupsSizeMode = .wide
     
     // State for showing the detailed view
     @State private var showingDetailView = false
@@ -133,33 +138,69 @@ struct NovaGroupsCardView: View {
     }
     
     var body: some View {
-        NovaCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
-            // Main content with better space utilization
-            HStack(alignment: .center, spacing: 12) {
-                // Weekly average percentages stacked vertically on the left
-                VStack(spacing: 3) {
-                    percentageView(value: calculateWeeklyPercentage(for: 1), label: "Unprocessed", color: novaColors[1] ?? .gray)
-                    percentageView(value: calculateWeeklyPercentage(for: 2), label: "Ingredients", color: novaColors[2] ?? .gray)
-                    percentageView(value: calculateWeeklyPercentage(for: 3), label: "Processed", color: novaColors[3] ?? .gray)
-                    percentageView(value: calculateWeeklyPercentage(for: 4), label: "Ultra", color: novaColors[4] ?? .gray)
-                }
-                .frame(minWidth: 100) // Minimum width but flexible
-                
-                // Weekday bars on the right - more compact spacing
-                HStack(alignment: .bottom, spacing: 6) {
-                    // Show all 7 days in order (oldest to newest, left to right)
-                    ForEach(Array(weekdayData.enumerated()), id: \.offset) { index, dayData in
-                        WeekdayBar(day: dayData.day, score: dayData.score, novaDistribution: dayData.distribution, novaColors: novaColors)
+        ZStack(alignment: .topTrailing) {
+            NovaCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
+                if sizeMode == .compact && !isPreview {
+                    // Compact mode: chart only
+                    HStack(alignment: .bottom, spacing: 6) {
+                        ForEach(Array(weekdayData.enumerated()), id: \.offset) { index, dayData in
+                            WeekdayBar(day: dayData.day, score: dayData.score, novaDistribution: dayData.distribution, novaColors: novaColors)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                } else {
+                    // Wide mode: percentages + chart
+                    HStack(alignment: .center, spacing: 12) {
+                        // Weekly average percentages stacked vertically on the left
+                        VStack(spacing: 3) {
+                            percentageView(value: calculateWeeklyPercentage(for: 1), label: "Unprocessed", color: novaColors[1] ?? .gray)
+                            percentageView(value: calculateWeeklyPercentage(for: 2), label: "Ingredients", color: novaColors[2] ?? .gray)
+                            percentageView(value: calculateWeeklyPercentage(for: 3), label: "Processed", color: novaColors[3] ?? .gray)
+                            percentageView(value: calculateWeeklyPercentage(for: 4), label: "Ultra", color: novaColors[4] ?? .gray)
+                        }
+                        .frame(minWidth: 100) // Minimum width but flexible
+                        
+                        // Weekday bars on the right - more compact spacing
+                        HStack(alignment: .bottom, spacing: 6) {
+                            // Show all 7 days in order (oldest to newest, left to right)
+                            ForEach(Array(weekdayData.enumerated()), id: \.offset) { index, dayData in
+                                WeekdayBar(day: dayData.day, score: dayData.score, novaDistribution: dayData.distribution, novaColors: novaColors)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 50) // Use available space flexibly with increased height
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 50) // Use available space flexibly with increased height
+            }
+            
+            if !isPreview {
+                Menu {
+                    ForEach(NovaGroupsSizeMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            sizeMode = mode
+                            NotificationCenter.default.post(name: NSNotification.Name("NovaGroupsSizeModeChanged"), object: nil)
+                        }) {
+                            HStack {
+                                Text(mode.rawValue)
+                                if sizeMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .padding(.bottom, 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .sheet(isPresented: $showingDetailView) {
             NovaGroupsDetailView(foodLogManager: foodLogManager)
-        }
-        .sheet(isPresented: $showingInfo) {
-            NovaInfoView()
         }
         .allowsHitTesting(!isPreview)
         .onAppear {
@@ -427,7 +468,7 @@ struct WeekdayBar: View {
         VStack(spacing: 4) {
             // Background bar
             RoundedRectangle(cornerRadius: 3)
-                .fill(Color(.systemGray5))
+                .fill(Color.appInsetBackground)
                 .frame(width: 12, height: 50)
                 .overlay(
                     // Stacked bars for each NOVA group
@@ -526,5 +567,5 @@ struct NovaInfoView: View {
             .frame(width: 350,height: 120)
             .padding()
     }
-    .background(Color(.systemGroupedBackground))
+    .background(Color.appBackground)
 }

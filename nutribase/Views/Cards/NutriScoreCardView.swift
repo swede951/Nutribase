@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum NutriScoreSizeMode: String, CaseIterable {
+    case compact = "1×1"
+    case wide = "2×1"
+}
+
 // Custom wrapper to match the standard DashboardCardView styling
 struct NutriScoreCardWrapper<Content: View>: View {
     let content: Content
@@ -18,8 +23,7 @@ struct NutriScoreCardWrapper<Content: View>: View {
         // Don't pass tap actions in preview mode to allow drag gestures to work
         FixedSizeCard(
             title: "Nutri-Score",
-            showInfoButton: !isPreview,
-            onInfoTap: isPreview ? nil : { showingInfo = true },
+            showInfoButton: false,
             onCardTap: isPreview ? nil : { showingDetailView = true }
         ) {
             content
@@ -31,6 +35,7 @@ struct NutriScoreCardView: View {
     var isPreview: Bool = false
     
     @ObservedObject private var foodLogManager = FoodLogManager.shared
+    @AppStorage("nutriScoreSizeMode") private var sizeMode: NutriScoreSizeMode = .wide
     
     // State for showing the detailed view
     @State private var showingDetailView = false
@@ -136,31 +141,70 @@ struct NutriScoreCardView: View {
     }
     
     var body: some View {
-        NutriScoreCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
-            // Main content with 25%/75% split layout
-            GeometryReader { geometry in
-                HStack(spacing: 0) {
-                    // Left side: Grade percentages centered at 25% from left
-                    VStack(spacing: 3) {
-                        gradePercentageRow(grade: "A", percentage: weeklyGradePercentages["a"] ?? 0, color: .green)
-                        gradePercentageRow(grade: "B", percentage: weeklyGradePercentages["b"] ?? 0, color: .blue)
-                        gradePercentageRow(grade: "C", percentage: weeklyGradePercentages["c"] ?? 0, color: .yellow)
-                        gradePercentageRow(grade: "D", percentage: weeklyGradePercentages["d"] ?? 0, color: .orange)
-                        gradePercentageRow(grade: "E", percentage: weeklyGradePercentages["e"] ?? 0, color: .red)
-                    }
-                    .frame(width: geometry.size.width * 0.5, alignment: .center)
-                    
-                    // Right side: Weekday bars centered at 75% from left
+        ZStack(alignment: .topTrailing) {
+            NutriScoreCardWrapper(showingDetailView: $showingDetailView, showingInfo: $showingInfo, isPreview: isPreview) {
+                if sizeMode == .compact && !isPreview {
+                    // Compact mode: chart only
                     HStack(alignment: .bottom, spacing: 6) {
-                        // Show all 7 days in order (oldest to newest, left to right)
                         ForEach(Array(weeklyNutriScores.enumerated()), id: \.offset) { index, dayData in
                             NutriScoreStackedDayBar(day: dayData.day, grades: dayData.grades)
                         }
                     }
-                    .frame(width: geometry.size.width * 0.5, alignment: .center)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                } else {
+                    // Wide mode: percentages + chart
+                    GeometryReader { geometry in
+                        HStack(spacing: 0) {
+                            // Left side: Grade percentages centered at 25% from left
+                            VStack(spacing: 3) {
+                                gradePercentageRow(grade: "A", percentage: weeklyGradePercentages["a"] ?? 0, color: .green)
+                                gradePercentageRow(grade: "B", percentage: weeklyGradePercentages["b"] ?? 0, color: .blue)
+                                gradePercentageRow(grade: "C", percentage: weeklyGradePercentages["c"] ?? 0, color: .yellow)
+                                gradePercentageRow(grade: "D", percentage: weeklyGradePercentages["d"] ?? 0, color: .orange)
+                                gradePercentageRow(grade: "E", percentage: weeklyGradePercentages["e"] ?? 0, color: .red)
+                            }
+                            .frame(width: geometry.size.width * 0.5, alignment: .center)
+                            
+                            // Right side: Weekday bars centered at 75% from left
+                            HStack(alignment: .bottom, spacing: 6) {
+                                // Show all 7 days in order (oldest to newest, left to right)
+                                ForEach(Array(weeklyNutriScores.enumerated()), id: \.offset) { index, dayData in
+                                    NutriScoreStackedDayBar(day: dayData.day, grades: dayData.grades)
+                                }
+                            }
+                            .frame(width: geometry.size.width * 0.5, alignment: .center)
+                        }
+                    }
+                    .frame(height: 80)
                 }
             }
-            .frame(height: 80)
+            
+            if !isPreview {
+                Menu {
+                    ForEach(NutriScoreSizeMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            sizeMode = mode
+                            NotificationCenter.default.post(name: NSNotification.Name("NutriScoreSizeModeChanged"), object: nil)
+                        }) {
+                            HStack {
+                                Text(mode.rawValue)
+                                if sizeMode == mode {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .padding(.bottom, 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
         }
         .sheet(isPresented: $showingDetailView) {
             NutriScoreDetailView()
@@ -287,7 +331,7 @@ struct NutriScoreStackedDayBar: View {
             ZStack(alignment: .bottom) {
                 // Background
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Color(.systemGray5))
+                    .fill(Color.appInsetBackground)
                     .frame(width: 12, height: 48)
                 
                 // Stacked segments (bottom to top: A, B, C, D, E)
@@ -347,7 +391,7 @@ struct NutriScoreDayBar: View {
         VStack(spacing: 4) {
             // Background bar
             RoundedRectangle(cornerRadius: 3)
-                .fill(Color(.systemGray5))
+                .fill(Color.appInsetBackground)
                 .frame(width: 12, height: 48)
                 .overlay(
                     // Colored bar based on grade
@@ -444,15 +488,15 @@ struct NutriScoreDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     private var barEmptyBackground: Color {
-        colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)
+        Color.appInsetBackground
     }
     
     @State private var currentWeekOffset: Int = 0
@@ -594,7 +638,7 @@ struct NutriScoreDetailView: View {
                     .foregroundColor(.primary)
                 }
             }
-            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(Color.appBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .task {
                 await precomputeInitialData()
@@ -1292,7 +1336,7 @@ struct NutriScoreDetailView: View {
             
             // Background bar
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color(.systemGray5))
+                .fill(Color.appInsetBackground)
                 .frame(width: 8, height: 60)
                 .overlay(
                     // Colored bar based on grade
@@ -1380,7 +1424,7 @@ struct NutriScoreDetailView: View {
                     ZStack(alignment: .leading) {
                         // Background bar
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(.systemGray5))
+                            .fill(Color.appInsetBackground)
                             .frame(height: 8)
                         
                         // Filled bar
@@ -1479,7 +1523,7 @@ struct NutriScoreGauge: View {
                     .position(center)
                 
                 Circle()
-                    .fill(Color(.systemBackground))
+                    .fill(Color.appCardBackground)
                     .frame(width: 6, height: 6)
                     .position(center)
                 
@@ -1516,5 +1560,5 @@ struct NutriScoreGauge: View {
             .frame(width: 350, height: 120)
             .padding()
     }
-    .background(Color(.systemGroupedBackground))
+    .background(Color.appBackground)
 }

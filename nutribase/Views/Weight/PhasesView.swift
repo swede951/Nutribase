@@ -18,11 +18,11 @@ struct PhasesView: View {
     @State private var showingYearView = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -146,7 +146,7 @@ struct CalendarCarouselView: View {
     private let performanceCache = PerformanceCache.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     @State private var currentMonthOffset: Int = 0
@@ -428,7 +428,7 @@ struct PhaseCardView: View {
     private let performanceCache = PerformanceCache.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Get weight entries for this phase period
@@ -606,7 +606,7 @@ struct DetailCard<Content: View>: View {
     let content: Content
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     init(title: String, icon: String, @ViewBuilder content: () -> Content) {
@@ -650,7 +650,7 @@ struct PhaseCalendarView: View {
     private let performanceCache = PerformanceCache.shared
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     // Performance: Use cached calendar

@@ -190,12 +190,14 @@ struct AddPhaseView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         savePhase()
                     }
+                    .foregroundColor(.primary)
                     .disabled(!isValidPhase)
                 }
             }

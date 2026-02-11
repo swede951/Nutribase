@@ -39,11 +39,11 @@ struct GutHealthDetailView: View {
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -163,6 +163,7 @@ struct GutHealthDetailView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
             .sheet(isPresented: $showingMetricBreakdown) {
@@ -489,7 +490,7 @@ struct CategoryScoreCard: View {
     @State private var showingEstimationInfo = false
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -529,7 +530,7 @@ struct CategoryScoreCard: View {
                     ZStack(alignment: .leading) {
                         // Background
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(.systemGray5))
+                            .fill(Color.appInsetBackground)
                             .frame(height: 12)
                         
                         // Fill
@@ -679,7 +680,7 @@ struct GutHealthGauge: View {
                     .position(center)
                 
                 Circle()
-                    .fill(Color(.systemBackground))
+                    .fill(Color.appCardBackground)
                     .frame(width: 6, height: 6)
                     .position(center)
                 
@@ -721,7 +722,7 @@ struct MetricBreakdownView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     private var weekEntries: [FoodEntry] {
@@ -894,6 +895,7 @@ struct MetricBreakdownView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
         }

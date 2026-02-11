@@ -40,15 +40,17 @@ struct DashboardView: View {
         GridItem(.flexible())
     ]
     
-    // Weight chart size mode from UserDefaults
+    // Card size modes from UserDefaults
     @AppStorage("weightChartSizeMode") private var weightChartSizeMode: WeightChartSizeMode = .compact
+    @AppStorage("novaGroupsSizeMode") private var novaGroupsSizeMode: NovaGroupsSizeMode = .wide
+    @AppStorage("nutriScoreSizeMode") private var nutriScoreSizeMode: NutriScoreSizeMode = .wide
     
     // Color scheme for adaptive backgrounds
     @Environment(\.colorScheme) private var colorScheme
     
     /// Background color: grey in light mode, black in dark mode (inverted)
     private var scrollBackground: Color {
-        colorScheme == .dark ? Color(.systemBackground) : Color(.systemGray6)
+        Color.appBackground
     }
     
     // Default card layout - simplified for LazyVGrid
@@ -62,6 +64,7 @@ struct DashboardView: View {
         DashboardCard(cardType: .gutHealth),
         DashboardCard(cardType: .carbs),
         DashboardCard(cardType: .fat),
+        DashboardCard(cardType: .fibre),
         // DashboardCard(cardType: .water), // TEMPORARILY DISABLED
         DashboardCard(cardType: .activity)
     ]
@@ -83,9 +86,6 @@ struct DashboardView: View {
     @State private var hoverTarget: CardType? = nil
     @State private var isDragging = false
     
-    // Cached grid rows to avoid recalculation on every render
-    @State private var cachedGridRows: [[DashboardCard]] = []
-    @State private var lastCardsHash: Int = 0
     
     // Initialize with saved layout or default layout
     init(onLoaded: (() -> Void)? = nil) {
@@ -95,8 +95,25 @@ struct DashboardView: View {
         var initialCards = defaultCards
         if let savedCardOrderData = UserDefaults.standard.data(forKey: cardOrderKey),
            let decodedCardOrder = try? JSONDecoder().decode([CardType].self, from: savedCardOrderData) {
-            // Convert saved CardTypes to DashboardCards
-            initialCards = decodedCardOrder.map { DashboardCard(cardType: $0) }
+            // DEDUPLICATE: Remove any duplicate card types (keep first occurrence)
+            var seenTypes = Set<CardType>()
+            let uniqueCardTypes = decodedCardOrder.filter { cardType in
+                if seenTypes.contains(cardType) {
+                    return false
+                }
+                seenTypes.insert(cardType)
+                return true
+            }
+            
+            // Convert to DashboardCards
+            initialCards = uniqueCardTypes.map { DashboardCard(cardType: $0) }
+            
+            // If we removed duplicates, save the cleaned version
+            if uniqueCardTypes.count != decodedCardOrder.count {
+                if let encodedData = try? JSONEncoder().encode(uniqueCardTypes) {
+                    UserDefaults.standard.set(encodedData, forKey: cardOrderKey)
+                }
+            }
         } else {
             // If no saved layout, use default and save it
             let cardTypes = defaultCards.map { $0.cardType }
@@ -107,13 +124,20 @@ struct DashboardView: View {
         _cards = State(initialValue: initialCards)
         
         // Load saved hidden cards from UserDefaults
+        var initialHiddenCards: [CardType] = []
         if let savedHiddenCardsData = UserDefaults.standard.data(forKey: hiddenCardsKey),
            let decodedHiddenCards = try? JSONDecoder().decode([CardType].self, from: savedHiddenCardsData) {
-            _hiddenCards = State(initialValue: decodedHiddenCards)
-        } else {
-            // Default empty hidden cards array if nothing is saved
-            _hiddenCards = State(initialValue: [])
+            initialHiddenCards = decodedHiddenCards
         }
+        
+        // Auto-discover new card types not in cardOrder or hiddenCards (e.g. fibre added after user created their layout)
+        let knownCardTypes = Set(initialCards.map { $0.cardType }).union(Set(initialHiddenCards))
+        let excludedTypes: Set<CardType> = [.empty] // Types that should never auto-appear
+        for cardType in CardType.allCases where !knownCardTypes.contains(cardType) && !excludedTypes.contains(cardType) {
+            initialHiddenCards.append(cardType)
+        }
+        
+        _hiddenCards = State(initialValue: initialHiddenCards)
     }
     
     // Function to reset the dashboard to default layout
@@ -150,6 +174,8 @@ struct DashboardView: View {
                 return visibilityService.showNovaScore
             case .nutriScore:
                 return visibilityService.showNutriScore
+            case .fibre:
+                return true // Always show fibre card
             case .currentWeight, .weightChart, .activity, .dailyGoals, .gutHealth, .empty:
                 return true // Always show non-nutrition cards
             }
@@ -158,7 +184,13 @@ struct DashboardView: View {
     
     // Helper function to check if a card should span 2 columns
     private func isWideCard(_ cardType: CardType) -> Bool {
-        if cardType == .novaGroups || cardType == .nutriScore || cardType == .dailyGoals || cardType == .gutHealth {
+        if cardType == .dailyGoals || cardType == .gutHealth {
+            return true
+        }
+        if cardType == .novaGroups && novaGroupsSizeMode == .wide {
+            return true
+        }
+        if cardType == .nutriScore && nutriScoreSizeMode == .wide {
             return true
         }
         if cardType == .weightChart && weightChartSizeMode == .expanded {
@@ -218,20 +250,88 @@ struct DashboardView: View {
         return cards.count
     }
     
-    // Get cached grid rows or recalculate if needed
-    private func getGridRows() -> [[DashboardCard]] {
-        let currentHash = visibleCards.map { $0.id.hashValue }.reduce(0, ^)
-        if currentHash != lastCardsHash || cachedGridRows.isEmpty {
-            cachedGridRows = createGridRows(from: visibleCards)
-            lastCardsHash = currentHash
-        }
-        return cachedGridRows
+    // Computed grid rows - SwiftUI handles caching via view diffing
+    private var gridRows: [[DashboardCard]] {
+        createGridRows(from: visibleCards)
     }
     
-    // Invalidate cache when cards change
-    private func invalidateGridCache() {
-        lastCardsHash = 0
-        cachedGridRows = []
+    // Dashboard header view - shared between normal and edit modes
+    private var dashboardHeader: some View {
+        dashboardHeaderContent
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            .padding(.top, 1)
+    }
+    
+    // Editor header with safe area padding (for UICollectionView header)
+    private var editorHeader: some View {
+        VStack(spacing: 0) {
+            // Safe area spacer - reduced to match normal dashboard header position
+            Color.clear.frame(height: 0)
+            
+            dashboardHeaderContent
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                .padding(.top, -15)
+        }
+    }
+    
+    // Shared header content
+    private var dashboardHeaderContent: some View {
+        ZStack {
+            // Center - title
+            Text("NUTRIBASE")
+                .font(.system(size: 26, weight: .heavy))
+                .foregroundColor(.white)
+                .shadow(color: Color(hex: "#35b8ff").opacity(0.5), radius: 4, x: 0, y: 0)
+                .frame(maxWidth: .infinity)
+            
+            // Left and right elements
+            HStack {
+                // Left side - streak
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 16))
+                    Text("\(foodLogManager.currentStreak)")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.orange)
+                }
+                
+                Spacer()
+            
+                // Right side - edit button
+                HStack(spacing: 12) {
+                    // Edit/Done button
+                    Button(action: {
+                        HapticManager.shared.lightFeedback()
+                        
+                        // Capture current card data BEFORE entering edit mode
+                        if !isEditing {
+                            CapturedCardData.shared.captureCurrentData {
+                                // Steps data is now ready - enter edit mode
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    self.isEditing = true
+                                }
+                            }
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isEditing = false
+                            }
+                            saveCardOrder()
+                            saveHiddenCards()
+                            // Clear snapshot cache when exiting edit mode
+                            CardSnapshotCache.shared.clearCache()
+                        }
+                    }) {
+                        Image(systemName: isEditing ? "checkmark" : "slider.horizontal.3")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                    .withHapticFeedback()
+                }
+            }
+        }
     }
     
     var body: some View {
@@ -247,213 +347,127 @@ struct DashboardView: View {
             )
             .ignoresSafeArea()
             .background(scrollBackground)
-                
-            // Main content with header inside ScrollView
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Custom header with centered title
-                    ZStack {
-                        // Center - title (positioned absolutely in the center)
-                        Text("NUTRIBASE")
-                            .font(.system(size: 26, weight: .heavy))
-                            .foregroundColor(.white)
-                            .shadow(color: Color(hex: "#35b8ff").opacity(0.5), radius: 4, x: 0, y: 0)
-                            .frame(maxWidth: .infinity)
+            
+            if isEditing {
+                // Edit mode: UIKit editor with scrollable header
+                EmbeddedDashboardEditorView(
+                    cardOrder: Binding(
+                        get: { cards.map { $0.cardType } },
+                        set: { newCardTypes in
+                            cards = newCardTypes.map { DashboardCard(cardType: $0) }
+                            saveCardOrder()
+                        }
+                    ),
+                    hiddenCards: $hiddenCards,
+                    onShowWidgetStorage: {
+                        showingWidgetStorage = true
+                    },
+                    cardViewProvider: { [weightChartSizeMode, novaGroupsSizeMode, nutriScoreSizeMode] cardType in
+                        EditorCardViewProvider.cardView(for: cardType, isWeightChartExpanded: weightChartSizeMode == .expanded, isNovaGroupsCompact: novaGroupsSizeMode == .compact, isNutriScoreCompact: nutriScoreSizeMode == .compact)
+                    },
+                    isWeightChartExpanded: weightChartSizeMode == .expanded,
+                    isNovaGroupsCompact: novaGroupsSizeMode == .compact,
+                    isNutriScoreCompact: nutriScoreSizeMode == .compact,
+                    headerView: AnyView(editorHeader),
+                    headerHeight: 118  // 20 (safe area) + 60 (header content)
+                )
+                .ignoresSafeArea()
+            } else {
+                // Normal mode: SwiftUI ScrollView
+                ScrollView {
+                    VStack(spacing: 0) {
+                        dashboardHeader
                         
-                        // Left and right elements in an HStack
-                        HStack {
-                            // Left side - streak
-                            HStack(spacing: 6) {
-                                Image(systemName: "flame.fill")
-                                    .foregroundColor(.orange)
-                                    .font(.system(size: 16))
-                                Text("\(foodLogManager.currentStreak)")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.orange)
+                        // Content container
+                        ZStack {
+                        
+                        Grid(horizontalSpacing: 16, verticalSpacing: 16) {
+                            ForEach(Array(gridRows.enumerated()), id: \.offset) { rowIndex, row in
+                                GridRow {
+                                    ForEach(row, id: \.id) { card in
+                                        if isWideCard(card.cardType) {
+                                            // Wide cards span 2 columns
+                                            cardView(for: card)
+                                                .gridCellColumns(2)
+                                                .onLongPressGesture(minimumDuration: 1) {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    CapturedCardData.shared.captureCurrentData {
+                                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                                            self.isEditing = true
+                                                        }
+                                                    }
+                                                }
+                                        } else {
+                                            // Regular 1-column cards
+                                            cardView(for: card)
+                                                .onLongPressGesture(minimumDuration: 1) {
+                                                    HapticManager.shared.mediumFeedback()
+                                                    CapturedCardData.shared.captureCurrentData {
+                                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                                            self.isEditing = true
+                                                        }
+                                                    }
+                                                }
+                                        }
+                                    }
+                                    
+                                    // Add empty space to fill row to 2 columns
+                                    let currentRowColumns = row.reduce(0) { total, card in
+                                        total + (isWideCard(card.cardType) ? 2 : 1)
+                                    }
+                                    if currentRowColumns < 2 {
+                                        Rectangle()
+                                            .fill(Color.clear)
+                                            .frame(maxWidth: .infinity, minHeight: 120)
+                                    }
+                                }
                             }
                             
-                            Spacer()
-                        
-                            // Right side - edit button
-                            HStack(spacing: 12) {
-                                // Edit button with icon
-                                Button(action: {
-                                    HapticManager.shared.lightFeedback()
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        isEditing.toggle()
-                                    }
-                                }) {
-                                    Image(systemName: isEditing ? "checkmark" : "slider.horizontal.3")
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.primary)
-                                }
-                                .withHapticFeedback()
-                            }
+                            // Bottom spacing
+                            Color.clear.frame(height: 100)
+                                .gridCellColumns(2)
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
                     }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    .padding(.top, 1) // Reduced top padding
+                    }
+                }
+                .onAppear {
+                    // Track page view
+                    AnalyticsService.shared.trackDashboardView()
                     
-                    // Content container
-                    ZStack {
+                    // Pre-warm caches for faster card rendering
+                    DailyNutritionCache.shared.prewarmCommonDates()
                     
-                    Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-                        ForEach(Array(createGridRows(from: visibleCards).enumerated()), id: \.offset) { rowIndex, row in
-                            GridRow {
-                                ForEach(row, id: \.id) { card in
-                                    if isWideCard(card.cardType) {
-                                        // Wide cards span 2 columns
-                                        cardView(for: card)
-                                            .gridCellColumns(2)
-                                            .onLongPressGesture(minimumDuration: 1) {
-                                                if !isEditing {
-                                                    HapticManager.shared.mediumFeedback()
-                                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                                        isEditing = true
-                                                    }
-                                                }
-                                            }
-                                            .onDrag {
-                                                draggedCardId = card.cardType
-                                                isDragging = true
-                                                if !isEditing {
-                                                    HapticManager.shared.mediumFeedback()
-                                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                                        isEditing = true
-                                                    }
-                                                }
-                                                return NSItemProvider(object: card.cardType.rawValue as NSString)
-                                            }
-                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(target: card.cardType, cards: $cards, dragged: $draggedCardId, hoverTarget: $hoverTarget, isDragging: $isDragging))
-                                    } else {
-                                        // Regular 1-column cards
-                                        cardView(for: card)
-                                            .onLongPressGesture(minimumDuration: 1) {
-                                                if !isEditing {
-                                                    HapticManager.shared.mediumFeedback()
-                                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                                        isEditing = true
-                                                    }
-                                                }
-                                            }
-                                            .onDrag {
-                                                draggedCardId = card.cardType
-                                                isDragging = true
-                                                if !isEditing {
-                                                    HapticManager.shared.mediumFeedback()
-                                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                                        isEditing = true
-                                                    }
-                                                }
-                                                return NSItemProvider(object: card.cardType.rawValue as NSString)
-                                            }
-                                            .onDrop(of: [.text], delegate: GridCardDropDelegate(target: card.cardType, cards: $cards, dragged: $draggedCardId, hoverTarget: $hoverTarget, isDragging: $isDragging))
-                                    }
-                                }
-                                
-                                // Add empty drop zones to fill the row to 2 columns
-                                let currentRowColumns = row.reduce(0) { total, card in
-                                    total + (isWideCard(card.cardType) ? 2 : 1)
-                                }
-                                if currentRowColumns < 2 {
-                                    // Add nearly invisible drop zone with card styling
-                                    Rectangle()
-                                        .fill(Color.black.opacity(0.001))
-                                        .frame(maxWidth: .infinity, minHeight: 120)
-                                        .onDrop(of: [.text], delegate: GridEmptySpaceDropDelegate(insertionIndex: getInsertionIndexForRow(rowIndex, row: row), cards: $cards, dragged: $draggedCardId, isDragging: $isDragging))
-                                }
-                            }
-                        }
-                        
-                        // Add Widget button appears in edit mode
-                        if isEditing {
-                            Button(action: {
-                                showingWidgetStorage = true
-                            }) {
-                                VStack {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.largeTitle)
-                                        .foregroundColor(.blue)
-                                    Text("Add Widget")
-                                        .font(.caption)
-                                        .foregroundColor(.blue)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 120)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [5]))
-                                        .foregroundColor(.blue.opacity(0.5))
-                                )
-                            }
-                            .gridCellColumns(2)
-                        }
-                        
-                        // Add bottom spacing to ensure content doesn't blend with tab bar
-                        Color.clear.frame(height: 100)
-                            .gridCellColumns(2)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16) // Match vertical spacing between card rows
-                }
-                // Catch-all drop zone for entire content area
-                .onDrop(of: [.text], delegate: DashboardFallbackDropDelegate(dragged: $draggedCardId, isDragging: $isDragging))
-                }
-            }
-            .onAppear {
-                // Track page view
-                AnalyticsService.shared.trackDashboardView()
-                
-                // Pre-warm caches for faster card rendering
-                DailyNutritionCache.shared.prewarmCommonDates()
-                
-                // Signal that dashboard has loaded after a short delay to ensure all cards are rendered
-                if !hasLoadedInitialData {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        hasLoadedInitialData = true
-                        onLoaded?()
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UserProfileDidUpdate"))) { _ in
-                // Force refresh dashboard when user profile is updated
-                print("📊 Dashboard received UserProfileDidUpdate notification - refreshing cards")
-                refreshID = UUID()
-                invalidateGridCache()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .exitEditMode)) { _ in
-                // Exit edit mode when switching tabs
-                if isEditing {
-                    isEditing = false
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WeightChartSizeModeChanged"))) { _ in
-                // Refresh grid when weight chart size mode changes
-                invalidateGridCache()
-                refreshID = UUID()
-            }
-            .onChange(of: isEditing) { _, newValue in
-                // Reset drag state when exiting edit mode
-                if !newValue {
-                    draggedCardId = nil
-                    isDragging = false
-                }
-            }
-            .onChange(of: isDragging) { _, newValue in
-                // Drag cancel watchdog - if still "dragging" after 1s with no drop, assume cancelled
-                if newValue {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        if isDragging && hoverTarget == nil {
-                            draggedCardId = nil
-                            isDragging = false
+                    // Signal that dashboard has loaded
+                    if !hasLoadedInitialData {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            hasLoadedInitialData = true
+                            onLoaded?()
                         }
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UserProfileDidUpdate"))) { _ in
+                    refreshID = UUID()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .exitEditMode)) { _ in
+                    if isEditing {
+                        isEditing = false
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WeightChartSizeModeChanged"))) { _ in
+                    refreshID = UUID()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NovaGroupsSizeModeChanged"))) { _ in
+                    refreshID = UUID()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NutriScoreSizeModeChanged"))) { _ in
+                    refreshID = UUID()
+                }
+                .id(refreshID)
             }
-            .id(refreshID) // Force view refresh when refreshID changes
         }
-        .navigationBarHidden(true) // Hide the default navigation bar since we have a custom header
+        .navigationBarHidden(true)
         .sheet(isPresented: $showingWidgetStorage) {
             WidgetStorageView(cardOrder: Binding(
                 get: { cards.map { $0.cardType } },
@@ -462,10 +476,12 @@ struct DashboardView: View {
                 }
             ), hiddenCards: $hiddenCards)
                 .onDisappear {
-                    // Save changes when widget storage view is dismissed
                     saveCardOrder()
                     saveHiddenCards()
                 }
+        }
+        .onChange(of: hiddenCards) { _, _ in
+            saveHiddenCards()
         }
     }
     
@@ -484,10 +500,24 @@ struct DashboardView: View {
         saveHiddenCards()
     }
     
-    // Function to save card order to UserDefaults
+    // Function to save card order to UserDefaults (with deduplication)
     private func saveCardOrder() {
-        let cardTypes = cards.map { $0.cardType }
-        if let encodedData = try? JSONEncoder().encode(cardTypes) {
+        // Deduplicate before saving
+        var seenTypes = Set<CardType>()
+        let uniqueCardTypes = cards.map { $0.cardType }.filter { cardType in
+            if seenTypes.contains(cardType) {
+                return false
+            }
+            seenTypes.insert(cardType)
+            return true
+        }
+        
+        // Update cards array if duplicates were found
+        if uniqueCardTypes.count != cards.count {
+            cards = uniqueCardTypes.map { DashboardCard(cardType: $0) }
+        }
+        
+        if let encodedData = try? JSONEncoder().encode(uniqueCardTypes) {
             UserDefaults.standard.set(encodedData, forKey: cardOrderKey)
         }
     }
@@ -518,7 +548,7 @@ struct DashboardView: View {
                             Image(systemName: "minus.circle.fill")
                                 .font(.title2)
                                 .foregroundColor(Color.red.opacity(0.9))
-                                .background(Circle().fill(Color(.systemBackground)))
+                                .background(Circle().fill(Color.appCardBackground))
                         }
                         .opacity(0.7)
                         Spacer()
@@ -601,6 +631,8 @@ struct DashboardView: View {
             CarbsCardView()
         case .fat:
             FatCardView()
+        case .fibre:
+            FibreCardView()
         // case .water: // TEMPORARILY DISABLED
         //     WaterCardView()
         case .activity:
@@ -660,7 +692,7 @@ struct DashboardCardView<Content: View>: View {
                         Button(action: onDelete) {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.red)
-                                .background(Color(.systemBackground))
+                                .background(Color.appCardBackground)
                                 .clipShape(Circle())
                         }
                         .padding(8)

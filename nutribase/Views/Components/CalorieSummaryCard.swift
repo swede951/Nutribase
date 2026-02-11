@@ -228,6 +228,7 @@ struct CaloriesSummarySettingsView: View {
                     Button("Done") {
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.primary)
                 }
             }
             .sheet(isPresented: $showWeightGoals) {

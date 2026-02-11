@@ -94,16 +94,16 @@ struct QuickAddFoodView: View {
             }
             .navigationBarTitle("Quick Add", displayMode: .inline)
             .navigationBarItems(
-                leading: Button("Back") {
+                leading: Button(action: {
                     HapticManager.shared.lightFeedback()
                     isPresented = false
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("")
+                    }
                 }
-                .withHapticFeedback(),
-                trailing: Button("Save") {
-                    HapticManager.shared.lightFeedback()
-                    addFoodItem()
-                }
-                .disabled(!isFormValid)
                 .withHapticFeedback()
             )
             .alert(isPresented: $showingError) {

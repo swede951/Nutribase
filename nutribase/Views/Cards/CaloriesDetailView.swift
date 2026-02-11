@@ -9,12 +9,12 @@ struct CaloriesDetailView: View {
     
     /// View background: grey in light mode, black in dark mode
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     /// Card background: white in light mode, grey in dark mode
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     @State private var currentWeekOffset: Int = 0
     @State private var currentMonthOffset: Int = 0
@@ -223,7 +223,7 @@ struct CaloriesDetailView: View {
                 }
             }
         }
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .onChange(of: viewMode) { oldMode, newMode in
             if newMode == .monthly {
@@ -462,7 +462,7 @@ struct CaloriesDetailView: View {
         let chartData = getWeeklyChartData(for: offset)
         let maxValue = calorieTarget * 12 / 10
         let roundedMax = Int(ceil(Double(maxValue) / 100.0) * 100)
-        let barEmptyBackground = Color(.systemGray5).opacity(0.5)
+        let barEmptyBackground = Color.appInsetBackground
         let barColor = Color(red: 0.6, green: 0.2, blue: 0.8)
         
         return VStack(spacing: 20) {
@@ -564,7 +564,7 @@ struct CaloriesDetailView: View {
                     // Target line
                     let targetY = geometry.size.height * 0.8 * (1 - CGFloat(calorieTarget) / CGFloat(roundedMax)) + 19
                     Rectangle()
-                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                        .fill(Color.primary)
                         .frame(height: 2)
                         .offset(y: targetY)
                         .allowsHitTesting(false)
@@ -588,7 +588,7 @@ struct CaloriesDetailView: View {
                 
                 HStack(spacing: 4) {
                     Rectangle()
-                        .fill(Color.black)
+                        .fill(Color.primary)
                         .frame(width: 12, height: 2)
                     
                     Text("Target (\(calorieTarget) cal)")
@@ -859,7 +859,7 @@ struct CaloriesDetailView: View {
                         yStart: .value("Start", 0),
                         yEnd: .value("End", roundedMax)
                     )
-                    .foregroundStyle(Color(.systemGray5).opacity(0.5))
+                    .foregroundStyle(Color.appInsetBackground)
                     
                     // Data bar (colored, actual value) - drawn on top
                     if item.hasEntries {
@@ -874,7 +874,7 @@ struct CaloriesDetailView: View {
                 
                 // Target line
                 RuleMark(y: .value("Target", calorieTarget))
-                    .foregroundStyle(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                    .foregroundStyle(Color.primary)
                     .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
             }
             .chartYScale(domain: 0...roundedMax)
@@ -918,7 +918,7 @@ struct CaloriesDetailView: View {
                 
                 HStack(spacing: 4) {
                     Rectangle()
-                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.black)
+                        .fill(Color.primary)
                         .frame(width: 20, height: 2)
                     Text("Target (\(calorieTarget) cal)")
                         .font(.caption)

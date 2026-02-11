@@ -30,7 +30,7 @@ public struct FoodEntryEditView: View {
     @State private var showDeleteConfirmation = false
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     // Initialize for creating a new entry
@@ -460,7 +460,7 @@ public struct FoodEntryEditView: View {
                                 .padding(.trailing, 12)
                         }
                         .frame(maxWidth: 200)
-                        .background(Color(.systemGray6))
+                        .background(Color.appInsetBackground)
                         .cornerRadius(8)
                     }
                     .onChange(of: selectedServingSizeOption) { oldValue, newValue in
@@ -670,6 +670,7 @@ public struct FoodEntryEditView: View {
                 Button("Cancel") {
                     presentationMode.wrappedValue.dismiss()
                 }
+                .foregroundColor(.primary)
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 if isEditing {

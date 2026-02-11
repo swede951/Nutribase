@@ -73,19 +73,19 @@ struct FoodLogView: View {
     @StateObject private var visibilityService = MetricVisibilityService.shared
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
-    // Date formatter for the header
-    private var dateFormatter: DateFormatter {
+    // Date formatter for the header (static to avoid recreation)
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "d/M/yyyy"
         return formatter
-    }
+    }()
     
     // Helper function to check if a date is today
     private func isToday(date: Date) -> Bool {
@@ -111,7 +111,7 @@ struct FoodLogView: View {
         } else if isTomorrow(date: date) {
             return "Tomorrow"
         } else {
-            return dateFormatter.string(from: date)
+            return Self.dateFormatter.string(from: date)
         }
     }
     // Keys for UserDefaults storage (user-specific)
@@ -171,6 +171,7 @@ struct FoodLogView: View {
     @State private var proteinConsumed: Int = 0
     @State private var carbsConsumed: Int = 0
     @State private var fatConsumed: Int = 0
+    @State private var fibreConsumed: Int = 0
     // Steps are now handled directly by ActivityManager and HealthKitManager
     @State private var stepsGoal: Int = 10000
     @State private var stepsForSelectedDate: Int = 0
@@ -200,6 +201,10 @@ struct FoodLogView: View {
     
     // Track if view has appeared to avoid redundant work
     @State private var hasAppearedOnce = false
+    
+    // Cached meal data to avoid recomputation during scroll
+    @State private var cachedMeals: [Meal] = []
+    @State private var cachedTotalCalories: Int = 0
     
     // Detail view state
     @State private var showingCaloriesDetailView = false
@@ -448,10 +453,16 @@ struct FoodLogView: View {
     
     // Update all metrics
     private func updateMetrics() {
+        // Cache meals and total calories for efficient body rendering during scroll
+        let currentMeals = meals
+        cachedMeals = currentMeals
+        cachedTotalCalories = currentMeals.reduce(0) { $0 + $1.totalCalories }
+        
         // Reset all values first
         proteinConsumed = 0
         carbsConsumed = 0
         fatConsumed = 0
+        fibreConsumed = 0
         nova4Percentage = 0
         
         // Load NOVA 4 goal from UserDefaults (use "nova4Limit" key from settings)
@@ -459,13 +470,14 @@ struct FoodLogView: View {
         nova4Goal = savedGoal > 0 ? Double(savedGoal) : 20.0
         
         // Only calculate if there are meals with entries
-        if !meals.flatMap({ $0.entries }).isEmpty {
+        if !currentMeals.flatMap({ $0.entries }).isEmpty {
             // Update protein
             proteinConsumed = calculateProteinForDay()
             
             // Update carbs and fat using FoodLogManager
             carbsConsumed = foodLogManager.totalCarbsForDay(date: selectedDate)
             fatConsumed = foodLogManager.totalFatForDay(date: selectedDate)
+            fibreConsumed = foodLogManager.totalFibreForDay(date: selectedDate)
             
             // Update NOVA 4 percentage
             nova4Percentage = calculateNova4Percentage()
@@ -555,6 +567,7 @@ struct FoodLogView: View {
                         
                         // Edit button
                         Button(action: {
+                            HapticManager.shared.lightFeedback()
                             withAnimation {
                                 isEditing.toggle()
                             }
@@ -575,7 +588,7 @@ struct FoodLogView: View {
                 // Sticky Calories Remaining bar - appears when scrolled past Calories Remaining card (only if it's first and calories visible)
                 if showStickyCaloriesRemaining && !isEditing && visibleMeals.first == .caloriesSummary && visibilityService.showCalories {
                     let goal = userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
-                    let consumed = totalCaloriesForDay()
+                    let consumed = cachedTotalCalories
                     let activityCalories = activityCaloriesForSelectedDate
                     let includeActivity = UserDefaults.standard.bool(forKey: "includeActivityCaloriesInGoal")
                     let adjustedGoal = includeActivity ? goal + activityCalories : goal
@@ -719,7 +732,7 @@ struct FoodLogView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .background(Color(.systemGray6))
+            .background(viewBackground)
             .zIndex(3)
                 
                 // Weekly overview (hidden completely)
@@ -744,7 +757,7 @@ struct FoodLogView: View {
                                     // Only show Calories Remaining card if calories are visible
                                     if visibilityService.showCalories {
                                         CalorieSummaryCard(
-                                        consumedCalories: totalCaloriesForDay(),
+                                        consumedCalories: cachedTotalCalories,
                                         targetCalories: userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000,
                                         activityCalories: activityCaloriesForSelectedDate,
                                         onCardTap: { showingCaloriesDetailView = true }
@@ -774,9 +787,8 @@ struct FoodLogView: View {
                                                     Image(systemName: "minus.circle.fill")
                                                         .font(.title2)
                                                         .foregroundColor(Color.red.opacity(0.9))
-                                                        .background(Circle().fill(cardBackground))
+                                                        .background(Circle().fill(Color.appCardBackground))
                                                 }
-                                                .opacity(0.7)
                                                 Spacer()
                                             }
                                             Spacer()
@@ -801,7 +813,7 @@ struct FoodLogView: View {
                                         fatConsumed: fatConsumed,
                                         nova4Percentage: nova4Percentage,
                                         nova4Goal: nova4Goal,
-                                        caloriesConsumed: totalCaloriesForDay(),
+                                        caloriesConsumed: cachedTotalCalories,
                                         selectedDate: selectedDate
                                     )
                                     .background(
@@ -831,10 +843,9 @@ struct FoodLogView: View {
                                                 }) {
                                                     Image(systemName: "minus.circle.fill")
                                                         .font(.title2)
-                                                        .foregroundColor(Color.red.opacity(0.7))
-                                                        .background(Circle().fill(cardBackground))
+                                                        .foregroundColor(Color.red.opacity(0.9))
+                                                        .background(Circle().fill(Color.appCardBackground))
                                                 }
-                                                .opacity(0.7)
                                                 Spacer()
                                             }
                                             Spacer()
@@ -853,7 +864,7 @@ struct FoodLogView: View {
                                     
                                 case .breakfast, .lunch, .dinner, .snacks:
                                     // Find the meal data for this meal type
-                                    if let meal = meals.first(where: { $0.name == mealType.rawValue }) {
+                                    if let meal = cachedMeals.first(where: { $0.name == mealType.rawValue }) {
                                         MealCardView(meal: meal, selectedDate: selectedDate)
                                             .overlay(
                                                 isEditing ?
@@ -864,10 +875,9 @@ struct FoodLogView: View {
                                                         }) {
                                                             Image(systemName: "minus.circle.fill")
                                                                 .font(.title2)
-                                                                .foregroundColor(Color.red.opacity(0.7))
-                                                                .background(Circle().fill(cardBackground))
+                                                                .foregroundColor(Color.red.opacity(0.9))
+                                                                .background(Circle().fill(Color.appCardBackground))
                                                         }
-                                                        .opacity(0.7)
                                                         Spacer()
                                                     }
                                                     Spacer()
@@ -1154,13 +1164,13 @@ struct FoodLogView: View {
                         .stroke(Color.purple.opacity(0.3), lineWidth: 4)
                         .frame(width: 50, height: 50)
                     Circle()
-                        .trim(from: 0, to: min(CGFloat(totalCaloriesForDay()) / CGFloat(userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000), 1.0))
+                        .trim(from: 0, to: min(CGFloat(cachedTotalCalories) / CGFloat(userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000), 1.0))
                         .stroke(Color.purple, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                         .frame(width: 50, height: 50)
                         .rotationEffect(.degrees(-90))
                     
                     VStack(spacing: 0) {
-                        Text("\(totalCaloriesForDay())")
+                        Text("\(cachedTotalCalories)")
                             .font(.system(size: 12, weight: .bold))
                         Text("/\(userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000)")
                             .font(.system(size: 10))
@@ -1175,7 +1185,7 @@ struct FoodLogView: View {
         case .caloriesRemaining:
             VStack(spacing: 4) {
                 let goal = userProfile.dailyCalorieGoal > 0 ? userProfile.dailyCalorieGoal : 2000
-                let consumed = totalCaloriesForDay()
+                let consumed = cachedTotalCalories
                 let remaining = max(goal - consumed, 0)
                 let progress = min(CGFloat(consumed) / CGFloat(goal), 1.0)
                 let caloriesColor = Color(red: 0.6, green: 0.2, blue: 0.8) // Purple to match Daily Goals card
@@ -1304,6 +1314,32 @@ struct FoodLogView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.primary)
             }
+            
+        case .fibre:
+            VStack(spacing: 4) {
+                let fibreGoal = userProfile.fibreGoalGrams > 0 ? userProfile.fibreGoalGrams : 30
+                ZStack {
+                    Circle()
+                        .stroke(Color(red: 0.4, green: 0.8, blue: 0.4).opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    Circle()
+                        .trim(from: 0, to: min(CGFloat(fibreConsumed) / CGFloat(fibreGoal), 1.0))
+                        .stroke(Color(red: 0.4, green: 0.8, blue: 0.4), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                    
+                    VStack(spacing: 0) {
+                        Text("\(fibreConsumed)")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("/\(fibreGoal)g")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Text("Fibre")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
         }
     }
     
@@ -1318,12 +1354,12 @@ struct FoodLogView: View {
         @State private var scannedBarcode: String? = nil
         @State private var showingFoodEntry = false
         @State private var foundFood: FoodItem? = nil
-        @StateObject private var foodLogManager = FoodLogManager.shared
-        @StateObject private var typesenseService = TypesenseDirectService.shared
+        private let foodLogManager = FoodLogManager.shared
+        private let typesenseService = TypesenseDirectService.shared
         @State private var showingCopyConfirmation = false
         
         private var cardBackground: Color {
-            colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+            Color.appCardBackground
         }
         
         // Barcode search states (matching FoodSearchView)
@@ -1563,6 +1599,7 @@ struct FoodLogView: View {
                                         showingFoodEntry = false
                                         barcodeError = nil
                                     }
+                                    .foregroundColor(.primary)
                                 }
                             }
                         }
@@ -1694,7 +1731,7 @@ struct FoodLogView: View {
         let yesterdayEntries: [FoodEntry]
         let mealName: String
         let selectedDate: Date
-        @StateObject private var foodLogManager = FoodLogManager.shared
+        private let foodLogManager = FoodLogManager.shared
         @State private var offset: CGFloat = 0
         @State private var showingCopyIcon = false
         @State private var isPulsing = false
@@ -1761,7 +1798,7 @@ struct FoodLogView: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.appInsetBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(Color(hex: "#5ec5ff").opacity(0.3), lineWidth: 1)
@@ -1850,7 +1887,7 @@ struct FoodLogView: View {
     // Meal-specific food item row (to avoid name conflict with FoodSearchView)
     struct MealFoodItemRow: View {
         let entry: FoodEntry
-        @StateObject private var foodLogManager = FoodLogManager.shared
+        private let foodLogManager = FoodLogManager.shared
         @StateObject private var visibilityService = MetricVisibilityService.shared
         @State private var offset: CGFloat = 0
         @State private var isSwiping = false

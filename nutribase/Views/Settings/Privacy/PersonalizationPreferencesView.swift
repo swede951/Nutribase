@@ -5,7 +5,15 @@ struct PersonalizationPreferencesView: View {
     @State private var mealSuggestions = UserDefaults.standard.bool(forKey: "mealSuggestions")
     @State private var nutritionInsights = UserDefaults.standard.bool(forKey: "nutritionInsights")
     
+    private var viewBackground: Color {
+        Color.appBackground
+    }
+    
     var body: some View {
+        ZStack {
+            viewBackground
+                .ignoresSafeArea()
+            
         Form {
             Section(header: Text("Personalization"), footer: Text("These features use your food log and health data to provide personalized recommendations.")) {
                 Toggle("Personalized Recommendations", isOn: $personalizedRecommendations)
@@ -23,6 +31,7 @@ struct PersonalizationPreferencesView: View {
                         UserDefaults.standard.set(nutritionInsights, forKey: "nutritionInsights")
                     }
             }
+            .listRowBackground(Color.appCardBackground)
             
             Section(header: Text("Data Usage")) {
                 HStack {
@@ -36,10 +45,13 @@ struct PersonalizationPreferencesView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .listRowBackground(Color.appCardBackground)
+        }
+        .scrollContentBackground(.hidden)
         }
         .navigationTitle("Personalization")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(Color(.systemGray6), for: .navigationBar)
+        .toolbarBackground(Color.appBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }
 }

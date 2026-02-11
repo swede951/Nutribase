@@ -16,6 +16,8 @@ class DailyNutritionCache: ObservableObject {
         let protein: Double
         let carbs: Double
         let fat: Double
+        let fibre: Double
+        let fibreIncludesEstimates: Bool
         let novaDistribution: [Int: Int]  // NOVA group -> calorie count
         let nutriScoreDistribution: [String: Int]  // Grade -> count
         let entryCount: Int
@@ -29,6 +31,8 @@ class DailyNutritionCache: ObservableObject {
         let protein: Double
         let carbs: Double
         let fat: Double
+        let fibre: Double
+        let fibreIncludesEstimates: Bool
         let entryCount: Int
     }
     
@@ -45,6 +49,8 @@ class DailyNutritionCache: ObservableObject {
         let averageCarbs: Double
         let totalFat: Double
         let averageFat: Double
+        let totalFibre: Double
+        let averageFibre: Double
         let novaDistribution: [Int: Int]
         let daysWithData: Int
         let computedAt: Date
@@ -165,6 +171,7 @@ class DailyNutritionCache: ObservableObject {
         var totalProtein = 0.0
         var totalCarbs = 0.0
         var totalFat = 0.0
+        var totalFibre = 0.0
         var novaDistribution: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0]
         var nutriScoreDistribution: [String: Int] = [:]
         var totalEntries = 0
@@ -178,12 +185,16 @@ class DailyNutritionCache: ObservableObject {
             var mealProtein = 0.0
             var mealCarbs = 0.0
             var mealFat = 0.0
+            var mealFibre = 0.0
+            var mealFibreHasEstimates = false
             
             for food in expandedFoods {
                 mealCalories += food.calories
                 mealProtein += food.protein
                 mealCarbs += food.carbs
                 mealFat += food.fat
+                mealFibre += food.fibre
+                if food.fibreIsEstimated { mealFibreHasEstimates = true }
                 
                 // NOVA distribution
                 let novaScore = food.novaScore > 0 ? food.novaScore : 
@@ -200,6 +211,7 @@ class DailyNutritionCache: ObservableObject {
             totalProtein += mealProtein
             totalCarbs += mealCarbs
             totalFat += mealFat
+            totalFibre += mealFibre
             totalEntries += entries.count
             
             mealBreakdown[mealType] = MealSummary(
@@ -207,9 +219,13 @@ class DailyNutritionCache: ObservableObject {
                 protein: mealProtein,
                 carbs: mealCarbs,
                 fat: mealFat,
+                fibre: mealFibre,
+                fibreIncludesEstimates: mealFibreHasEstimates,
                 entryCount: entries.count
             )
         }
+        
+        let fibreHasEstimates = mealBreakdown.values.contains { $0.fibreIncludesEstimates }
         
         return DaySummary(
             date: date,
@@ -217,6 +233,8 @@ class DailyNutritionCache: ObservableObject {
             protein: totalProtein,
             carbs: totalCarbs,
             fat: totalFat,
+            fibre: totalFibre,
+            fibreIncludesEstimates: fibreHasEstimates,
             novaDistribution: novaDistribution,
             nutriScoreDistribution: nutriScoreDistribution,
             entryCount: totalEntries,
@@ -243,6 +261,7 @@ class DailyNutritionCache: ObservableObject {
         var totalProtein = 0.0
         var totalCarbs = 0.0
         var totalFat = 0.0
+        var totalFibre = 0.0
         var novaDistribution: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0]
         var daysWithData = 0
         
@@ -257,6 +276,7 @@ class DailyNutritionCache: ObservableObject {
                 totalProtein += daySummary.protein
                 totalCarbs += daySummary.carbs
                 totalFat += daySummary.fat
+                totalFibre += daySummary.fibre
                 daysWithData += 1
                 
                 for (group, calories) in daySummary.novaDistribution {
@@ -279,6 +299,8 @@ class DailyNutritionCache: ObservableObject {
             averageCarbs: totalCarbs / Double(avgDivisor),
             totalFat: totalFat,
             averageFat: totalFat / Double(avgDivisor),
+            totalFibre: totalFibre,
+            averageFibre: totalFibre / Double(avgDivisor),
             novaDistribution: novaDistribution,
             daysWithData: daysWithData,
             computedAt: Date()
@@ -298,6 +320,8 @@ class DailyNutritionCache: ObservableObject {
             averageCarbs: 0,
             totalFat: 0,
             averageFat: 0,
+            totalFibre: 0,
+            averageFibre: 0,
             novaDistribution: [:],
             daysWithData: 0,
             computedAt: Date()
@@ -382,6 +406,11 @@ class DailyNutritionCache: ObservableObject {
     /// Quick access to today's fat
     var todayFat: Double {
         return getDaySummary(for: Date()).fat
+    }
+    
+    /// Quick access to today's fibre
+    var todayFibre: Double {
+        return getDaySummary(for: Date()).fibre
     }
     
     /// Quick access to today's NOVA distribution

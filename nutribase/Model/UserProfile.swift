@@ -89,11 +89,16 @@ class UserProfile: ObservableObject {
     
     @Published var preferredRegion: String = "All Regions" {
         didSet {
+            // Don't save if this change came from Firebase sync
+            guard !isSyncingFromFirebase else { return }
+            
             UserDefaults.standard.set(preferredRegion, forKey: userSpecificKey("preferredRegion"))
             // Also update the key used by food search services
             UserDefaults.standard.set(preferredRegion, forKey: "preferredFoodRegion")
             print("🌍 [UserProfile] Updated preferred region to: \(preferredRegion)")
-            saveToLocalStorageIfNeeded()
+            
+            // Auto-sync region changes to Firebase for existing users
+            saveToFirebaseIfAuthenticated()
         }
     }
     
@@ -174,6 +179,13 @@ class UserProfile: ObservableObject {
         }
     }
     
+    @Published var fibreGoalGrams: Int = 30 {
+        didSet { 
+            UserDefaults.standard.set(fibreGoalGrams, forKey: userSpecificKey("fibreGoalGrams"))
+            saveToLocalStorageIfNeeded()
+        }
+    }
+    
     // Water goal in liters
     @Published var waterGoalLiters: Double = 2.5 {
         didSet { 
@@ -217,6 +229,10 @@ class UserProfile: ObservableObject {
         
         if fatGoalGrams <= 0 {
             fatGoalGrams = 67
+        }
+        
+        if fibreGoalGrams <= 0 {
+            fibreGoalGrams = 30
         }
         
         // Do not calculate TDEE during initialization to prevent potential crashes
@@ -423,6 +439,7 @@ class UserProfile: ObservableObject {
             "protein_goal_grams": proteinGoalGrams,
             "carb_goal_grams": carbGoalGrams,
             "fat_goal_grams": fatGoalGrams,
+            "fibre_goal_grams": fibreGoalGrams,
             "water_goal_liters": waterGoalLiters,
             "has_completed_onboarding": hasCompletedOnboarding
         ]
@@ -524,6 +541,7 @@ class UserProfile: ObservableObject {
         if let proteinGoal = data["protein_goal_grams"] as? Int { self.proteinGoalGrams = proteinGoal }
         if let carbGoal = data["carb_goal_grams"] as? Int { self.carbGoalGrams = carbGoal }
         if let fatGoal = data["fat_goal_grams"] as? Int { self.fatGoalGrams = fatGoal }
+        if let fibreGoal = data["fibre_goal_grams"] as? Int { self.fibreGoalGrams = fibreGoal }
         if let water = data["water_goal_liters"] as? Double { self.waterGoalLiters = water }
         
         // Load onboarding completion status
@@ -598,6 +616,7 @@ class UserProfile: ObservableObject {
             self.proteinGoalGrams = 125
             self.carbGoalGrams = 225
             self.fatGoalGrams = 67
+            self.fibreGoalGrams = 30
             self.waterGoalLiters = 2.5
         }
     }
@@ -678,6 +697,9 @@ class UserProfile: ObservableObject {
         
         let loadedFatGoal = UserDefaults.standard.integer(forKey: userSpecificKey("fatGoalGrams"))
         if loadedFatGoal > 0 { fatGoalGrams = loadedFatGoal }
+        
+        let loadedFibreGoal = UserDefaults.standard.integer(forKey: userSpecificKey("fibreGoalGrams"))
+        if loadedFibreGoal > 0 { fibreGoalGrams = loadedFibreGoal }
         
         let loadedWaterGoal = UserDefaults.standard.double(forKey: userSpecificKey("waterGoalLiters"))
         if loadedWaterGoal > 0 { waterGoalLiters = loadedWaterGoal }

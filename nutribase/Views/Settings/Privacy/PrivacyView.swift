@@ -4,7 +4,7 @@ struct PrivacyView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     var body: some View {
@@ -30,6 +30,7 @@ struct PrivacyView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     NavigationLink(destination: PrivacyPolicyView()) {
                         HStack(spacing: 15) {
@@ -46,6 +47,7 @@ struct PrivacyView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                     
                     NavigationLink(destination: DataConsentsView()) {
                         HStack(spacing: 15) {
@@ -62,6 +64,7 @@ struct PrivacyView: View {
                             Spacer()
                         }
                     }
+                    .listRowBackground(Color.appCardBackground)
                 }
             }
             .scrollContentBackground(.hidden)

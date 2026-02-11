@@ -8,16 +8,16 @@ struct NovaGroupsDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     private var viewBackground: Color {
-        colorScheme == .dark ? Color.black : Color(.systemGray6)
+        Color.appBackground
     }
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     /// Bar empty background: provides contrast against card background
     private var barEmptyBackground: Color {
-        colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6)
+        Color.appInsetBackground
     }
     
     @State private var currentWeekOffset: Int = 0
@@ -144,7 +144,7 @@ struct NovaGroupsDetailView: View {
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
-            .background(Color(.systemBackground))
+            .background(Color.appBackground)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack {
@@ -162,7 +162,7 @@ struct NovaGroupsDetailView: View {
                     .foregroundColor(.primary)
                 }
             }
-            .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+            .toolbarBackground(Color.appBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .task {
                 // Pre-compute data for current week and adjacent weeks asynchronously
@@ -984,7 +984,7 @@ struct DayDetailTooltip: View {
     let width: CGFloat
     
     private var cardBackground: Color {
-        colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)
+        Color.appCardBackground
     }
     
     var body: some View {
@@ -1094,7 +1094,7 @@ struct NovaScoreGauge: View {
                     .position(center)
                 
                 Circle()
-                    .fill(Color(.systemBackground))
+                    .fill(Color.appCardBackground)
                     .frame(width: 6, height: 6)
                     .position(center)
                 

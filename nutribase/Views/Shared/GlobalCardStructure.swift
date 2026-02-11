@@ -26,7 +26,7 @@ struct GlobalCard<Content: View>: View {
             ZStack {
                 // BACKGROUND
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white)
+                    .fill(Color.appCardBackground)
                     .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
                     .overlay(
                         // Debug border to see actual card boundaries

@@ -95,6 +95,7 @@ struct FoodFlagSheet: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .foregroundColor(.primary)
                     .disabled(isSubmitting)
                 }
                 
@@ -102,6 +103,7 @@ struct FoodFlagSheet: View {
                     Button("Submit") {
                         submitFlag()
                     }
+                    .foregroundColor(.primary)
                     .disabled(isSubmitting)
                     .fontWeight(.semibold)
                 }
@@ -121,7 +123,7 @@ struct FoodFlagSheet: View {
                         .padding(24)
                         .background(
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(Color(.systemBackground))
+                                .fill(Color.appCardBackground)
                         )
                     }
                 }

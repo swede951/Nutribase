@@ -115,7 +115,9 @@ class TypesenseSDKService: ObservableObject {
                                 nutriScoreGrade: doc.nutri_score,
                                 servingSize: doc.serving_size != nil ? "\(doc.serving_size!)" : nil,
                                 servingsPerPackage: nil,
-                                servingType: doc.serving_unit
+                                servingType: doc.serving_unit,
+                                fiber: doc.fiber,
+                                sugar: doc.sugar
                             )
                             
                             foods.append(food)
@@ -203,7 +205,9 @@ class TypesenseSDKService: ObservableObject {
                             nutriScoreGrade: doc.nutri_score,
                             servingSize: doc.serving_size != nil ? "\(doc.serving_size!)" : nil,
                             servingsPerPackage: nil,
-                            servingType: doc.serving_unit
+                            servingType: doc.serving_unit,
+                            fiber: doc.fiber,
+                            sugar: doc.sugar
                         )
                         
                         print("✅ Found food with barcode: \(barcode)")
