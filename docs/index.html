@@ -1,159 +1,1080 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NutriBase - Nutrition Tracking Made Simple</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 16px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }
-        
-        h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            color: #667eea;
-        }
-        
-        .subtitle {
-            font-size: 1.2em;
-            color: #666;
-            margin-bottom: 30px;
-        }
-        
-        .nav-links {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 40px;
-        }
-        
-        .nav-link {
-            display: block;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            text-decoration: none;
-            color: #333;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-        }
-        
-        .nav-link:hover {
-            transform: translateY(-2px);
-            border-color: #667eea;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
-        }
-        
-        .nav-link h3 {
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-        
-        .nav-link p {
-            color: #666;
-            font-size: 0.9em;
-        }
-        
-        .features {
-            margin: 40px 0;
-            padding: 30px;
-            background: #f8f9fa;
-            border-radius: 12px;
-        }
-        
-        .features h2 {
-            color: #667eea;
-            margin-bottom: 20px;
-        }
-        
-        .features ul {
-            list-style: none;
-            padding-left: 0;
-        }
-        
-        .features li {
-            padding: 10px 0;
-            padding-left: 30px;
-            position: relative;
-        }
-        
-        .features li:before {
-            content: "✓";
-            position: absolute;
-            left: 0;
-            color: #667eea;
-            font-weight: bold;
-            font-size: 1.2em;
-        }
-        
-        footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 2px solid #eee;
-            text-align: center;
-            color: #666;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FoodScore — Know Your Food's Quality</title>
+  <meta name="description" content="FoodScore goes beyond calories. AI-powered food logging, NOVA ultra-processing scores, Nutri-Score grading, and a proprietary Gut Health Score — all in one app." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green: #22c55e;
+      --green-dark: #16a34a;
+      --green-light: #dcfce7;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+      --bg: #0a0f0a;
+      --surface: #111811;
+      --surface2: #182018;
+      --border: rgba(34,197,94,0.15);
+      --text: #f0fdf4;
+      --text-muted: #86efac;
+      --text-dim: #4b7a54;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ─── NAV ─── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+      background: rgba(10,15,10,0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 800;
+      font-size: 1.25rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 32px; height: 32px;
+      background: var(--green);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      background: var(--green);
+      color: #000 !important;
+      padding: 0.5rem 1.25rem;
+      border-radius: 8px;
+      font-weight: 600 !important;
+      transition: background 0.2s !important;
+    }
+
+    .nav-cta:hover { background: var(--green-dark) !important; color: #fff !important; }
+
+    /* ─── HERO ─── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8rem 2rem 4rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      width: 800px; height: 800px;
+      background: radial-gradient(circle, rgba(34,197,94,0.12) 0%, transparent 70%);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(34,197,94,0.1);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 0.35rem 1rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--green);
+      margin-bottom: 1.5rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 7vw, 5.5rem);
+      font-weight: 900;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+      max-width: 900px;
+    }
+
+    .hero h1 .accent { color: var(--green); }
+
+    .hero p {
+      font-size: clamp(1rem, 2.5vw, 1.35rem);
+      color: var(--text-muted);
+      max-width: 640px;
+      margin-bottom: 2.5rem;
+      font-weight: 400;
+    }
+
+    .hero-ctas {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: var(--green);
+      color: #000;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 0.9rem 2rem;
+      border-radius: 12px;
+      text-decoration: none;
+      transition: transform 0.2s, background 0.2s;
+    }
+
+    .btn-primary:hover { background: var(--green-dark); color: #fff; transform: translateY(-2px); }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: var(--surface2);
+      color: var(--text);
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 0.9rem 2rem;
+      border-radius: 12px;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .btn-secondary:hover { border-color: var(--green); transform: translateY(-2px); }
+
+    /* ─── SCORE PREVIEW ─── */
+    .score-preview {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 3rem;
+    }
+
+    .score-pill {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 0.5rem 1.1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .score-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+
+    /* ─── SECTIONS ─── */
+    section { padding: 6rem 2rem; }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 0.75rem;
+    }
+
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 560px;
+    }
+
+    /* ─── PROBLEM STRIP ─── */
+    .problem-strip {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 4rem 2rem;
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 2rem;
+    }
+
+    .problem-item {
+      text-align: center;
+    }
+
+    .problem-icon {
+      font-size: 2rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .problem-item h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .problem-item p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    /* ─── DIFF FEATURES ─── */
+    .diff-grid {
+      display: grid;
+      gap: 1.5rem;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 3rem;
+    }
+
+    .diff-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      transition: border-color 0.3s, transform 0.3s;
+    }
+
+    .diff-card:hover {
+      border-color: var(--green);
+      transform: translateY(-4px);
+    }
+
+    .diff-card.featured {
+      grid-column: span 2;
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(34,197,94,0.05) 100%);
+      border-color: rgba(34,197,94,0.3);
+    }
+
+    .diff-card-icon {
+      width: 48px; height: 48px;
+      background: rgba(34,197,94,0.1);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .diff-card h3 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .diff-card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .diff-card .tag {
+      display: inline-block;
+      background: rgba(34,197,94,0.1);
+      color: var(--green);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.6rem;
+      border-radius: 100px;
+      margin-bottom: 0.75rem;
+    }
+
+    /* ─── NOVA EXPLAINER ─── */
+    .nova-section {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nova-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    .nova-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .nova-group {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+    }
+
+    .nova-num {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .nova-group-text h4 { font-size: 0.9rem; font-weight: 700; }
+    .nova-group-text p { font-size: 0.8rem; color: var(--text-muted); }
+
+    /* ─── SCORES ROW ─── */
+    .scores-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-top: 3rem;
+    }
+
+    .score-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .score-badge {
+      font-size: 3rem;
+      font-weight: 900;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .score-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .score-card p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* ─── COMPARISON TABLE ─── */
+    .comp-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 2.5rem;
+      font-size: 0.9rem;
+    }
+
+    .comp-table th {
+      padding: 1rem;
+      text-align: center;
+      font-weight: 700;
+      border-bottom: 2px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .comp-table th.us {
+      color: var(--green);
+      font-size: 0.95rem;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .comp-table td {
+      padding: 1rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .comp-table td:first-child {
+      text-align: left;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .comp-table tr:hover td { background: rgba(34,197,94,0.03); }
+
+    .check { color: var(--green); font-size: 1.2rem; }
+    .cross { color: #374151; font-size: 1.2rem; }
+    .partial { color: var(--amber); font-size: 0.85rem; font-weight: 600; }
+
+    /* ─── HOW IT WORKS ─── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem;
+      margin-top: 3rem;
+    }
+
+    .step {
+      position: relative;
+    }
+
+    .step-num {
+      width: 40px; height: 40px;
+      background: var(--green);
+      color: #000;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .step h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .step p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    /* ─── AI SECTION ─── */
+    .ai-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    .ai-demo {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 1.5rem;
+    }
+
+    .ai-demo-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ai-demo-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+
+    .ai-input-bubble {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px 12px 4px 12px;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.9rem;
+      color: var(--text);
+      margin-bottom: 1rem;
+    }
+
+    .ai-output {
+      background: rgba(34,197,94,0.05);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 4px 12px 12px 12px;
+      padding: 1rem 1.1rem;
+    }
+
+    .ai-output-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.3rem 0;
+      font-size: 0.85rem;
+    }
+
+    .ai-output-row:not(:last-child) {
+      border-bottom: 1px solid rgba(34,197,94,0.1);
+    }
+
+    .ai-output-label { color: var(--text-muted); }
+    .ai-output-val { font-weight: 600; color: var(--text); }
+    .ai-output-val.green { color: var(--green); }
+
+    .ai-features {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .ai-feature {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .ai-feature-icon {
+      width: 40px; height: 40px;
+      background: rgba(34,197,94,0.1);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      flex-shrink: 0;
+    }
+
+    .ai-feature h4 { font-size: 0.95rem; font-weight: 700; margin-bottom: 0.2rem; }
+    .ai-feature p { font-size: 0.85rem; color: var(--text-muted); }
+
+    /* ─── CTA ─── */
+    .cta-section {
+      background: linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.02) 100%);
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      margin-bottom: 1rem;
+    }
+
+    .cta-section p {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 500px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .store-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--text);
+      color: var(--bg);
+      padding: 0.9rem 1.75rem;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+
+    .store-badge:hover { opacity: 0.88; transform: translateY(-2px); }
+
+    /* ─── FOOTER ─── */
+    footer {
+      padding: 2rem;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+
+    footer a { color: var(--text-dim); text-decoration: none; }
+    footer a:hover { color: var(--text-muted); }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+
+      .diff-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .diff-card.featured { grid-column: span 1; }
+
+      .nova-layout,
+      .ai-layout {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+      }
+
+      .scores-row {
+        grid-template-columns: 1fr;
+      }
+
+      .comp-table { font-size: 0.78rem; }
+      .comp-table th, .comp-table td { padding: 0.65rem 0.5rem; }
+    }
+
+    /* ─── ANIMATIONS ─── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero > * {
+      animation: fadeUp 0.7s ease both;
+    }
+
+    .hero > *:nth-child(1) { animation-delay: 0.1s; }
+    .hero > *:nth-child(2) { animation-delay: 0.2s; }
+    .hero > *:nth-child(3) { animation-delay: 0.35s; }
+    .hero > *:nth-child(4) { animation-delay: 0.5s; }
+    .hero > *:nth-child(5) { animation-delay: 0.65s; }
+
+    /* ─── NUTRISCORE BADGES ─── */
+    .ns-a { background: #00803d; color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 800; }
+    .ns-b { background: #85bb2f; color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 800; }
+    .ns-c { background: #f5a623; color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 800; }
+    .ns-d { background: #e25b00; color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 800; }
+    .ns-e { background: #c0392b; color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 800; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>NutriBase</h1>
-        <p class="subtitle">Intelligent nutrition tracking for a healthier you</p>
-        
-        <div class="features">
-            <h2>Features</h2>
-            <ul>
-                <li>Track macronutrients (protein, carbs, fat) and calories</li>
-                <li>Monitor NOVA food processing levels for food quality insights</li>
-                <li>Sync with Apple Health for weight and activity data</li>
-                <li>Customizable dashboard with drag-and-drop widgets</li>
-                <li>Set and track daily nutrition goals</li>
-                <li>Comprehensive food database with barcode scanning</li>
-                <li>Privacy-focused: your data stays on your device</li>
-            </ul>
-        </div>
-        
-        <div class="nav-links">
-            <a href="privacy.html" class="nav-link">
-                <h3>Privacy Policy</h3>
-                <p>Learn how we protect your data</p>
-            </a>
-            
-            <a href="terms.html" class="nav-link">
-                <h3>Terms of Service</h3>
-                <p>Terms and conditions of use</p>
-            </a>
-            
-            <a href="support.html" class="nav-link">
-                <h3>Support</h3>
-                <p>Get help and contact us</p>
-            </a>
-        </div>
-        
-        <footer>
-            <p>&copy; 2025 NutriBase. All rights reserved.</p>
-        </footer>
+
+<!-- ─── NAV ─── -->
+<nav>
+  <a href="#" class="nav-logo">
+    <div class="logo-icon">🥦</div>
+    FoodScore
+  </a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#scores">Scoring</a></li>
+    <li><a href="#ai">AI Logging</a></li>
+    <li><a href="#compare">vs Others</a></li>
+    <li><a href="#download" class="nav-cta">Download Free</a></li>
+  </ul>
+</nav>
+
+<!-- ─── HERO ─── -->
+<section class="hero">
+  <div class="hero-badge">
+    <span>⚡</span>
+    Beyond calorie counting
+  </div>
+  <h1>Know <span class="accent">what</span> you're actually eating</h1>
+  <p>FoodScore reveals the true quality of your food — ultra-processing levels, gut health impact, and nutritional grade — not just calories and macros.</p>
+  <div class="hero-ctas">
+    <a href="#download" class="btn-primary">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+      Download on App Store
+    </a>
+    <a href="#features" class="btn-secondary">
+      See how it works ↓
+    </a>
+  </div>
+  <div class="score-preview">
+    <div class="score-pill">
+      <div class="score-dot" style="background:#22c55e"></div>
+      NOVA Group 1 — Unprocessed
     </div>
+    <div class="score-pill">
+      <div class="score-dot" style="background:#00803d"></div>
+      Nutri-Score <span class="ns-a" style="margin-left:0.25rem">A</span>
+    </div>
+    <div class="score-pill">
+      <div class="score-dot" style="background:#8b5cf6"></div>
+      Gut Health: 87/100
+    </div>
+  </div>
+</section>
+
+<!-- ─── PROBLEM ─── -->
+<div class="problem-strip">
+  <div class="container">
+    <div class="problem-grid">
+      <div class="problem-item">
+        <div class="problem-icon">🔢</div>
+        <h3>Calories aren't enough</h3>
+        <p>A 200-calorie snack can be whole food or ultra-processed junk. The number tells you nothing about quality.</p>
+      </div>
+      <div class="problem-item">
+        <div class="problem-icon">🏭</div>
+        <h3>Ultra-processed foods are hidden</h3>
+        <p>60% of the average Western diet is ultra-processed. Most apps don't even flag this — we surface it instantly.</p>
+      </div>
+      <div class="problem-item">
+        <div class="problem-icon">🧠</div>
+        <h3>Gut health is invisible</h3>
+        <p>Fibre diversity and processing load directly impact your gut microbiome. No other tracker measures this.</p>
+      </div>
+      <div class="problem-item">
+        <div class="problem-icon">⏱️</div>
+        <h3>Logging is too slow</h3>
+        <p>Searching for every ingredient kills motivation. Our AI lets you describe a meal in plain English and logs it in seconds.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── FEATURES ─── -->
+<section id="features">
+  <div class="container">
+    <div class="section-label">What makes us different</div>
+    <div class="section-title">Five features no other<br/>nutrition app has together</div>
+    <p class="section-sub">Every other app tracks what you ate. FoodScore tells you what it's doing to your body.</p>
+
+    <div class="diff-grid">
+
+      <!-- Featured: AI logging -->
+      <div class="diff-card featured">
+        <span class="tag">Pro</span>
+        <div style="display:flex; gap:2rem; align-items:flex-start; flex-wrap:wrap">
+          <div style="flex:1; min-width:200px">
+            <div class="diff-card-icon">🤖</div>
+            <h3>AI Food Logging</h3>
+            <p>Just describe your meal in plain English. "Grilled salmon, roasted sweet potato, side salad with olive oil dressing" — FoodScore extracts every ingredient and nutrient automatically, with full macro breakdown. No manual searching. No guessing serving sizes.</p>
+          </div>
+          <div style="flex:1; min-width:200px">
+            <div class="ai-demo" style="margin-top:0">
+              <div class="ai-demo-header">
+                <div class="ai-demo-dot" style="background:#ef4444"></div>
+                <div class="ai-demo-dot" style="background:#f59e0b"></div>
+                <div class="ai-demo-dot" style="background:#22c55e"></div>
+                <span style="font-size:0.8rem; color:var(--text-dim); margin-left:0.25rem">AI Food Log</span>
+              </div>
+              <div class="ai-input-bubble">
+                "Large bowl of overnight oats with banana, almond butter, and a sprinkle of chia seeds"
+              </div>
+              <div class="ai-output">
+                <div class="ai-output-row">
+                  <span class="ai-output-label">Calories</span>
+                  <span class="ai-output-val">487 kcal</span>
+                </div>
+                <div class="ai-output-row">
+                  <span class="ai-output-label">Protein</span>
+                  <span class="ai-output-val">14g</span>
+                </div>
+                <div class="ai-output-row">
+                  <span class="ai-output-label">Fibre</span>
+                  <span class="ai-output-val green">11g ↑</span>
+                </div>
+                <div class="ai-output-row">
+                  <span class="ai-output-label">NOVA Group</span>
+                  <span class="ai-output-val green">1 — Whole food</span>
+                </div>
+                <div class="ai-output-row">
+                  <span class="ai-output-label">Nutri-Score</span>
+                  <span class="ai-output-val"><span class="ns-a">A</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="diff-card">
+        <div class="diff-card-icon">📊</div>
+        <h3>NOVA Ultra-Processing Score</h3>
+        <p>Every food is classified into one of four processing groups based on the globally recognised NOVA framework. See at a glance how much of your day was real food vs. industrial products — before health problems appear.</p>
+      </div>
+
+      <div class="diff-card">
+        <div class="diff-card-icon">🫁</div>
+        <h3>Proprietary Gut Health Score</h3>
+        <p>A daily 0–100 score built from three pillars: food quality, processing load, and fibre density. No other consumer app surfaces this. Backed by current gut microbiome research.</p>
+      </div>
+
+      <div class="diff-card">
+        <div class="diff-card-icon">🔍</div>
+        <h3>Scan & Compare 4 Foods</h3>
+        <p>Scan up to 4 products simultaneously and compare them across 8 dimensions — NOVA, Nutri-Score, Gut Health, protein efficiency, calorie density, fibre, sugar, and saturated fat. Make the better choice in seconds at the supermarket.</p>
+      </div>
+
+      <div class="diff-card">
+        <div class="diff-card-icon">🔄</div>
+        <h3>Smart Food Swaps</h3>
+        <p>Every time you log a food in NOVA Group 3 or 4, FoodScore suggests a better alternative from the Open Food Facts database — same food category, better score. Small swaps add up to big health changes.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─── SCORING SYSTEMS ─── -->
+<section id="scores" class="nova-section">
+  <div class="container">
+    <div class="section-label">Science-backed scoring</div>
+    <div class="section-title">Three lenses on every food</div>
+    <p class="section-sub">We layer the world's best food quality frameworks so you get a complete picture — not just a calorie number.</p>
+
+    <div class="scores-row">
+      <div class="score-card">
+        <div class="score-badge" style="color:var(--green)">NOVA</div>
+        <h3>Ultra-Processing Level</h3>
+        <p>Classifies every food into one of four groups based on its degree of industrial processing. Developed by researchers at the University of São Paulo and used in public health policy worldwide.</p>
+      </div>
+      <div class="score-card">
+        <div class="score-badge" style="font-size:2rem">
+          <span class="ns-a" style="font-size:1.6rem">A</span>
+          <span class="ns-b" style="font-size:1.4rem">B</span>
+          <span class="ns-c" style="font-size:1.2rem">C</span>
+        </div>
+        <h3>Nutri-Score</h3>
+        <p>The official EU nutrition label grading foods A–E based on positive nutrients (fibre, protein) and negative nutrients (sugar, saturated fat, sodium). Recognised by governments across Europe.</p>
+      </div>
+      <div class="score-card">
+        <div class="score-badge" style="color:var(--purple)">87</div>
+        <h3>Gut Health Score</h3>
+        <p>Our proprietary daily score combining food quality (43%), processing level (33%), and fibre density (23%). Updates in real-time as you log. The more whole, diverse foods you eat, the higher your score.</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 4rem">
+      <div class="nova-layout">
+        <div>
+          <div class="section-label">NOVA Classification</div>
+          <div class="section-title" style="font-size:2rem">What's actually in your food?</div>
+          <p style="color:var(--text-muted); margin-top:0.75rem; font-size:0.95rem">Most apps see "chicken wrap" and count calories. FoodScore sees whether it's homemade or ultra-processed — a distinction that matters enormously for long-term health.</p>
+          <p style="color:var(--text-muted); margin-top:0.75rem; font-size:0.95rem">Ultra-processed foods (Group 4) are linked to increased risk of obesity, type 2 diabetes, cardiovascular disease, and colorectal cancer. FoodScore tracks your daily UPF percentage so you stay informed.</p>
+        </div>
+        <div class="nova-groups">
+          <div class="nova-group">
+            <div class="nova-num" style="background:rgba(34,197,94,0.15); color:#22c55e">1</div>
+            <div class="nova-group-text">
+              <h4>Unprocessed / Minimally Processed</h4>
+              <p>Fruits, vegetables, eggs, plain meat, legumes, nuts</p>
+            </div>
+          </div>
+          <div class="nova-group">
+            <div class="nova-num" style="background:rgba(132,204,22,0.15); color:#84cc16">2</div>
+            <div class="nova-group-text">
+              <h4>Processed Culinary Ingredients</h4>
+              <p>Oils, butter, flour, salt, sugar, honey used in cooking</p>
+            </div>
+          </div>
+          <div class="nova-group">
+            <div class="nova-num" style="background:rgba(245,158,11,0.15); color:#f59e0b">3</div>
+            <div class="nova-group-text">
+              <h4>Processed Foods</h4>
+              <p>Canned fish, cheese, cured meats, beer, wine</p>
+            </div>
+          </div>
+          <div class="nova-group">
+            <div class="nova-num" style="background:rgba(239,68,68,0.15); color:#ef4444">4</div>
+            <div class="nova-group-text">
+              <h4>Ultra-Processed Foods</h4>
+              <p>Soft drinks, packaged snacks, chicken nuggets, instant noodles, most breakfast cereals</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── HOW IT WORKS ─── -->
+<section id="how">
+  <div class="container">
+    <div class="section-label">How it works</div>
+    <div class="section-title">Log smarter, eat better</div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Log your food</h3>
+        <p>Search our 1M+ food database, scan a barcode, or just describe your meal to the AI. Your call, every time.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>See your scores instantly</h3>
+        <p>Every logged item gets a NOVA group, Nutri-Score grade, and contributes to your daily Gut Health Score — automatically.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Compare before you buy</h3>
+        <p>At the shop? Scan two, three, or four products and see a side-by-side quality breakdown before anything goes in your basket.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Get smarter swaps</h3>
+        <p>Logged something ultra-processed? FoodScore instantly suggests a better version so you can do better next time.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── COMPARISON ─── -->
+<section id="compare" style="background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="container">
+    <div class="section-label">Honest comparison</div>
+    <div class="section-title">How we stack up</div>
+    <p class="section-sub">We're building something different. Here's what that looks like side by side.</p>
+
+    <div style="overflow-x:auto; margin-top:2.5rem">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th style="text-align:left">Feature</th>
+            <th class="us">FoodScore</th>
+            <th>MyFitnessPal</th>
+            <th>Cronometer</th>
+            <th>Lifesum</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Calorie & macro tracking</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>NOVA ultra-processing classification</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="partial">Partial</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>Nutri-Score grade (A–E)</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="partial">Partial</span></td>
+            <td><span class="partial">Some</span></td>
+          </tr>
+          <tr>
+            <td>Proprietary Gut Health Score</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>AI natural language food logging</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>Compare up to 4 products by barcode</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>AI-powered food swap suggestions</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>Daily UPF % tracking</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>Fibre density analysis</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+          <tr>
+            <td>No ads</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✕</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── CTA ─── -->
+<section id="download" class="cta-section">
+  <div class="container">
+    <div class="hero-badge" style="margin:0 auto 1.5rem">
+      <span>🎉</span>
+      Free to download
+    </div>
+    <h2>Start eating with intention</h2>
+    <p>Free download. No account required to get started. Pro features unlock AI logging and advanced insights.</p>
+    <a href="#" class="store-badge">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+      Download on the App Store
+    </a>
+    <p style="margin-top:1.5rem; font-size:0.85rem; color:var(--text-dim)">iOS only · Requires iOS 16 or later</p>
+  </div>
+</section>
+
+<!-- ─── FOOTER ─── -->
+<footer>
+  <p>© 2025 FoodScore · <a href="https://swede951.github.io/Nutribase/privacy.html">Privacy Policy</a> · <a href="https://swede951.github.io/Nutribase/support.html">Support</a></p>
+</footer>
+
 </body>
 </html>
